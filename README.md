@@ -429,11 +429,105 @@ CAN 总线设备
 
 ### 环境准备
 
+#### 硬件准备
+
 - **Milk-V Duo 256M** 开发板
 - 各通信模块（4G / WiFi+蓝牙 / 以太网 / RS485）
 - CAN 收发器
-- C51 单片机开发环境
-- Linux 交叉编译工具链
+
+#### 开发环境 — Nix（推荐）
+
+本项目使用 [Nix](https://nixos.org/) 管理开发环境与交叉编译工具链，确保所有开发者使用一致的、可复现的工具链版本。
+
+> **先决条件**：安装 Nix (>= 2.8) 并启用 [flakes](https://nixos.wiki/wiki/Flakes) 支持。
+
+```bash
+# 进入统一的 Nix 开发环境（自动配置所有工具链）
+cd PUT_1.0
+nix develop
+```
+
+进入环境后，shell 会自动打印项目结构、工具链信息和构建命令提示。
+
+##### 提供的工具链
+
+| 类别 | 组件 | 用途 |
+|------|------|------|
+| **基础构建** | `cmake`, `make`, `gcc`, `gdb` | 本地编译与调试 |
+| **RISC-V Linux 交叉编译** | `riscv64-unknown-linux-gnu-gcc` | 大核 Linux 应用编译 |
+| **RISC-V 裸机交叉编译** | `riscv64-none-elf-gcc` | 小核 RTOS 固件编译 |
+| **ARM64 交叉编译** | `aarch64-linux-gnu-gcc` | 备选大核目标 |
+| **C51 编译器** | `sdcc` | C51 低功耗程序编译 |
+| **Rust** | `rustc`, `cargo`, `rustup` | Rust 语言支持 |
+| **Rust 交叉编译目标** | `riscv64gc-unknown-linux-gnu` 等 | Rust 交叉编译 |
+| **Python 工具** | `python3`, `pyserial` | 调试脚本运行 |
+| **代码分析** | `clang-tools`, `cppcheck`, `clippy`, `rustfmt` | 代码质量检查 |
+
+##### 使用 CMake 工具链文件进行交叉编译
+
+```bash
+# 编译大核 Linux 程序 (RISC-V)
+cmake -B build_linux -S linux_app \
+      -DCMAKE_TOOLCHAIN_FILE=../nix/riscv64-linux-toolchain.cmake
+cmake --build build_linux
+
+# 编译小核 RTOS 固件 (RISC-V bare-metal)
+cmake -B build_rtos -S rtos_firmware \
+      -DCMAKE_TOOLCHAIN_FILE=../nix/riscv64-elf-toolchain.cmake
+cmake --build build_rtos
+```
+
+##### Rust 交叉编译
+
+进入 `nix develop` 后，Cargo 会通过环境变量配置交叉编译 linkers 和别名，可直接使用：
+
+```bash
+cargo build-riscv64-linux        # 编译 RISC-V Linux 目标
+cargo build-riscv64-elf          # 编译 RISC-V bare-metal 目标
+cargo check-riscv64-linux        # 仅检查（无需完整编译）
+```
+
+##### 可用的 Shell 环境
+
+```bash
+# 完整开发环境（默认，包含所有工具）
+nix develop
+
+# 最小环境（仅基础构建工具，加载更快）
+nix develop .#minimal
+
+# nix-shell 兼容入口（仍需启用 flakes，推荐优先使用 nix develop）
+nix-shell
+```
+
+##### 环境变量
+
+进入 Nix shell 后，以下环境变量可供 CMake / 脚本使用：
+
+| 变量 | 值示例 | 说明 |
+|------|--------|------|
+| `RISCV64_LINUX_CC` | `/nix/store/.../bin/riscv64-unknown-linux-gnu-gcc` | RISC-V Linux C 编译器路径 |
+| `RISCV64_ELF_CC` | `/nix/store/.../bin/riscv64-none-elf-gcc` | RISC-V 裸机 C 编译器路径 |
+| `AARCH64_LINUX_CC` | `/nix/store/.../bin/aarch64-linux-gnu-gcc` | ARM64 C 编译器路径 |
+| `RUST_TARGET_RISCV64_LINUX` | `riscv64gc-unknown-linux-gnu` | Rust RISC-V Linux target |
+| `RUST_TARGET_RISCV64_ELF` | `riscv64gc-unknown-none-elf` | Rust RISC-V bare-metal target |
+
+#### 开发环境 — 传统方式（备选）
+
+如果无法使用 Nix，也可以手动安装以下工具链：
+
+- **Linux 交叉编译工具链**：`riscv64-unknown-linux-gnu-gcc` (大核目标)
+- **RTOS 交叉编译工具链**：`riscv64-none-elf-gcc` (小核目标)
+- **C51 编译器**：`sdcc` 或 Keil C51
+- **CMake** >= 3.13
+- **Python 3** + `pyserial` (调试工具依赖)
+- **Rust** (可选)：通过 `rustup` 安装，并添加 target：
+  ```bash
+  rustup target add riscv64gc-unknown-linux-gnu
+  rustup target add riscv64gc-unknown-none-elf
+  ```
+
+Milk-V Duo 官方 SDK 地址：https://github.com/milkv-duo/duo-buildroot-sdk
 
 ### 构建大核程序
 

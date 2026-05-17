@@ -62,12 +62,10 @@
         #   riscv64gc-unknown-linux-gnu    → 大核 Linux app
         #   riscv64gc-unknown-none-elf     → 小核 RTOS firmware (bare-metal)
         #   aarch64-unknown-linux-gnu      → 备选: ARM64 Linux
-        #   aarch64-unknown-none-elf       → 备选: ARM64 bare-metal
         rustCrossTargets = [
           "riscv64gc-unknown-linux-gnu"
           "riscv64gc-unknown-none-elf"
           "aarch64-unknown-linux-gnu"
-          "aarch64-unknown-none-elf"
         ];
 
         # Paths to Rust cross linkers
@@ -162,7 +160,7 @@
               # ── C/C++ toolchain aliases ──
               echo "  C/C++ 工具链快捷方式:"
               echo "    riscv64-linux-gcc     - RISC-V Linux 交叉编译器 (大核)"
-              echo "    riscv64-elf-gcc       - RISC-V 裸机交叉编译器 (小核)"
+              echo "    riscv64-none-elf-gcc  - RISC-V 裸机交叉编译器 (小核)"
               echo "    aarch64-linux-gcc     - ARM64 交叉编译器 (备选)"
               echo "    sdcc                  - C51 单片机编译器"
               echo ""
@@ -192,39 +190,18 @@
                 fi
               done
 
-              # ── Write Cargo cross-compilation config ──
-              mkdir -p .cargo
-              cat > .cargo/config.toml << 'CARGO_EOF'
-# ─────────────────────────────────────────────────────────────────────
-# Cargo 交叉编译配置 — Multi-Protocol Unified Terminal
-# ─────────────────────────────────────────────────────────────────────
-# 由 flake.nix shellHook 自动生成。其他配置项也可手工添加到此文件。
-# ─────────────────────────────────────────────────────────────────────
-
-[target.riscv64gc-unknown-linux-gnu]
-linker = "${riscv64LinuxLinker}"
-
-[target.riscv64gc-unknown-none-elf]
-linker = "${riscv64ElfLinker}"
-
-[target.aarch64-unknown-linux-gnu]
-linker = "${aarch64Linker}"
-
-[target.aarch64-unknown-none-elf]
-linker = "${aarch64Linker}"
-
-# Aliases for shorter names
-[alias]
-build-riscv64-linux  = "build --target riscv64gc-unknown-linux-gnu"
-build-riscv64-elf    = "build --target riscv64gc-unknown-none-elf"
-build-aarch64-linux  = "build --target aarch64-unknown-linux-gnu"
-build-aarch64-elf    = "build --target aarch64-unknown-none-elf"
-check-riscv64-linux  = "check --target riscv64gc-unknown-linux-gnu"
-check-riscv64-elf    = "check --target riscv64gc-unknown-none-elf"
-check-aarch64-linux  = "check --target aarch64-unknown-linux-gnu"
-check-aarch64-elf    = "check --target aarch64-unknown-none-elf"
-CARGO_EOF
-              echo "    ✓ .cargo/config.toml 已生成 (含交叉编译 linker 配置)"
+              # ── Cargo cross-compilation config via environment ──
+              # Keep user-owned .cargo/config.toml untouched.
+              export CARGO_TARGET_RISCV64GC_UNKNOWN_LINUX_GNU_LINKER="${riscv64LinuxLinker}"
+              export CARGO_TARGET_RISCV64GC_UNKNOWN_NONE_ELF_LINKER="${riscv64ElfLinker}"
+              export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER="${aarch64Linker}"
+              export CARGO_ALIAS_BUILD_RISCV64_LINUX="build --target riscv64gc-unknown-linux-gnu"
+              export CARGO_ALIAS_BUILD_RISCV64_ELF="build --target riscv64gc-unknown-none-elf"
+              export CARGO_ALIAS_BUILD_AARCH64_LINUX="build --target aarch64-unknown-linux-gnu"
+              export CARGO_ALIAS_CHECK_RISCV64_LINUX="check --target riscv64gc-unknown-linux-gnu"
+              export CARGO_ALIAS_CHECK_RISCV64_ELF="check --target riscv64gc-unknown-none-elf"
+              export CARGO_ALIAS_CHECK_AARCH64_LINUX="check --target aarch64-unknown-linux-gnu"
+              echo "    ✓ Cargo linkers 和快捷别名已通过环境变量配置"
               echo ""
 
               # ── Export toolchain prefixes ──
@@ -243,7 +220,6 @@ CARGO_EOF
               export RUST_TARGET_RISCV64_LINUX="riscv64gc-unknown-linux-gnu"
               export RUST_TARGET_RISCV64_ELF="riscv64gc-unknown-none-elf"
               export RUST_TARGET_AARCH64_LINUX="aarch64-unknown-linux-gnu"
-              export RUST_TARGET_AARCH64_ELF="aarch64-unknown-none-elf"
 
               # ── CMake toolchain file path hints ──
               echo "  导出变量 (可在 CMake / Cargo 中使用):"

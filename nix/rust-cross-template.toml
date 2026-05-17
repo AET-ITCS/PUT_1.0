@@ -1,0 +1,31 @@
+# ─────────────────────────────────────────────────────────────────────
+# Cargo 交叉编译配置 — 参考模板
+# ─────────────────────────────────────────────────────────────────────
+# 说明:
+#   1. 在 Nix 开发环境中 (`nix develop`)，此配置会自动生成到
+#      .cargo/config.toml，使用 Nix 管理的交叉编译器路径。
+#   2. 如需手动配置，请将本文件复制为 .cargo/config.toml，
+#      并修改 [target.*.linker] 的路径为你本机的交叉编译器位置。
+#   3. 也可直接用 cargo 别名（如 `cargo build-riscv64-linux`）。
+# ─────────────────────────────────────────────────────────────────────
+
+# ── RISC-V 64-bit Linux (Milk-V Duo 大核) ──
+[target.riscv64gc-unknown-linux-gnu]
+# linker = "riscv64-unknown-linux-gnu-gcc"
+
+# ── RISC-V 64-bit bare-metal (Milk-V Duo 小核 RTOS) ──
+[target.riscv64gc-unknown-none-elf]
+# linker = "riscv64-none-elf-gcc"
+
+# ── ARM 64-bit Linux (备选) ──
+[target.aarch64-unknown-linux-gnu]
+# linker = "aarch64-unknown-linux-gnu-gcc"
+
+# ── 便捷别名 ──
+[alias]
+build-riscv64-linux  = "build --target riscv64gc-unknown-linux-gnu"
+build-riscv64-elf    = "build --target riscv64gc-unknown-none-elf"
+build-aarch64-linux  = "build --target aarch64-unknown-linux-gnu"
+check-riscv64-linux  = "check --target riscv64gc-unknown-linux-gnu"
+check-riscv64-elf    = "check --target riscv64gc-unknown-none-elf"
+check-aarch64-linux  = "check --target aarch64-unknown-linux-gnu"
