@@ -1,3 +1,4 @@
+/* 大小核统一帧定义：描述大核 Linux 发送给小核 RTOS 的内部转发帧格式。 */
 #ifndef UNIFIED_FRAME_H
 #define UNIFIED_FRAME_H
 

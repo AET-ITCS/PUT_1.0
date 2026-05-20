@@ -90,3 +90,7 @@ __pycache__/
 
 # Logs
 *.log
+
+# Local test/debug files
+/tests/
+/tools/
