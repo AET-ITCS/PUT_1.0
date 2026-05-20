@@ -160,11 +160,10 @@ PUT_1.0/
 ├── common/                         # 大核与小核公共代码
 │   ├── include/
 │   │   ├── unified_frame.h         # 统一协议帧定义（核心）
+│   │   ├── shared_memory_ipc.h     # 共享内存 IPC 公共 ABI
 │   │   ├── protocol_type.h         # 协议类型枚举
-│   │   ├── error_code.h            # 错误码定义
-│   │   └── ring_buffer.h           # 通用环形缓冲区（头文件）
+│   │   └── error_code.h            # 公共错误码
 │   └── src/
-│       └── ring_buffer.c           # 环形缓冲区实现
 │
 ├── linux_app/                      # 大核 Linux 应用程序
 │   ├── CMakeLists.txt
@@ -296,7 +295,6 @@ C51 作为独立的低功耗管理单元。
 - `unified_frame.h` — 统一数据帧结构定义（最核心文件）
 - `protocol_type.h` — 协议类型枚举
 - `error_code.h` — 错误码定义
-- `ring_buffer.h / ring_buffer.c` — 环形缓冲区
 
 **设计要点：** 只放**稳定、通用**的内容，不包含具体业务协议代码。
 

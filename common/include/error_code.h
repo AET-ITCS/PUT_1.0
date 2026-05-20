@@ -1,3 +1,4 @@
+/* 公共错误码定义：统一大核 Linux、小核 RTOS 和公共模块的返回值。 */
 #ifndef ERROR_CODE_H
 #define ERROR_CODE_H
 
@@ -26,9 +27,6 @@ typedef enum {
     UNIFIED_ERR_CRC = -13,
 
     UNIFIED_ERR_CAN_DLC = -20,
-
-    UNIFIED_ERR_RING_BUFFER_EMPTY = -30,
-    UNIFIED_ERR_RING_BUFFER_FULL = -31,
 } unified_error_t;
 
 #ifdef __cplusplus

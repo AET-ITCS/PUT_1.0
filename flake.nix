@@ -238,7 +238,8 @@
               # ── Build helpers ──
               echo "  常用构建命令:"
               echo "    ── C/C++ ──"
-              echo "    cmake -B build_linux -S linux_app                                           - 配置大核 Linux 项目"
+              echo "    nix run .#build-linux-app                                                   - 构建大核 Linux 应用"
+              echo "    nix run .#test-linux-app                                                    - 测试大核 Linux 应用"
               echo "    cmake -B build_rtos  -S rtos_firmware                                       - 配置小核 RTOS 项目"
               echo "    cmake -B build_c51   -S c51_low_power                                       - 配置 C51 项目"
               echo "    ── Rust ──"
@@ -365,6 +366,41 @@
               cargo
               rustc
             ];
+          };
+        };
+
+
+
+        # ============================================================
+        # Apps - Project command entrypoints
+        # ============================================================
+
+        apps = {
+          build-linux-app = {
+            type = "app";
+            program = "${pkgs.writeShellApplication {
+              name = "build-linux-app";
+              runtimeInputs = with pkgs; [ cmake gnumake gcc ];
+              text = ''
+                cd "$PWD"
+                cmake -S linux_app -B build/linux_app
+                cmake --build build/linux_app
+              '';
+            }}/bin/build-linux-app";
+          };
+
+          test-linux-app = {
+            type = "app";
+            program = "${pkgs.writeShellApplication {
+              name = "test-linux-app";
+              runtimeInputs = with pkgs; [ cmake gnumake gcc ];
+              text = ''
+                cd "$PWD"
+                cmake -S tests/linux_app_test -B build/linux_app_test
+                cmake --build build/linux_app_test
+                ctest --test-dir build/linux_app_test --output-on-failure
+              '';
+            }}/bin/test-linux-app";
           };
         };
 

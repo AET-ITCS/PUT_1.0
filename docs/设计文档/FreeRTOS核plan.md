@@ -229,7 +229,7 @@ rtos_to_linux_ring
 | read index     | `uint32_t` |
 | flags / status | `uint32_t` |
 
-跨核共享结构不直接使用 `common/include/ring_buffer.h` 中的 `ring_buffer_t`，原因是该结构包含本地指针 `uint8_t *buffer`，不适合作为跨核共享内存 ABI。`ring_buffer_t` 可继续用于单核内部字节缓存，但共享内存 ring 应使用固定偏移、固定 slot 的结构。
+跨核共享结构不使用通用字节环形缓冲区结构，原因是这类结构通常包含本地指针，不适合作为跨核共享内存 ABI。共享内存 ring 应使用固定偏移、固定 slot 的结构。
 
 ### 5.4 Cache 与内存屏障
 

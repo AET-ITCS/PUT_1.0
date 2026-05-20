@@ -1,3 +1,4 @@
+/* 公共协议类型定义：描述外部来源协议、车身业务类型和统一帧/CAN 标志。 */
 #ifndef PROTOCOL_TYPE_H
 #define PROTOCOL_TYPE_H
 
