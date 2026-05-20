@@ -266,11 +266,13 @@ rtos_to_linux_ring
 
 | 任务 | 优先级 | 职责 |
 |---|---:|---|
-| `CAN_TX_Task` | 最高 | 消费 TX 队列，调用 XL2515 发送 CAN |
-| `Gateway_IPC_Task` | 高 | 处理 cmdqu 通知，读取共享 ring，校验帧 |
-| `CAN_RX_Task` | 高 | 响应 GPIO14/XL2515 中断，读取 CAN RX |
+| `CAN_RX_Task` | 最高 | 响应 GPIO14/XL2515 中断，优先清空 RX0/RX1 硬件 buffer |
+| `CAN_TX_Task` | 高 | 消费 TX 队列，调用 XL2515 发送 CAN，不得长时间阻塞 RX |
+| `Gateway_IPC_Task` | 中高 | 处理 cmdqu 通知，读取共享 ring，校验帧 |
 | `Status_Task` | 中 | 周期上报统计、心跳和队列水位 |
 | `Watchdog_Task` | 中 | 喂狗、检测任务心跳和总线异常 |
+
+XL2515 / MCP2515 类外置 SPI CAN 控制器通常只有 2 个硬件 RX buffer。500kbps 高负载 CAN 总线上，如果 TX 任务持续占用 CPU 或 SPI，RX buffer 会很快溢出。因此 v1 规定 `CAN_RX_Task` 优先级高于 `CAN_TX_Task`，GPIO14 中断唤醒后必须优先读取硬件 RX buffer。
 
 ### 7.2 Gateway_IPC_Task
 
@@ -301,13 +303,16 @@ rtos_to_linux_ring
 - 调用 `rtos_can_driver_send()`。
 - 根据返回结果更新 `tx_ok`、`tx_fail`、`bus_error`、`spi_error` 等统计。
 - 发送失败时按错误类型决定是否重试。
+- 单次发送和重试不得连续长时间占用 SPI/CPU，必须允许最高优先级的 `CAN_RX_Task` 抢占。
+- 批量 TX 时每发送一帧后检查是否有 RX 中断待处理；如有待处理 RX，立即让出给 `CAN_RX_Task`。
+- 进入 offline / fail-safe 状态后立即停止消费 `CAN TX Queue`，拒绝发送超时前残留的旧业务帧。
 
 推荐重试策略：
 
 | 错误 | 策略 |
 |---|---|
-| SPI 短暂忙 | 最多重试 2 次 |
-| TX buffer 满 | 等待一个短周期后重试 |
+| SPI 短暂忙 | 最多重试 2 次，每次重试前短暂让出 |
+| TX buffer 满 | 等待一个短周期后重试，等待期间允许 RX 抢占 |
 | CAN error passive | 继续发送并上报 |
 | bus-off | 停止发送，复位 XL2515，恢复后再发送 |
 
@@ -317,8 +322,10 @@ rtos_to_linux_ring
 
 - 初始化 GPIO14 为 XL2515 `INT#` 输入中断。
 - 中断中只释放 semaphore，不在 ISR 中读 SPI。
-- 任务上下文中读取 XL2515 中断标志。
-- 读取 RX buffer，转换为 `unified_frame_t` 回传 Linux。
+- 最高优先级任务上下文中读取 XL2515 中断标志。
+- 收到 GPIO14 中断后，应尽快 drain XL2515 的 RX0/RX1 硬件 buffer，直到确认没有待读 RX 帧。
+- 读取 RX buffer 后转换为 `unified_frame_t`，写入 `CAN RX Queue` 或回传 ring。
+- 检测 XL2515 RX overflow / overrun 标志，更新统计并作为高优先级告警回传 Linux。
 
 回传帧建议：
 
@@ -351,7 +358,24 @@ rtos_to_linux_ring
 
 - 单个任务 heartbeat 超时：记录错误，尝试软恢复相关模块。
 - XL2515 无响应：复位 CAN 控制器并重新初始化。
-- Linux 心跳超时：进入降级状态，保留 CAN RX 和状态上报，暂停接收新的 Linux 下发帧。
+- Linux 心跳超时：执行 `enter_fail_safe_offline`，停止发送路径，清空 `CAN TX Queue`，取消 XL2515 TX buffer，切换 CAN 控制器到 Listen-Only。
+
+### 7.7 Linux fail-safe offline
+
+Linux 心跳超时代表大核可能已经崩溃、重启或无法继续确认业务状态。此时小核不得继续发送超时前滞留的控制指令。
+
+进入 fail-safe offline 时按以下顺序处理：
+
+1. 设置 `linux_online = false` 和 `tx_enabled = false`。
+2. `Gateway_IPC_Task` 停止接收新的 Linux 下发业务帧，只保留恢复握手命令。
+3. `CAN_TX_Task` 停止消费 `CAN TX Queue`。
+4. 清空软件 `CAN TX Queue`，丢弃所有未发送业务帧。
+5. 调用 CAN 驱动取消 XL2515 已请求发送的 TX buffer。
+6. 清空 XL2515 TX buffer 和相关中断标志。
+7. 将 XL2515 切换到 Listen-Only 模式。
+8. 保留 `CAN_RX_Task`、`Status_Task` 和错误统计上报。
+
+Linux 恢复后必须重新走 HELLO / READY 握手。握手完成前，小核保持 Listen-Only，不自动恢复发送；握手完成后清除 offline 状态，重新进入 Normal Mode，并只接受恢复后的新 `sequence` 帧。
 
 ## 8. CAN 驱动设计
 
@@ -367,6 +391,10 @@ rtos_can_driver_set_bitrate()
 rtos_can_driver_send()
 rtos_can_driver_read()
 rtos_can_driver_get_error()
+rtos_can_driver_abort_tx()
+rtos_can_driver_clear_tx_buffers()
+rtos_can_driver_set_listen_only()
+rtos_can_driver_set_normal()
 rtos_can_driver_reset()
 ```
 
@@ -385,7 +413,7 @@ rtos_can_driver_reset()
 | SPI 初始频率 | 1MHz |
 | SPI 稳定运行频率 | 8MHz |
 | CAN bitrate | 500kbps |
-| CAN 模式 | Normal |
+| CAN 模式 | 默认 Normal，fail-safe offline 时切换 Listen-Only |
 | 调试模式 | 支持 Loopback 编译开关 |
 
 初始化顺序：
@@ -427,6 +455,8 @@ IOB 原理图已将这些信号引到 XL2515，因此 FreeRTOS BSP 侧需要确�
 | `tx_to_can_fail` | CAN 发送失败次数 |
 | `rx_from_can` | CAN 总线收到的帧数 |
 | `tx_to_linux` | 回传 Linux 的帧数 |
+| `rx_overrun` | 小核处理不及时导致的 CAN RX 过载次数 |
+| `xl2515_rx_overflow` | XL2515 RX0/RX1 硬件 buffer 溢出次数 |
 | `drop_crc` | CRC 错误丢帧 |
 | `drop_magic` | magic/version 错误丢帧 |
 | `drop_dlc` | DLC 非法丢帧 |
@@ -437,6 +467,11 @@ IOB 原理图已将这些信号引到 XL2515，因此 FreeRTOS BSP 侧需要确�
 | `can_bus_off` | CAN bus-off 次数 |
 | `can_error_passive` | CAN error passive 次数 |
 | `linux_heartbeat_timeout` | Linux 心跳超时次数 |
+| `linux_offline_enter` | 进入 Linux offline / fail-safe 次数 |
+| `tx_queue_purged` | fail-safe 时清空软件 TX 队列的帧数 |
+| `xl2515_tx_aborted` | fail-safe 时取消 XL2515 TX buffer 的次数 |
+| `listen_only_enter` | 切入 Listen-Only 模式次数 |
+| `linux_rehandshake_ok` | Linux 恢复握手成功次数 |
 
 ### 9.2 错误处理策略
 
@@ -450,8 +485,10 @@ IOB 原理图已将这些信号引到 XL2515，因此 FreeRTOS BSP 侧需要确�
 | CAN TX Queue 满 | 丢弃最新帧，计数，上报队列满 |
 | RTOS->Linux ring 满 | 丢弃回传帧，保留统计，下一次状态上报体现 |
 | SPI 超时 | 重试，仍失败则复位 XL2515 |
+| XL2515 RX overflow | 立即 drain RX buffer，计数，并作为高优先级告警回传 Linux |
 | CAN bus-off | 停止 TX，复位 XL2515，恢复后重新进入 Normal Mode |
-| Linux 心跳超时 | 暂停下发接收，继续 CAN RX 与状态维护 |
+| Linux 心跳超时 | 执行 fail-safe offline：停止 TX，清空 TX 队列，取消 XL2515 TX buffer，切 Listen-Only |
+| Linux 心跳恢复 | 先完成 HELLO / READY 重新握手，再切回 Normal Mode 并恢复接收新帧 |
 
 ## 10. 配置项
 
@@ -471,6 +508,8 @@ IOB 原理图已将这些信号引到 XL2515，因此 FreeRTOS BSP 侧需要确�
 | `RTOS_SPI_RUN_HZ` | 8000000 |
 | `RTOS_CAN_TX_RETRY_MAX` | 2 |
 | `RTOS_CAN_LOOPBACK_ENABLE` | 0 |
+| `RTOS_FAIL_SAFE_LISTEN_ONLY_ENABLE` | 1 |
+| `RTOS_LINUX_REHANDSHAKE_REQUIRED` | 1 |
 
 这些默认值用于 v1 调通，后续可根据实测吞吐和稳定性调整。
 
@@ -490,8 +529,8 @@ gateway_forward_init()
 4. 初始化 SPI2、GPIO14 和 XL2515。
 5. 创建 `CAN TX Queue` 和 `CAN RX Queue`。
 6. 创建 `Gateway_IPC_Task`。
-7. 创建 `CAN_TX_Task`。
-8. 创建 `CAN_RX_Task`。
+7. 创建 `CAN_RX_Task`。
+8. 创建 `CAN_TX_Task`。
 9. 创建 `Status_Task`。
 10. 创建 `Watchdog_Task`。
 11. 向 Linux 回传 `RTOS_READY`。
@@ -514,6 +553,9 @@ Linux 大核侧需要遵守：
 - 标准帧不设置 `EXTENDED_ID`，且 `can_id <= 0x7FF`。
 - 扩展帧设置 `EXTENDED_ID`，且 `can_id <= 0x1FFFFFFF`。
 - 写共享内存后 flush cache，再通过 `/dev/cvi-rtos-cmdqu` 通知小核。
+- Linux 重启或心跳恢复后，必须先发送 HELLO / READY 重新握手命令。
+- 重新握手完成前，小核保持 Listen-Only，不接受普通业务下发帧。
+- 重新握手完成后，Linux 必须重新下发仍然需要执行的业务指令；小核不会保留或重放超时前的旧 TX 队列内容。
 
 ## 13. 测试方案
 
@@ -543,6 +585,9 @@ Linux 大核侧需要遵守：
 - cmdqu 通知一次批量读取多帧。
 - 非法帧不进入 CAN TX Queue。
 - CAN TX Queue 满时丢弃最新帧。
+- RX/TX 并发时，`CAN_RX_Task` 不被 `CAN_TX_Task` 饿死。
+- Linux 心跳超时后，`CAN_TX_Task` 停止消费 TX 队列并拒绝发送旧帧。
+- Linux 恢复握手完成前，普通业务下发帧不会重新打开 TX 路径。
 - Status_Task 周期上报统计。
 - Watchdog_Task 检测任务 heartbeat。
 
@@ -552,6 +597,13 @@ Linux 大核侧需要遵守：
 - XL2515 loopback 模式发送接收测试。
 - Normal 模式接 CAN 分析仪发送测试。
 - CAN 分析仪发送，小核 RX 并回传 Linux。
+- 高负载 CAN RX 压力测试：CAN 分析仪连续发送，确认小核及时 drain RX0/RX1 buffer。
+- RX/TX 并发压力测试：Linux 持续下发 TX，同时 CAN 总线持续输入 RX，确认不发生 RX 饿死。
+- XL2515 RX overflow 检测测试：人工制造溢出，确认 `rx_overrun` / `xl2515_rx_overflow` 计数和告警回传正确。
+- Linux 心跳超时测试：确认 TX Queue 被清空，XL2515 TX buffer 被取消，CAN 不再发出旧控制帧。
+- Linux 重启恢复测试：确认 HELLO / READY 握手完成前不会自动恢复 Normal Mode。
+- Listen-Only 测试：确认小核仍能 RX / 统计 / 上报状态，但不会主动 TX。
+- TX 积压并发超时测试：Linux 超时时如果 TX 队列正有积压，确认残留控制指令全部丢弃并计数。
 - bus-off 场景恢复测试。
 - 拔掉 CAN_H/CAN_L 后错误统计测试。
 
@@ -633,4 +685,3 @@ CAN 分析仪 / 车身节点
 - XL2515 与 MCP2515 的寄存器兼容程度。
 - 最终 CAN bitrate 是否固定 500kbps，还是需要 Linux 动态配置。
 - CAN RX 回传时是否需要新增 `PROTOCOL_TYPE_CAN_BUS`。
-
