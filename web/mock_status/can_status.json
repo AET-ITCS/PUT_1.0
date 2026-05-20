@@ -1,0 +1,10 @@
+{
+  "updated_at_ms": 12345678,
+  "bus_state": "normal",
+  "tx_count": 2048,
+  "rx_count": 512,
+  "error_count": 3,
+  "drop_count": 1,
+  "last_error": "last arbitration lost recovered"
+}
+

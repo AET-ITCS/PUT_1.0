@@ -22,6 +22,9 @@
           crossSystem = nixpkgs.lib.systems.examples.riscv64;
         };
 
+        # RISC-V 64-bit musl cross-compilation for static Web backend builds
+        pkgsCrossRiscV64Musl = pkgs.pkgsCross.riscv64-musl;
+
         # RISC-V 64-bit bare-metal/embedded toolchain for RTOS firmware
         pkgsCrossRiscV64Embedded = import nixpkgs {
           inherit system;
@@ -60,16 +63,19 @@
 
         # ── Rust cross-compilation target triples ─────────────────────
         #   riscv64gc-unknown-linux-gnu    → 大核 Linux app
+        #   riscv64gc-unknown-linux-musl   → Web backend static target
         #   riscv64gc-unknown-none-elf     → 小核 RTOS firmware (bare-metal)
         #   aarch64-unknown-linux-gnu      → 备选: ARM64 Linux
         rustCrossTargets = [
           "riscv64gc-unknown-linux-gnu"
+          "riscv64gc-unknown-linux-musl"
           "riscv64gc-unknown-none-elf"
           "aarch64-unknown-linux-gnu"
         ];
 
         # Paths to Rust cross linkers
         riscv64LinuxLinker = "${pkgsCrossRiscV64.buildPackages.gcc}/bin/${pkgsCrossRiscV64.stdenv.cc.targetPrefix}gcc";
+        riscv64MuslLinker  = "${pkgsCrossRiscV64Musl.stdenv.cc}/bin/${pkgsCrossRiscV64Musl.stdenv.cc.targetPrefix}gcc";
         riscv64ElfLinker   = "${pkgsCrossRiscV64Embedded.buildPackages.gcc}/bin/${pkgsCrossRiscV64Embedded.stdenv.cc.targetPrefix}gcc";
         aarch64Linker      = "${pkgsCrossAarch64.buildPackages.gcc}/bin/${pkgsCrossAarch64.stdenv.cc.targetPrefix}gcc";
       in
@@ -93,6 +99,8 @@
               pkgsCrossRiscV64.buildPackages.gcc
               pkgsCrossRiscV64.buildPackages.binutils
               pkgsCrossRiscV64.buildPackages.gdb
+              pkgsCrossRiscV64Musl.stdenv.cc
+              pkgsCrossRiscV64Musl.binutils
 
               # ---- RISC-V bare-metal toolchain (small core RTOS target) ----
               pkgsCrossRiscV64Embedded.buildPackages.gcc
@@ -107,6 +115,9 @@
 
               # ---- Rust toolchain (native + cross) ----
             ] ++ rustPkgs ++ [
+              # ---- Web frontend toolchain ----
+              nodejs_22
+              lld
 
               # ---- Python for tools ----
               pythonEnv
@@ -180,6 +191,7 @@
 
               # Ensure stable toolchain is installed
               rustup toolchain install stable 2>/dev/null || true
+              rustup default stable 2>/dev/null || true
 
               # Install cross-compilation targets
               for target in ${builtins.toString rustCrossTargets}; do
@@ -193,12 +205,15 @@
               # ── Cargo cross-compilation config via environment ──
               # Keep user-owned .cargo/config.toml untouched.
               export CARGO_TARGET_RISCV64GC_UNKNOWN_LINUX_GNU_LINKER="${riscv64LinuxLinker}"
+              export CARGO_TARGET_RISCV64GC_UNKNOWN_LINUX_MUSL_LINKER="${riscv64MuslLinker}"
               export CARGO_TARGET_RISCV64GC_UNKNOWN_NONE_ELF_LINKER="${riscv64ElfLinker}"
               export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER="${aarch64Linker}"
               export CARGO_ALIAS_BUILD_RISCV64_LINUX="build --target riscv64gc-unknown-linux-gnu"
+              export CARGO_ALIAS_BUILD_RISCV64_LINUX_MUSL="build --target riscv64gc-unknown-linux-musl"
               export CARGO_ALIAS_BUILD_RISCV64_ELF="build --target riscv64gc-unknown-none-elf"
               export CARGO_ALIAS_BUILD_AARCH64_LINUX="build --target aarch64-unknown-linux-gnu"
               export CARGO_ALIAS_CHECK_RISCV64_LINUX="check --target riscv64gc-unknown-linux-gnu"
+              export CARGO_ALIAS_CHECK_RISCV64_LINUX_MUSL="check --target riscv64gc-unknown-linux-musl"
               export CARGO_ALIAS_CHECK_RISCV64_ELF="check --target riscv64gc-unknown-none-elf"
               export CARGO_ALIAS_CHECK_AARCH64_LINUX="check --target aarch64-unknown-linux-gnu"
               echo "    ✓ Cargo linkers 和快捷别名已通过环境变量配置"
@@ -211,6 +226,7 @@
               export ARMHF_LINUX_CROSS="${pkgsCrossArmHF.stdenv.cc.targetPrefix}"
 
               export RISCV64_LINUX_CC="${pkgsCrossRiscV64.buildPackages.gcc}/bin/${pkgsCrossRiscV64.stdenv.cc.targetPrefix}gcc"
+              export RISCV64_LINUX_MUSL_CC="${riscv64MuslLinker}"
               export RISCV64_ELF_CC="${pkgsCrossRiscV64Embedded.buildPackages.gcc}/bin/${pkgsCrossRiscV64Embedded.stdenv.cc.targetPrefix}gcc"
               export AARCH64_LINUX_CC="${pkgsCrossAarch64.buildPackages.gcc}/bin/${pkgsCrossAarch64.stdenv.cc.targetPrefix}gcc"
 
@@ -218,15 +234,18 @@
               export CARGO_HOME="$HOME/.cargo"
               export RUSTUP_HOME="$HOME/.rustup"
               export RUST_TARGET_RISCV64_LINUX="riscv64gc-unknown-linux-gnu"
+              export RUST_TARGET_RISCV64_LINUX_MUSL="riscv64gc-unknown-linux-musl"
               export RUST_TARGET_RISCV64_ELF="riscv64gc-unknown-none-elf"
               export RUST_TARGET_AARCH64_LINUX="aarch64-unknown-linux-gnu"
 
               # ── CMake toolchain file path hints ──
               echo "  导出变量 (可在 CMake / Cargo 中使用):"
               echo "    \$RISCV64_LINUX_CC  = ${pkgsCrossRiscV64.buildPackages.gcc}/bin/${pkgsCrossRiscV64.stdenv.cc.targetPrefix}gcc"
+              echo "    \$RISCV64_LINUX_MUSL_CC = ${riscv64MuslLinker}"
               echo "    \$RISCV64_ELF_CC    = ${pkgsCrossRiscV64Embedded.buildPackages.gcc}/bin/${pkgsCrossRiscV64Embedded.stdenv.cc.targetPrefix}gcc"
               echo "    \$AARCH64_LINUX_CC  = ${pkgsCrossAarch64.buildPackages.gcc}/bin/${pkgsCrossAarch64.stdenv.cc.targetPrefix}gcc"
               echo "    \$RUST_TARGET_RISCV64_LINUX = $RUST_TARGET_RISCV64_LINUX"
+              echo "    \$RUST_TARGET_RISCV64_LINUX_MUSL = $RUST_TARGET_RISCV64_LINUX_MUSL"
               echo "    \$RUST_TARGET_RISCV64_ELF   = $RUST_TARGET_RISCV64_ELF"
               echo ""
 
@@ -245,9 +264,11 @@
               echo "    ── Rust ──"
               echo "    cargo build                                                                  - 编译 (native)"
               echo "    cargo build-riscv64-linux                                                    - 编译 (RISC-V Linux)"
+              echo "    cargo build-riscv64-linux-musl                                               - 编译 Web 后端静态目标"
               echo "    cargo build-riscv64-elf                                                      - 编译 (RISC-V bare-metal)"
               echo "    cargo build-aarch64-linux                                                    - 编译 (ARM64 Linux)"
               echo "    cargo check-riscv64-linux                                                    - 检查 (RISC-V Linux)"
+              echo "    npm --prefix web/frontend run build                                          - 构建 Web 前端"
               echo ""
 
               # ── Verify all toolchains ──
@@ -266,6 +287,11 @@
                 echo "    ✓ riscv64-linux-gcc: $(${pkgsCrossRiscV64.stdenv.cc.targetPrefix}gcc --version | head -n1)"
               else
                 echo "    ✗ riscv64-linux-gcc: NOT FOUND"
+              fi
+              if command -v "${pkgsCrossRiscV64Musl.stdenv.cc.targetPrefix}gcc" &>/dev/null; then
+                echo "    ✓ riscv64-linux-musl-gcc: $(${pkgsCrossRiscV64Musl.stdenv.cc.targetPrefix}gcc --version | head -n1)"
+              else
+                echo "    ✗ riscv64-linux-musl-gcc: NOT FOUND"
               fi
               if command -v "${pkgsCrossRiscV64Embedded.stdenv.cc.targetPrefix}gcc" &>/dev/null; then
                 echo "    ✓ riscv64-elf-gcc: $(${pkgsCrossRiscV64Embedded.stdenv.cc.targetPrefix}gcc --version | head -n1)"
@@ -318,11 +344,14 @@
               gcc
               git
               pkgsCrossRiscV64.buildPackages.gcc
+              pkgsCrossRiscV64Musl.stdenv.cc
               pkgsCrossRiscV64Embedded.buildPackages.gcc
               sdcc
               rustup
               cargo
               rustc
+              nodejs_22
+              lld
             ];
 
             shellHook = ''
@@ -334,8 +363,12 @@
               echo "  * Rust:    $(rustc --version 2>/dev/null || echo 'run `rustup toolchain install stable`')"
               echo ""
               echo "  Rust 交叉编译目标安装:"
+              echo "    rustup default stable"
               echo "    rustup target add riscv64gc-unknown-linux-gnu"
+              echo "    rustup target add riscv64gc-unknown-linux-musl"
               echo "    rustup target add riscv64gc-unknown-none-elf"
+              echo "  Web 前端:"
+              echo "    npm --prefix web/frontend run build"
             '';
           };
         };
@@ -347,6 +380,7 @@
         packages = {
           # ── Cross-compilation environment for the RISC-V big core ──
           riscv64-linux-toolchain = pkgsCrossRiscV64.buildPackages.gcc;
+          riscv64-linux-musl-toolchain = pkgsCrossRiscV64Musl.stdenv.cc;
           riscv64-elf-toolchain = pkgsCrossRiscV64Embedded.buildPackages.gcc;
           aarch64-linux-toolchain = pkgsCrossAarch64.buildPackages.gcc;
 
@@ -356,6 +390,8 @@
             paths = with pkgs; [
               pkgsCrossRiscV64.buildPackages.gcc
               pkgsCrossRiscV64.buildPackages.binutils
+              pkgsCrossRiscV64Musl.stdenv.cc
+              pkgsCrossRiscV64Musl.binutils
               pkgsCrossRiscV64Embedded.buildPackages.gcc
               pkgsCrossRiscV64Embedded.buildPackages.binutils
               sdcc
@@ -365,6 +401,8 @@
               rustup
               cargo
               rustc
+              nodejs_22
+              lld
             ];
           };
         };

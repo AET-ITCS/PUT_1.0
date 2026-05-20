@@ -39,27 +39,27 @@ Vue3 监控页面
 
 后端：
 
-| 项目 | 方案 |
-|---|---|
-| 语言 | Rust |
-| Web 框架 | Axum |
-| 异步运行时 | Tokio |
-| JSON 序列化 | Serde |
-| HTTP 中间件 | tower-http |
-| 日志 | tracing |
-| 目标平台 | Milk-V Duo 256M 大核 Linux |
-| 交叉编译目标 | `riscv64gc-unknown-linux-musl` |
-| 发布形式 | `put-webd` 单个静态后端可执行文件 |
+| 项目         | 方案                              |
+| ------------ | --------------------------------- |
+| 语言         | Rust                              |
+| Web 框架     | Axum                              |
+| 异步运行时   | Tokio                             |
+| JSON 序列化  | Serde                             |
+| HTTP 中间件  | tower-http                        |
+| 日志         | tracing                           |
+| 目标平台     | Milk-V Duo 256M 大核 Linux        |
+| 交叉编译目标 | `riscv64gc-unknown-linux-musl`    |
+| 发布形式     | `put-webd` 单个静态后端可执行文件 |
 
 前端：
 
-| 项目 | 方案 |
-|---|---|
-| 框架 | Vue3 |
-| 构建工具 | Vite |
-| 语言 | TypeScript 优先，普通 JavaScript 也可作为第一版简化 |
-| 发布形式 | 外置 `dist/` 静态文件 |
-| 部署方式 | Rust 后端托管 `dist/` |
+| 项目     | 方案                                                |
+| -------- | --------------------------------------------------- |
+| 框架     | Vue3                                                |
+| 构建工具 | Vite                                                |
+| 语言     | TypeScript 优先，普通 JavaScript 也可作为第一版简化 |
+| 发布形式 | 外置 `dist/` 静态文件                               |
+| 部署方式 | Rust 后端托管 `dist/`                               |
 
 注意：“单个可执行程序”指 Rust 后端 `put-webd` 是单个静态二进制文件。完整 Web 部署仍包含：
 
@@ -124,8 +124,8 @@ Vue3 前端负责：
 
 ```text
                          ┌──────────────────────────────┐
-                         │          浏览器 / PC          │
-                         │       Vue3 Web UI             │
+                         │          浏览器 / PC         │
+                         │       Vue3 Web UI            │
                          └───────────────┬──────────────┘
                                          │ HTTP
                                          v
@@ -152,8 +152,8 @@ Vue3 前端负责：
                          │
 ┌────────────────────────┴────────────────────────┐
 │                 linux_app 大核程序              │
-│  协议接入 / 解析 / 统一帧封装 / IPC / 日志       │
-│  └── 写入 /run/put/status/ 和 /var/log/put/      │
+│  协议接入 / 解析 / 统一帧封装 / IPC / 日志      │
+│  └── 写入 /run/put/status/ 和 /var/log/put/     │
 └────────────────────────┬────────────────────────┘
                          │
                          v
@@ -199,16 +199,16 @@ web/
 
 这类数据属于系统事实，不需要 `linux_app` 参与：
 
-| 数据 | 来源 |
-|---|---|
-| CPU 使用率 | `/proc/stat` |
-| 内存占用 | `/proc/meminfo` |
-| 系统运行时间 | `/proc/uptime` |
-| 网络接口和流量 | `/proc/net/dev`、`/sys/class/net` |
-| 磁盘空间 | `statvfs` 或 `/proc/mounts` |
-| USB/串口/网络设备存在性 | `/dev`、`/sys` |
-| Web 后端日志 | `/var/log/put/web.log` |
-| 大核应用日志 | `/var/log/put/linux_app.log` |
+| 数据                    | 来源                              |
+| ----------------------- | --------------------------------- |
+| CPU 使用率              | `/proc/stat`                      |
+| 内存占用                | `/proc/meminfo`                   |
+| 系统运行时间            | `/proc/uptime`                    |
+| 网络接口和流量          | `/proc/net/dev`、`/sys/class/net` |
+| 磁盘空间                | `statvfs` 或 `/proc/mounts`       |
+| USB/串口/网络设备存在性 | `/dev`、`/sys`                    |
+| Web 后端日志            | `/var/log/put/web.log`            |
+| 大核应用日志            | `/var/log/put/linux_app.log`      |
 
 ### 6.2 linux_app 写入的业务快照
 
@@ -249,13 +249,13 @@ web/
 
 模块 `status` 建议取值：
 
-| 状态 | 含义 |
-|---|---|
-| `online` | 模块存在且最近通信正常 |
-| `offline` | 模块不存在或连接断开 |
-| `stale` | 长时间没有新数据 |
-| `error` | 有明确错误 |
-| `unknown` | 没有足够数据判断 |
+| 状态      | 含义                   |
+| --------- | ---------------------- |
+| `online`  | 模块存在且最近通信正常 |
+| `offline` | 模块不存在或连接断开   |
+| `stale`   | 长时间没有新数据       |
+| `error`   | 有明确错误             |
+| `unknown` | 没有足够数据判断       |
 
 ### 6.4 CAN 状态快照示例
 
@@ -374,9 +374,9 @@ web/
 
 参数：
 
-| 参数 | 默认 | 说明 |
-|---|---:|---|
-| `limit` | 50 | 返回最近事件数量 |
+| 参数    | 默认 | 说明             |
+| ------- | ---: | ---------------- |
+| `limit` |   50 | 返回最近事件数量 |
 
 数据来源：
 
@@ -390,13 +390,13 @@ web/
 
 参数：
 
-| 参数 | 默认 | 说明 |
-|---|---|---|
-| `source` | `linux_app` | 日志来源，例如 `linux_app`、`web` |
-| `level` | 空 | 日志等级过滤 |
-| `keyword` | 空 | 关键字过滤 |
-| `cursor` | 空 | 分页游标 |
-| `limit` | `200` | 返回行数上限 |
+| 参数      | 默认        | 说明                              |
+| --------- | ----------- | --------------------------------- |
+| `source`  | `linux_app` | 日志来源，例如 `linux_app`、`web` |
+| `level`   | 空          | 日志等级过滤                      |
+| `keyword` | 空          | 关键字过滤                        |
+| `cursor`  | 空          | 分页游标                          |
+| `limit`   | `200`       | 返回行数上限                      |
 
 示例：
 
@@ -442,26 +442,26 @@ snapshot_stale_ms = 5000
 
 默认值：
 
-| 配置 | 默认值 |
-|---|---|
-| `bind_addr` | `0.0.0.0:8080` |
-| `static_dir` | `/opt/put/web/dist` |
-| `status_dir` | `/run/put/status` |
-| `log_dir` | `/var/log/put` |
-| `readonly` | `true` |
-| `snapshot_stale_ms` | `5000` |
+| 配置                | 默认值              |
+| ------------------- | ------------------- |
+| `bind_addr`         | `0.0.0.0:8080`      |
+| `static_dir`        | `/opt/put/web/dist` |
+| `status_dir`        | `/run/put/status`   |
+| `log_dir`           | `/var/log/put`      |
+| `readonly`          | `true`              |
+| `snapshot_stale_ms` | `5000`              |
 
 ### 8.3 错误处理
 
-| 场景 | API 行为 |
-|---|---|
-| 状态快照不存在 | 返回 `unknown`，HTTP 200 |
-| 状态快照过期 | 返回 `stale` 或 `offline`，HTTP 200 |
-| 状态快照 JSON 损坏 | 返回 `unknown`，事件中记录解析错误 |
-| 日志文件不存在 | 返回空日志列表，HTTP 200 |
-| `/proc` 读取失败 | 对应资源字段标记 `unknown` |
-| 配置文件不存在 | 使用默认配置启动 |
-| `dist/` 不存在 | API 仍可用，访问页面返回 404 |
+| 场景               | API 行为                            |
+| ------------------ | ----------------------------------- |
+| 状态快照不存在     | 返回 `unknown`，HTTP 200            |
+| 状态快照过期       | 返回 `stale` 或 `offline`，HTTP 200 |
+| 状态快照 JSON 损坏 | 返回 `unknown`，事件中记录解析错误  |
+| 日志文件不存在     | 返回空日志列表，HTTP 200            |
+| `/proc` 读取失败   | 对应资源字段标记 `unknown`          |
+| 配置文件不存在     | 使用默认配置启动                    |
+| `dist/` 不存在     | API 仍可用，访问页面返回 404        |
 
 ### 8.4 日志
 
@@ -562,15 +562,15 @@ Vue3 App
 
 推荐刷新周期：
 
-| 数据 | 周期 |
-|---|---:|
-| `/api/health` | 5s |
-| `/api/modules` | 1s |
-| `/api/resources` | 2s |
-| `/api/can-status` | 1s |
-| `/api/ipc-status` | 1s |
-| `/api/events` | 3s |
-| `/api/logs` | 用户主动刷新或 5s |
+| 数据              |              周期 |
+| ----------------- | ----------------: |
+| `/api/health`     |                5s |
+| `/api/modules`    |                1s |
+| `/api/resources`  |                2s |
+| `/api/can-status` |                1s |
+| `/api/ipc-status` |                1s |
+| `/api/events`     |                3s |
+| `/api/logs`       | 用户主动刷新或 5s |
 
 ## 11. 构建与部署
 

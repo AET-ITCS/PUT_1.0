@@ -453,11 +453,13 @@ nix develop
 |------|------|------|
 | **基础构建** | `cmake`, `make`, `gcc`, `gdb` | 本地编译与调试 |
 | **RISC-V Linux 交叉编译** | `riscv64-unknown-linux-gnu-gcc` | 大核 Linux 应用编译 |
+| **RISC-V musl 交叉编译** | `riscv64-unknown-linux-musl-gcc` | Web 后端静态链接 |
 | **RISC-V 裸机交叉编译** | `riscv64-none-elf-gcc` | 小核 RTOS 固件编译 |
 | **ARM64 交叉编译** | `aarch64-linux-gnu-gcc` | 备选大核目标 |
 | **C51 编译器** | `sdcc` | C51 低功耗程序编译 |
 | **Rust** | `rustc`, `cargo`, `rustup` | Rust 语言支持 |
-| **Rust 交叉编译目标** | `riscv64gc-unknown-linux-gnu` 等 | Rust 交叉编译 |
+| **Rust 交叉编译目标** | `riscv64gc-unknown-linux-gnu`、`riscv64gc-unknown-linux-musl` 等 | Rust 交叉编译 |
+| **Web 前端** | `node`, `npm` | Vue3 / Vite 构建 |
 | **Python 工具** | `python3`, `pyserial` | 调试脚本运行 |
 | **代码分析** | `clang-tools`, `cppcheck`, `clippy`, `rustfmt` | 代码质量检查 |
 
@@ -481,9 +483,21 @@ cmake --build build_rtos
 
 ```bash
 cargo build-riscv64-linux        # 编译 RISC-V Linux 目标
+cargo build-riscv64-linux-musl   # 编译 Web 后端静态目标
 cargo build-riscv64-elf          # 编译 RISC-V bare-metal 目标
 cargo check-riscv64-linux        # 仅检查（无需完整编译）
 ```
+
+##### Web 监控模块
+
+```bash
+npm --prefix web/frontend ci
+npm --prefix web/frontend run build
+cargo test --manifest-path web/backend/Cargo.toml
+cargo run --manifest-path web/backend/Cargo.toml -- --config web/config/web_config.dev.toml
+```
+
+开发配置会读取 `web/mock_status/` 与 `web/mock_logs/`；生产配置仍读取 `/run/put/status/` 与 `/var/log/put/`。
 
 ##### 可用的 Shell 环境
 
@@ -505,9 +519,11 @@ nix-shell
 | 变量 | 值示例 | 说明 |
 |------|--------|------|
 | `RISCV64_LINUX_CC` | `/nix/store/.../bin/riscv64-unknown-linux-gnu-gcc` | RISC-V Linux C 编译器路径 |
+| `RISCV64_LINUX_MUSL_CC` | `/nix/store/.../bin/riscv64-unknown-linux-musl-gcc` | RISC-V Linux musl C 编译器路径 |
 | `RISCV64_ELF_CC` | `/nix/store/.../bin/riscv64-none-elf-gcc` | RISC-V 裸机 C 编译器路径 |
 | `AARCH64_LINUX_CC` | `/nix/store/.../bin/aarch64-linux-gnu-gcc` | ARM64 C 编译器路径 |
 | `RUST_TARGET_RISCV64_LINUX` | `riscv64gc-unknown-linux-gnu` | Rust RISC-V Linux target |
+| `RUST_TARGET_RISCV64_LINUX_MUSL` | `riscv64gc-unknown-linux-musl` | Rust RISC-V Linux static Web target |
 | `RUST_TARGET_RISCV64_ELF` | `riscv64gc-unknown-none-elf` | Rust RISC-V bare-metal target |
 
 #### 开发环境 — 传统方式（备选）
@@ -522,8 +538,10 @@ nix-shell
 - **Rust** (可选)：通过 `rustup` 安装，并添加 target：
   ```bash
   rustup target add riscv64gc-unknown-linux-gnu
+  rustup target add riscv64gc-unknown-linux-musl
   rustup target add riscv64gc-unknown-none-elf
   ```
+- **Node.js / npm**：用于构建 `web/frontend`。
 
 Milk-V Duo 官方 SDK 地址：https://github.com/milkv-duo/duo-buildroot-sdk
 
