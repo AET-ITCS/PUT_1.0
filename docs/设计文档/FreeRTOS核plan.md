@@ -668,6 +668,12 @@ CAN 分析仪 / 车身节点
 
 ## 14. 分阶段实现路线
 
+当前实现边界：
+
+- 本轮只实现 FreeRTOS 小核侧 `freertos/cvitek/task/comm` 下的私有代码。
+- `common/`、`linux_app/`、共享内存实现、Web、既有测试脚本和大核协议链路暂不修改。
+- 小核代码引用现有 `common/include/unified_frame.h` 和 `common/src/crc16.c`，不复制、不改公共 ABI。
+
 ### 阶段 1：文档与接口边界锁定
 
 - 确认 `unified_frame_t` 96 字节 ABI 不再变更。
@@ -679,12 +685,12 @@ CAN 分析仪 / 车身节点
 ### 阶段 2：小核最小链路，不依赖真实共享内存
 
 - 建立 `freertos/cvitek/task/comm` 目录。
-- 实现 `comm_main.c` 和 `gateway_forward_init()`。
-- 实现 frame validator。
-- 实现 CAN TX Queue。
-- 通过 mock IPC、测试入口或静态测试帧注入 `unified_frame_t`。
-- `rtos_ipc` 先保留读取接口和任务框架，不实现真实共享 ring 读取。
-- 暂用 mock CAN driver 打印或计数。
+- 实现 `comm_main.c` 和 `gateway_forward_init()`，初始化状态统计、mock IPC、mock CAN driver 和软件 TX 队列。
+- 实现 FreeRTOS 侧 frame validator，校验 `magic/version/frame_type/source_protocol/vehicle_type/can_flags/can_id/can_dlc/crc16`，CRC 覆盖统一帧前 94 字节。
+- 实现 `rtos_can_forward_submit_frame()`，合法 CAN 数据帧进入 mock TX 队列并同步交给 mock CAN driver，非法帧只更新 drop/error 统计。
+- `rtos_ipc` 只保留初始化和 mock 注入入口，不实现真实共享 ring、cache 同步或 cmdqu doorbell。
+- `rtos_can_driver` 先提供私有抽象和 mock 计数实现；XL2515 SPI 寄存器、GPIO14 中断和真实 FreeRTOS task 调度留到后续阶段。
+- 增加 FreeRTOS 侧 mock 构建/测试入口，用静态注入帧验证合法转发和 magic/version/CRC/DLC/flag/CAN ID 等非法路径。
 
 ### 阶段 3：XL2515 驱动
 
