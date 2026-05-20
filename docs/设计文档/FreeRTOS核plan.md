@@ -195,52 +195,68 @@ Web 监控边界：
 - `linux_app` 接收小核状态后，整理为 `can_status.json`、`ipc_status.json`、`events.jsonl` 等快照文件。
 - Web 后端只读取这些快照文件，不向小核下发启停 CAN、清空统计、设置 bitrate 等控制命令。
 
-### 5.2 cmdqu 与共享内存分工
+### 5.2 共享内存接口预留
 
-推荐采用：
+当前共享内存模块还没有实现，本方案只预留对接接口，不负责实现共享内存内部细节。共享内存负责人后续可以选择 ring、mailbox、DMA 或其他机制，只要对上层提供“发送一帧 `unified_frame_t`”的能力即可。
 
-```text
-cmdqu / mailbox：doorbell + command id + ring index hint
-共享内存 ring：固定 96 字节 unified_frame_t slot
-```
-
-原因：
-
-- `unified_frame_t` 固定 96 字节，直接塞进 cmdqu 可能受命令长度限制。
-- 共享内存 ring 更适合连续转发和压力测试。
-- cmdqu 只负责唤醒小核，降低 ISR 和 IPC 处理复杂度。
-
-### 5.3 共享 ring 设计
-
-Linux -> RTOS 和 RTOS -> Linux 各使用一个 ring：
+现有公共占位接口位于：
 
 ```text
-linux_to_rtos_ring
-rtos_to_linux_ring
+common/include/shared_memory_ipc.h
 ```
 
-每个 ring 建议：
+当前只保留最小发送契约：
 
-| 项目           |  v1 默认值 |
-| -------------- | ---------: |
-| slot 数量      |         64 |
-| slot 大小      |    96 字节 |
-| write index    | `uint32_t` |
-| read index     | `uint32_t` |
-| flags / status | `uint32_t` |
+```c
+typedef unified_error_t (*shared_memory_ipc_send_fn_t)(const unified_frame_t *frame);
+```
 
-跨核共享结构不使用通用字节环形缓冲区结构，原因是这类结构通常包含本地指针，不适合作为跨核共享内存 ABI。共享内存 ring 应使用固定偏移、固定 slot 的结构。
+对本小核方案来说，后续共享内存负责人只需要满足：
 
-### 5.4 Cache 与内存屏障
+- 接收一帧完整的 `const unified_frame_t *frame`。
+- 完成写共享内存和通知小核的内部动作。
+- 成功返回 `UNIFIED_OK`，失败返回 `unified_error_t` 公共错误码。
+- 不修改传入的 `frame`。
+- 不要求大核业务层知道共享内存内部是 ring、mailbox、DMA 还是其他结构。
 
-共享内存通信必须显式处理 cache 一致性：
+`linux_app/ipc/ipc_to_rtos.c` 当前仍是打印 stub。共享内存模块完成后，只替换 `ipc_to_rtos_send()` 内部实现，或者接入一个兼容 `shared_memory_ipc_send_fn_t` 的发送函数；协议解析层和 `frame_packer` 不需要改。
 
-- Linux 写 slot 后，先 flush cache，再更新 `write_index`，最后通过 cmdqu 通知小核。
-- 小核收到通知后，先 invalidate 对应 slot，再读取 `unified_frame_t`。
-- 小核写回传 slot 后，同样 flush，再通知 Linux。
-- 更新索引前后使用内存屏障，避免乱序导致对端读到半帧。
+### 5.3 对接边界
 
-具体 cache API 由 SG2002 SDK / FreeRTOS BSP 提供，文档只约束调用时机。
+本方案只约束共享内存模块和大小核业务层之间的边界：
+
+| 对接方 | 只需要依赖 | 不需要关心 |
+| ------ | ---------- | ---------- |
+| 大核协议转换层 | `ipc_to_rtos_send(const unified_frame_t *frame)` | 共享内存物理地址、ring 结构、cache API、cmdqu ioctl |
+| 共享内存模块 | `const unified_frame_t *frame` 和公共错误码 | 外部协议解析、CAN 业务含义、Web 展示 |
+| 小核转发逻辑 | 能收到完整 `unified_frame_t` | Linux 外部协议来源、共享内存内部实现细节 |
+| Web 模块 | `/run/put/status/` 状态快照 | 共享内存和小核内部接口 |
+
+共享内存模块实现时建议遵守以下约束，但具体 ABI 由共享内存负责人最终确定：
+
+- 传输载荷必须是一帧 `UNIFIED_FRAME_LENGTH` 长度的 `unified_frame_t`。
+- 不能在共享内存 ABI 中暴露本地指针。
+- 如果内部使用共享内存 ring，应自行处理读写索引、满/空判断和 cache 同步。
+- 如果发送失败，应返回公共错误码，不静默丢帧。
+- 发送接口不应长时间阻塞大核协议转换层。
+
+### 5.4 待共享内存模块确认项
+
+以下内容不由本小核方案决定，后续由共享内存负责人补充：
+
+- 共享内存物理地址和总大小。
+- Linux 设备树 `reserved-memory` 配置。
+- FreeRTOS linker script / BSP 中的共享内存映射方式。
+- 是否采用 ring queue，以及 ring metadata 的具体布局。
+- cache flush / invalidate / memory barrier 的具体 API。
+- `/dev/cvi-rtos-cmdqu` 的 ioctl 或命令格式。
+- RTOS -> Linux 状态回传通道是否复用同一共享内存机制。
+
+接口说明文档见：
+
+```text
+docs/接口文档/大小核共享内存IPC接口.md
+```
 
 ## 6. 统一帧校验设计
 
@@ -652,19 +668,22 @@ CAN 分析仪 / 车身节点
 
 ## 14. 分阶段实现路线
 
-### 阶段 1：文档与 ABI 锁定
+### 阶段 1：文档与接口边界锁定
 
 - 确认 `unified_frame_t` 96 字节 ABI 不再变更。
 - 补充 CRC16 公共实现方案。
-- 确认 Linux 与 FreeRTOS 的共享内存地址和 cache API。
+- 锁定 `shared_memory_ipc_send_fn_t` 作为共享内存模块后续接入的最小发送接口。
+- 明确本小核方案只预留共享内存接口，不实现共享内存物理地址、ring ABI、cache API 和 cmdqu ioctl。
+- 接口边界以 `docs/接口文档/大小核共享内存IPC接口.md` 为准。
 
-### 阶段 2：小核最小链路
+### 阶段 2：小核最小链路，不依赖真实共享内存
 
 - 建立 `freertos/cvitek/task/comm` 目录。
 - 实现 `comm_main.c` 和 `gateway_forward_init()`。
-- 实现 cmdqu doorbell 接收。
-- 实现共享 ring 读取。
 - 实现 frame validator。
+- 实现 CAN TX Queue。
+- 通过 mock IPC、测试入口或静态测试帧注入 `unified_frame_t`。
+- `rtos_ipc` 先保留读取接口和任务框架，不实现真实共享 ring 读取。
 - 暂用 mock CAN driver 打印或计数。
 
 ### 阶段 3：XL2515 驱动
@@ -675,20 +694,32 @@ CAN 分析仪 / 车身节点
 - 实现 loopback send / receive。
 - 实现 normal mode 发送。
 
-### 阶段 4：CAN RX 与回传
+### 阶段 4：共享内存适配点预留与状态回传占位
 
+- 预留 `rtos_ipc` 与共享内存模块的接入点。
+- `Gateway_IPC_Task` 内部先从 mock queue 或测试入口取帧，等待共享内存负责人接入真实读取。
 - 实现 GPIO14 中断。
 - 实现 CAN_RX_Task。
-- 将 CAN RX 封装为 `unified_frame_t` 写入 RTOS->Linux ring。
-- 通过 cmdqu 通知 Linux。
+- 定义 CAN RX、状态统计、错误事件的回传调用点。
+- RTOS -> Linux 回传先保留状态结构和接口占位，不实现真实共享内存写回。
+- 真实 RTOS -> Linux 通道由共享内存负责人确认后再接入。
 
 ### 阶段 5：稳定性与错误恢复
 
 - 完成状态统计。
+- 保持 `CAN_RX_Task` 最高优先级，防止 XL2515 RX buffer 溢出。
 - 完成 bus-off 恢复。
 - 完成 SPI 超时恢复。
-- 完成 Linux heartbeat 超时处理。
+- 完成 Linux heartbeat 超时处理，进入 fail-safe offline 并切换 Listen-Only。
 - 完成长时间压力测试。
+
+### 阶段 6：共享内存模块接入后联调
+
+- 等共享内存负责人提供真实发送 / 接收能力后，将 mock IPC 替换为真实 IPC。
+- 验证 Linux -> RTOS 的 `unified_frame_t` 字段、长度和 CRC 一致。
+- 验证 RTOS -> Linux 状态回传、CAN RX 回传和错误事件回传。
+- 验证队列满、Linux offline、RTOS offline、心跳超时等异常路径。
+- 确认 offline / fail-safe 状态下不会发送旧业务帧。
 
 ## 15. 后续待确认
 
