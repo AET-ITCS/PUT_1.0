@@ -1,0 +1,8 @@
+bind_addr = "0.0.0.0:8080"
+static_dir = "/opt/put/web/dist"
+status_dir = "/run/put/status"
+log_dir = "/var/log/put"
+readonly = true
+snapshot_stale_ms = 5000
+log_sources = ["linux_app", "web", "system", "can"]
+

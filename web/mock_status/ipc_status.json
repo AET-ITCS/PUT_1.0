@@ -1,0 +1,9 @@
+{
+  "updated_at_ms": 12345678,
+  "online": true,
+  "heartbeat_ms": 1000,
+  "tx_ring_used": 4,
+  "rx_ring_used": 1,
+  "timeout_count": 0
+}
+

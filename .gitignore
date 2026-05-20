@@ -58,6 +58,13 @@ dkms.conf
 result
 result-*
 
+# Rust / Cargo
+target/
+
+# Node / frontend
+node_modules/
+web/frontend/dist/
+
 # Build directories (project-specific)
 build/
 build_*/
