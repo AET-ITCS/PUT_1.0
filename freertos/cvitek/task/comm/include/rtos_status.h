@@ -20,6 +20,10 @@ typedef struct {
     uint32_t drop_queue_full;
     bool can_ready;
     bool linux_online;
+    uint32_t rx_from_can;
+    uint32_t tx_to_linux;
+    uint32_t drop_ring_full;
+    uint32_t ipc_payload_drop;
 } rtos_status_snapshot_t;
 
 void rtos_status_init(void);
@@ -35,6 +39,10 @@ void rtos_status_inc_drop_null(void);
 void rtos_status_inc_drop_flag(void);
 void rtos_status_inc_drop_can_id(void);
 void rtos_status_inc_drop_dlc(void);
+void rtos_status_inc_rx_from_can(void);
+void rtos_status_inc_tx_to_linux(void);
+void rtos_status_inc_drop_ring_full(void);
+void rtos_status_inc_ipc_payload_drop(void);
 
 #ifdef __cplusplus
 }

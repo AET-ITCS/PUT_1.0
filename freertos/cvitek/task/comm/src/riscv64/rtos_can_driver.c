@@ -694,11 +694,63 @@ void rtos_can_driver_get_mock_snapshot(rtos_can_driver_mock_snapshot_t *out_snap
     out_snapshot->bitrate = g_bitrate;
 }
 
+void rtos_can_driver_mock_reset_rx(void)
+{
+}
+
+unified_error_t rtos_can_driver_mock_inject_rx(const rtos_can_message_t *message)
+{
+    if (message == NULL) {
+        return UNIFIED_ERR_NULL;
+    }
+
+    return UNIFIED_ERR_INVALID_ARG;
+}
+
 #else /* RTOS_CAN_DRIVER_XL2515_ENABLE */
+
+typedef struct {
+    rtos_can_message_t slots[RTOS_CAN_MOCK_RX_QUEUE_LEN];
+    uint32_t head;
+    uint32_t tail;
+    uint32_t count;
+} rtos_can_mock_rx_queue_t;
+
+static rtos_can_mock_rx_queue_t g_mock_rx_queue;
+
+static void mock_rx_queue_reset(void)
+{
+    memset(&g_mock_rx_queue, 0, sizeof(g_mock_rx_queue));
+}
+
+static bool mock_rx_queue_push(const rtos_can_message_t *message)
+{
+    if ((message == NULL) || (g_mock_rx_queue.count >= RTOS_CAN_MOCK_RX_QUEUE_LEN)) {
+        return false;
+    }
+
+    g_mock_rx_queue.slots[g_mock_rx_queue.tail] = *message;
+    g_mock_rx_queue.tail = (g_mock_rx_queue.tail + 1u) % RTOS_CAN_MOCK_RX_QUEUE_LEN;
+    ++g_mock_rx_queue.count;
+    return true;
+}
+
+static bool mock_rx_queue_pop(rtos_can_message_t *out_message)
+{
+    if ((out_message == NULL) || (g_mock_rx_queue.count == 0u)) {
+        return false;
+    }
+
+    *out_message = g_mock_rx_queue.slots[g_mock_rx_queue.head];
+    g_mock_rx_queue.head = (g_mock_rx_queue.head + 1u) % RTOS_CAN_MOCK_RX_QUEUE_LEN;
+    --g_mock_rx_queue.count;
+    return true;
+}
 
 unified_error_t rtos_can_driver_init(void)
 {
     memset(&g_driver, 0, sizeof(g_driver));
+    mock_rx_queue_reset();
     g_driver.initialized = true;
     g_driver.last_error = RTOS_CAN_DRIVER_ERROR_NONE;
     g_bitrate = 0u;
@@ -745,8 +797,18 @@ unified_error_t rtos_can_driver_read(rtos_can_message_t *out_message)
         return UNIFIED_ERR_NULL;
     }
 
-    memset(out_message, 0, sizeof(*out_message));
+    if (!g_driver.initialized) {
+        g_driver.last_error = RTOS_CAN_DRIVER_ERROR_NOT_READY;
+        return UNIFIED_ERR_INVALID_ARG;
+    }
+
+    if (!mock_rx_queue_pop(out_message)) {
+        g_driver.last_error = RTOS_CAN_DRIVER_ERROR_NO_RX;
+        return UNIFIED_ERR_INVALID_ARG;
+    }
+
     ++g_driver.read_count;
+    g_driver.last_error = RTOS_CAN_DRIVER_ERROR_NONE;
     return UNIFIED_OK;
 }
 
@@ -808,6 +870,24 @@ void rtos_can_driver_get_mock_snapshot(rtos_can_driver_mock_snapshot_t *out_snap
 
     *out_snapshot = g_driver;
     out_snapshot->bitrate = g_bitrate;
+}
+
+void rtos_can_driver_mock_reset_rx(void)
+{
+    mock_rx_queue_reset();
+}
+
+unified_error_t rtos_can_driver_mock_inject_rx(const rtos_can_message_t *message)
+{
+    if (message == NULL) {
+        return UNIFIED_ERR_NULL;
+    }
+
+    if (!mock_rx_queue_push(message)) {
+        return UNIFIED_ERR_INVALID_ARG;
+    }
+
+    return UNIFIED_OK;
 }
 
 #endif /* RTOS_CAN_DRIVER_XL2515_ENABLE */

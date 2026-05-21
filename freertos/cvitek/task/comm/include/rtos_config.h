@@ -14,6 +14,18 @@ extern "C" {
 #define RTOS_CAN_RX_QUEUE_LEN 32u
 #endif
 
+#ifndef RTOS_CAN_MOCK_RX_QUEUE_LEN
+#define RTOS_CAN_MOCK_RX_QUEUE_LEN 8u
+#endif
+
+#ifndef RTOS_IPC_MOCK_RX_QUEUE_LEN
+#define RTOS_IPC_MOCK_RX_QUEUE_LEN 8u
+#endif
+
+#ifndef RTOS_IPC_PAYLOAD_MAX_LEN
+#define RTOS_IPC_PAYLOAD_MAX_LEN 128u
+#endif
+
 #ifndef RTOS_STATUS_PERIOD_MS
 #define RTOS_STATUS_PERIOD_MS 1000u
 #endif

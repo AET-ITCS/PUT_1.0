@@ -46,6 +46,8 @@ unified_error_t rtos_can_driver_set_listen_only(void);
 unified_error_t rtos_can_driver_set_normal(void);
 unified_error_t rtos_can_driver_reset(void);
 void rtos_can_driver_get_mock_snapshot(rtos_can_driver_mock_snapshot_t *out_snapshot);
+void rtos_can_driver_mock_reset_rx(void);
+unified_error_t rtos_can_driver_mock_inject_rx(const rtos_can_message_t *message);
 
 #ifdef __cplusplus
 }

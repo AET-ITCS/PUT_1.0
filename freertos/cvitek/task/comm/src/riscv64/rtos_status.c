@@ -74,3 +74,23 @@ void rtos_status_inc_drop_dlc(void)
 {
     ++g_status.drop_dlc;
 }
+
+void rtos_status_inc_rx_from_can(void)
+{
+    ++g_status.rx_from_can;
+}
+
+void rtos_status_inc_tx_to_linux(void)
+{
+    ++g_status.tx_to_linux;
+}
+
+void rtos_status_inc_drop_ring_full(void)
+{
+    ++g_status.drop_ring_full;
+}
+
+void rtos_status_inc_ipc_payload_drop(void)
+{
+    ++g_status.ipc_payload_drop;
+}

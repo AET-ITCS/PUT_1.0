@@ -5,8 +5,10 @@
 #include <string.h>
 
 #include "rtos_can_driver.h"
+#include "rtos_can_task.h"
 #include "rtos_config.h"
 #include "rtos_ipc.h"
+#include "rtos_protocol_adapter.h"
 #include "rtos_status.h"
 
 typedef struct {
@@ -104,6 +106,7 @@ unified_error_t gateway_forward_init(void)
     unified_error_t result;
 
     rtos_status_init();
+    rtos_protocol_adapter_init();
     tx_queue_reset();
 
     result = rtos_ipc_init();
@@ -118,6 +121,12 @@ unified_error_t gateway_forward_init(void)
     }
 
     result = rtos_can_driver_set_bitrate(RTOS_CAN_BITRATE);
+    if (result != UNIFIED_OK) {
+        rtos_status_set_can_ready(false);
+        return result;
+    }
+
+    result = rtos_can_task_init_gpio14_irq();
     if (result != UNIFIED_OK) {
         rtos_status_set_can_ready(false);
         return result;
