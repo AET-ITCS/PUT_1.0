@@ -18,7 +18,7 @@
 发送给小核接口 ipc_to_rtos_send
 ```
 
-目前已经实现的是 **以太网 UDP 调试帧 → 统一帧** 的最小闭环。
+目前已经实现的是 **以太网 UDP 调试帧 / RS485 Modbus RTU → 统一帧** 的基本闭环。
 
 真实共享内存发送暂时还没有接入，当前 `ipc_to_rtos_send()` 先用打印方式作为 stub。
 
@@ -30,17 +30,28 @@
 linux_app/
 ├── CMakeLists.txt
 ├── main.c
+├── config/
+│   └── device_config.ini    # 多协议入口配置
 ├── core/                    # 大核协议转换核心流程
+│   ├── app_config.c         # 简单 INI 配置解析
+│   ├── app_config.h
 │   ├── protocol_manager.c   # 协议接收、解析、打包、发送的调度逻辑
 │   ├── protocol_manager.h
+│   ├── status_collector.c   # Web 业务状态快照写出
+│   ├── status_collector.h
 │   ├── protocol_parsed_msg.h# 协议解析后的中间消息结构
 │   ├── frame_packer.c       # protocol_parsed_msg_t → unified_frame_t
 │   └── frame_packer.h
-├── 以太网/                  # 以太网相关协议解析
+├── ethernet/                # 以太网相关协议解析
 │   ├── ethernet_udp.c       # UDP 调试帧解析实现
-│   ├── ethernet_udp.h
-│   ├── ethernet_status.c    # Web 业务状态快照写出
-│   └── ethernet_status.h
+│   └── ethernet_udp.h
+├── rs485/                   # RS485 调试帧和 Modbus RTU 解析
+│   ├── rs485_debug.c
+│   ├── rs485_debug.h
+│   ├── rs485_modbus.c
+│   ├── rs485_modbus.h
+│   ├── rs485_register_map.c
+│   └── rs485_register_map.h
 └── ipc/                     # 大核到小核发送接口
     ├── ipc_to_rtos.c        # 当前为打印 stub，后续替换为共享内存发送
     └── ipc_to_rtos.h
@@ -51,7 +62,8 @@ linux_app/
 | 目录 | 作用 |
 |---|---|
 | `core/` | 与具体外部协议无关的核心流程，例如协议调度、统一帧打包 |
-| `以太网/` | 以太网协议相关解析，目前是 UDP 调试帧 |
+| `ethernet/` | 以太网协议相关解析，目前是 UDP 调试帧 |
+| `rs485/` | RS485 协议相关解析，支持 Modbus RTU 写寄存器和 76 字节 debug 调试帧 |
 | `ipc/` | 大核到小核发送接口，目前等待共享内存实现接入 |
 
 ---
@@ -61,17 +73,15 @@ linux_app/
 当前业务流如下：
 
 ```text
-tools/send_udp_frame.py
-  ↓
-发送 UDP 调试帧到 linux_app
-  ↓
 main.c
   ↓
-protocol_manager_run_udp()
+读取 linux_app/config/device_config.ini
   ↓
-recvfrom() 接收 UDP payload
+protocol_manager_run()
   ↓
-ethernet_udp_parse_frame()
+按配置启动 UDP worker / RS485 worker
+  ↓
+ethernet_udp_parse_frame() / rs485_debug_parse_frame() / rs485_modbus_parse_request()
   ↓
 protocol_parsed_msg_t
   ↓
@@ -93,18 +103,33 @@ ipc_to_rtos_send()
 主要职责：
 
 ```text
-1. 解析命令行参数
-2. 初始化 frame_packer 的 sequence
-3. 启动 UDP 协议管理循环
+1. 读取 INI 配置文件
+2. 应用兼容命令行覆盖参数
+3. 初始化 frame_packer 的 sequence
+4. 启动多协议 worker
 ```
 
 支持参数：
 
 ```bash
-./build/linux_app/linux_app --udp-port 5000
+./build/linux_app/linux_app --config linux_app/config/device_config.ini
 ```
 
-表示监听 UDP 端口 `5000`。
+配置文件中可同时启用以太网 UDP 和 RS485：
+
+```ini
+[ethernet_udp]
+enabled = true
+port = 5000
+
+[rs485]
+enabled = true
+dev = /dev/ttyS1
+baud = 115200
+protocol = modbus_rtu
+slave_id = 1
+response_enabled = true
+```
 
 也可以用于测试：
 
@@ -141,23 +166,23 @@ Web 状态快照默认写入：
 它负责串联各个模块：
 
 ```text
-创建 UDP socket
+按配置创建协议 worker 线程
   ↓
-bind 到指定端口
+UDP worker 监听 socket / RS485 worker 读取串口
   ↓
-循环 recvfrom 等待 UDP 数据
+各协议 parser 输出 protocol_parsed_msg_t
   ↓
-调用 ethernet_udp_parse_frame()
+公共 pipeline 加锁
   ↓
 调用 frame_packer_pack()
   ↓
 调用 ipc_to_rtos_send()
 ```
 
-当前只接入了以太网 UDP 调试帧。
+当前已接入以太网 UDP 调试帧、RS485 调试帧和 RS485 Modbus RTU 写寄存器转换。
 
-同时，`protocol_manager.c` 会把以太网 UDP 链路的运行状态交给
-`ethernet_status.c`，周期写出给 Web 后端只读展示的快照：
+同时，`protocol_manager.c` 会把各协议链路的运行状态交给
+`status_collector.c`，周期写出给 Web 后端只读展示的快照：
 
 ```text
 /run/put/status/modules.json
@@ -167,7 +192,7 @@ bind 到指定端口
 ```
 
 写文件采用“临时文件 + rename”的原子替换方式，避免 Web 后端读到半截 JSON。
-当前第一版只有以太网 UDP 真实统计，4G/WiFi/蓝牙/RS485 暂时输出 `unknown`，
+当前以太网 UDP 和 RS485 输出真实统计，4G/WiFi/蓝牙暂时输出 `unknown`，
 小核 CAN 回传暂未接入时 `can_status.json` 也输出 `unknown`。
 
 后续如果增加 RS485、TCP、WiFi、蓝牙、4G，不应该改变后面的统一打包流程，而是新增各自的 parser：
@@ -231,15 +256,15 @@ can_id
 can_data
 ```
 
-## 7. ethernet_status.c
+## 7. status_collector.c
 
-`ethernet_status.c` 负责把 `linux_app` 第一版以太网 UDP 链路的业务状态写成
+`status_collector.c` 负责把 `linux_app` 多协议链路的业务状态写成
 Web 后端可读取的 JSON/JSONL 快照。
 
 它记录：
 
 ```text
-1. UDP 接收包数 rx_count
+1. 各协议接收包数 rx_count
 2. 成功送入 ipc_to_rtos_send 的帧数 tx_count
 3. 接收字节数 rx_bytes
 4. 解析错误、打包错误、IPC 发送错误计数
@@ -252,7 +277,7 @@ Web 后端可读取的 JSON/JSONL 快照。
 
 | 文件 | 作用 |
 |---|---|
-| `modules.json` | 4G/WiFi/蓝牙/以太网/RS485 模块状态；当前以太网为真实统计，其它为 `unknown` |
+| `modules.json` | 4G/WiFi/蓝牙/以太网/RS485 模块状态；当前以太网和 RS485 为真实统计 |
 | `ipc_status.json` | 大核到小核发送路径统计；当前基于 `ipc_to_rtos_send()` stub 返回值 |
 | `can_status.json` | 小核 CAN 回传状态；当前共享内存回传未接入，输出 `unknown` 占位 |
 | `events.jsonl` | 解析、打包、IPC 等异常事件，每行一个 JSON |
@@ -390,6 +415,8 @@ ipc_to_rtos_send()
 ```text
 UDP 调试帧接收
 UDP 调试帧解析
+RS485 Modbus RTU 写寄存器解析
+RS485 demo 寄存器到 CAN 映射
 协议中间消息结构
 统一帧打包
 CRC16 计算
@@ -418,12 +445,11 @@ Web 状态快照文件写出
 ```text
 真实共享内存发送
 TCP 模式
-RS485 / Modbus
+RS485 Modbus 读寄存器和真实车型映射表
 WiFi
 蓝牙
 4G / MQTT
 CAN 状态回传
-配置文件读取
 日志系统
 Rust Web 后端 / Vue 前端
 ```
@@ -468,7 +494,7 @@ Rust Web 后端 / Vue 前端
 启动 UDP 接收端：
 
 ```bash
-./build/linux_app/linux_app --udp-port 5000
+./build/linux_app/linux_app --config linux_app/config/device_config.ini
 ```
 
 发送一帧测试数据：
