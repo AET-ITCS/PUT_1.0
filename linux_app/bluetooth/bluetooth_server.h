@@ -7,6 +7,12 @@
 #include <stdint.h>
 #include <sys/types.h>
 
+#ifdef _WIN32
+#include <basetsd.h>
+typedef intptr_t ssize_t;
+typedef unsigned short sa_family_t;
+#endif
+
 #include "error_code.h"
 #include "protocol_parsed_msg.h"
 
