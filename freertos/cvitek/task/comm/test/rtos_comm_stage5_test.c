@@ -1,3 +1,7 @@
+/**
+ * @file rtos_comm_stage5_test.c
+ * @brief Host tests for stage 5 recovery and fail-safe behavior.
+ */
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>

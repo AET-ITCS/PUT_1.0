@@ -1,4 +1,10 @@
-/* Legacy FreeRTOS comm 帧校验实现：旧 unified_frame_t 实验链路，非当前正式接口。 */
+/**
+ * @file rtos_gateway_frame.c
+ * @brief Legacy unified_frame_t validator 实现。
+ *
+ * 该文件仅服务旧实验链路和回归测试；当前正式 CAN 主链路使用
+ * rtos_protocol_adapter 输出的 @ref rtos_can_message_t。
+ */
 #include "rtos_gateway_frame.h"
 
 #include <string.h>

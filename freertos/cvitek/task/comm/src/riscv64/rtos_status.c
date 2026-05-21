@@ -1,4 +1,9 @@
-/* FreeRTOS comm 状态统计实现：mock 阶段使用单实例计数器。 */
+/**
+ * @file rtos_status.c
+ * @brief FreeRTOS comm 状态统计实现。
+ *
+ * 当前实现使用单实例计数器，适合小核 comm 任务和 host mock 测试共享。
+ */
 #include "rtos_status.h"
 
 #include <string.h>

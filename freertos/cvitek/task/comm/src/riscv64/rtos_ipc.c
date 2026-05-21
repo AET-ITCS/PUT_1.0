@@ -1,4 +1,10 @@
-/* FreeRTOS comm IPC mock：真实共享内存/cmdqu 后续从这里接入。 */
+/**
+ * @file rtos_ipc.c
+ * @brief FreeRTOS comm IPC mock 和回传 hook 实现。
+ *
+ * 本模块提供 Linux->RTOS mock payload queue 以及 RTOS->Linux CAN RX、
+ * status、event 回传 hook。真实共享内存/cmdqu 后续从这些边界接入。
+ */
 #include "rtos_ipc.h"
 
 #include <string.h>
@@ -6,15 +12,21 @@
 #include "rtos_can_forward.h"
 #include "rtos_config.h"
 
+/** @brief Linux->RTOS mock payload 环形队列。 */
 typedef struct {
+    /** @brief payload 槽位。 */
     rtos_ipc_payload_t slots[RTOS_IPC_MOCK_RX_QUEUE_LEN];
+    /** @brief 下一个读取位置。 */
     uint32_t head;
+    /** @brief 下一个写入位置。 */
     uint32_t tail;
+    /** @brief 当前队列深度。 */
     uint32_t count;
 } rtos_ipc_payload_queue_t;
 
 static rtos_ipc_payload_queue_t g_linux_rx_queue;
 static rtos_ipc_can_rx_sender_fn_t g_can_rx_sender;
+static rtos_ipc_payload_sender_fn_t g_payload_sender;
 static rtos_ipc_status_sender_fn_t g_status_sender;
 static rtos_ipc_event_sender_fn_t g_event_sender;
 
@@ -62,6 +74,7 @@ unified_error_t rtos_ipc_init(void)
 {
     payload_queue_reset();
     g_can_rx_sender = 0;
+    g_payload_sender = 0;
     g_status_sender = 0;
     g_event_sender = 0;
     return UNIFIED_OK;
@@ -118,6 +131,11 @@ void rtos_ipc_set_can_rx_sender(rtos_ipc_can_rx_sender_fn_t sender)
     g_can_rx_sender = sender;
 }
 
+void rtos_ipc_set_payload_sender(rtos_ipc_payload_sender_fn_t sender)
+{
+    g_payload_sender = sender;
+}
+
 void rtos_ipc_set_status_sender(rtos_ipc_status_sender_fn_t sender)
 {
     g_status_sender = sender;
@@ -131,6 +149,7 @@ void rtos_ipc_set_event_sender(rtos_ipc_event_sender_fn_t sender)
 unified_error_t rtos_ipc_send_can_rx(const rtos_can_message_t *message)
 {
     unified_error_t result = UNIFIED_OK;
+    rtos_ipc_payload_t payload;
 
     if (message == 0) {
         return UNIFIED_ERR_NULL;
@@ -138,6 +157,13 @@ unified_error_t rtos_ipc_send_can_rx(const rtos_can_message_t *message)
 
     if (g_can_rx_sender != 0) {
         result = g_can_rx_sender(message);
+    }
+
+    if ((result == UNIFIED_OK) && (g_payload_sender != 0)) {
+        result = rtos_protocol_adapter_can_rx_to_linux_payload(message, &payload);
+        if (result == UNIFIED_OK) {
+            result = g_payload_sender(&payload);
+        }
     }
 
     return complete_rtos_to_linux_send(result);

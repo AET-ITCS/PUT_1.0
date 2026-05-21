@@ -9,6 +9,7 @@ set(CMAKE_C_EXTENSIONS OFF)
 option(RTOS_COMM_BUILD_TESTS "Build FreeRTOS comm mock tests" ON)
 
 add_library(rtos_comm_mock STATIC
+    ../../../../common/src/crc16.c
     src/riscv64/comm_main.c
     src/riscv64/rtos_can_driver.c
     src/riscv64/rtos_can_forward.c
@@ -45,6 +46,18 @@ if(RTOS_COMM_BUILD_TESTS)
     target_link_libraries(rtos_comm_stage5_test PRIVATE rtos_comm_mock)
     add_test(NAME rtos_comm_stage5 COMMAND rtos_comm_stage5_test)
 
+    add_executable(rtos_comm_stage6_test
+        ../../../../linux_app/core/frame_packer.c
+        test/rtos_comm_stage6_test.c
+    )
+    target_include_directories(rtos_comm_stage6_test PRIVATE
+        include
+        ../../../../linux_app/core
+        ../../../../common/include
+    )
+    target_link_libraries(rtos_comm_stage6_test PRIVATE rtos_comm_mock)
+    add_test(NAME rtos_comm_stage6 COMMAND rtos_comm_stage6_test)
+
     add_executable(rtos_xl2515_fake_test
         src/riscv64/rtos_can_driver.c
         test/rtos_xl2515_fake_platform.c
@@ -69,6 +82,7 @@ if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
         target_compile_options(rtos_comm_mock_test PRIVATE -Wall -Wextra)
         target_compile_options(rtos_comm_stage4_test PRIVATE -Wall -Wextra)
         target_compile_options(rtos_comm_stage5_test PRIVATE -Wall -Wextra)
+        target_compile_options(rtos_comm_stage6_test PRIVATE -Wall -Wextra)
         target_compile_options(rtos_xl2515_fake_test PRIVATE -Wall -Wextra)
     endif()
 endif()

@@ -1,4 +1,11 @@
-/* FreeRTOS comm CAN driver：默认 mock，可通过 RTOS_CAN_DRIVER_XL2515_ENABLE 启用 XL2515。 */
+/**
+ * @file rtos_can_driver.c
+ * @brief FreeRTOS comm CAN driver 实现。
+ *
+ * 默认构建使用 host mock driver。定义 RTOS_CAN_DRIVER_XL2515_ENABLE 后启用
+ * XL2515/MCP2515-like SPI CAN 控制器路径；测试可通过
+ * RTOS_CAN_DRIVER_XL2515_FAKE_PLATFORM 使用 fake SPI 平台。
+ */
 #include "rtos_can_driver.h"
 
 #include <string.h>
@@ -539,6 +546,8 @@ unified_error_t rtos_can_driver_send(const rtos_can_message_t *message)
         if ((txb0ctrl & XL2515_TXBCTRL_TXREQ) == 0u) {
             xl2515_bit_modify(XL2515_REG_CANINTF, XL2515_CANINTF_TX0IF, 0x00u);
             ++g_driver.send_count;
+            g_driver.last_tx_message = *message;
+            g_driver.has_last_tx_message = true;
             g_driver.last_error = RTOS_CAN_DRIVER_ERROR_NONE;
             return UNIFIED_OK;
         }
@@ -851,6 +860,8 @@ unified_error_t rtos_can_driver_send(const rtos_can_message_t *message)
     }
 
     ++g_driver.send_count;
+    g_driver.last_tx_message = *message;
+    g_driver.has_last_tx_message = true;
     g_driver.last_error = RTOS_CAN_DRIVER_ERROR_NONE;
     return UNIFIED_OK;
 }

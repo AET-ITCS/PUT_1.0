@@ -1,3 +1,7 @@
+/**
+ * @file rtos_comm_stage4_test.c
+ * @brief Host tests for stage 4 IPC adapter and CAN RX callback placeholders.
+ */
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>

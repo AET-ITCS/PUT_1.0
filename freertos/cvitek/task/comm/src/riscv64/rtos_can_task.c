@@ -1,4 +1,10 @@
-/* FreeRTOS comm 任务占位：后续接入真实 scheduler 和队列阻塞等待。 */
+/**
+ * @file rtos_can_task.c
+ * @brief FreeRTOS comm task 占位实现。
+ *
+ * 当前任务入口以非阻塞单步 helper 实现，便于 host 测试；后续接入真实
+ * FreeRTOS scheduler 后，可在任务循环中复用这些 helper。
+ */
 #include "rtos_can_task.h"
 
 #include <stdbool.h>

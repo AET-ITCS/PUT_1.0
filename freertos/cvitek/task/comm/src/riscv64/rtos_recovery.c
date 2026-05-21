@@ -1,4 +1,10 @@
-/* FreeRTOS comm 恢复状态机：不绑定真实 tick/watchdog，便于 host 测试。 */
+/**
+ * @file rtos_recovery.c
+ * @brief FreeRTOS comm recovery 状态机实现。
+ *
+ * 负责 Linux heartbeat timeout、fail-safe offline、Listen-Only 切换和
+ * Linux 重新握手恢复入口。时间由调用方显式传入，避免绑定具体 BSP tick。
+ */
 #include "rtos_recovery.h"
 
 #include "rtos_can_driver.h"
@@ -7,11 +13,17 @@
 #include "rtos_ipc.h"
 #include "rtos_status.h"
 
+/** @brief recovery 运行状态。 */
 typedef struct {
+    /** @brief Linux 当前是否在线。 */
     bool linux_online;
+    /** @brief CAN TX 路径是否允许发送。 */
     bool tx_enabled;
+    /** @brief 是否处于 fail-safe offline。 */
     bool offline;
+    /** @brief 最近一次 Linux heartbeat 时间戳，单位毫秒。 */
     uint32_t last_linux_heartbeat_ms;
+    /** @brief host/mock Watchdog_Task 使用的当前时间。 */
     uint32_t mock_now_ms;
 } rtos_recovery_state_t;
 

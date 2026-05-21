@@ -1,4 +1,10 @@
-/* FreeRTOS comm 转发主逻辑：mock 阶段同步消费协议适配层输出的 CAN TX 队列。 */
+/**
+ * @file rtos_can_forward.c
+ * @brief FreeRTOS comm CAN 转发核心实现。
+ *
+ * 本模块负责内部 CAN 消息校验、TX 软件队列、driver send/retry 和
+ * recovery 状态机联动。当前 host mock 路径仍支持 submit 后同步 drain。
+ */
 #include "rtos_can_forward.h"
 
 #include <stdbool.h>
@@ -12,10 +18,15 @@
 #include "rtos_recovery.h"
 #include "rtos_status.h"
 
+/** @brief CAN TX 软件队列。 */
 typedef struct {
+    /** @brief 环形队列槽位。 */
     rtos_can_message_t slots[RTOS_CAN_TX_QUEUE_LEN];
+    /** @brief 下一个出队位置。 */
     uint32_t head;
+    /** @brief 下一个入队位置。 */
     uint32_t tail;
+    /** @brief 当前队列深度。 */
     uint32_t count;
 } rtos_can_tx_queue_t;
 
