@@ -8,23 +8,52 @@
 
 ## 目录
 
-- [项目概述](#项目概述)
-- [系统架构](#系统架构)
-- [核心设计原则](#核心设计原则)
-- [硬件平台](#硬件平台)
-- [仓库目录结构](#仓库目录结构)
-- [各模块职责](#各模块职责)
-  - [大核 Linux 应用 (`linux_app/`)](#大核-linux-应用-linux_app)
-  - [小核 RTOS 固件 (`rtos_firmware/`)](#小核-rtos-固件-rtos_firmware)
-  - [C51 低功耗管理 (`c51_low_power/`)](#c51-低功耗管理-c51_low_power)
-  - [公共代码层 (`common/`)](#公共代码层-common)
-- [统一数据帧设计](#统一数据帧设计)
-- [数据流一览](#数据流一览)
-- [开发阶段规划](#开发阶段规划)
-- [快速开始](#快速开始)
-- [分支管理](#分支管理)
-- [项目亮点](#项目亮点)
-- [许可证](#许可证)
+- [多协议统一终端 (Multi-Protocol Unified Terminal)](#多协议统一终端-multi-protocol-unified-terminal)
+  - [目录](#目录)
+  - [项目概述](#项目概述)
+    - [核心思路](#核心思路)
+  - [系统架构](#系统架构)
+    - [三层协同架构](#三层协同架构)
+    - [系统模块全景](#系统模块全景)
+  - [核心设计原则](#核心设计原则)
+  - [硬件平台](#硬件平台)
+  - [仓库目录结构](#仓库目录结构)
+  - [各模块职责](#各模块职责)
+    - [大核 Linux 应用 (`linux_app/`)](#大核-linux-应用-linux_app)
+    - [小核 RTOS 固件 (`rtos_firmware/`)](#小核-rtos-固件-rtos_firmware)
+    - [C51 低功耗管理 (`c51_low_power/`)](#c51-低功耗管理-c51_low_power)
+    - [公共代码层 (`common/`)](#公共代码层-common)
+  - [统一数据帧设计](#统一数据帧设计)
+    - [帧结构](#帧结构)
+    - [协议类型枚举](#协议类型枚举)
+    - [设计优势](#设计优势)
+  - [数据流一览](#数据流一览)
+    - [4G → CAN](#4g--can)
+    - [WiFi → CAN](#wifi--can)
+    - [蓝牙 → CAN](#蓝牙--can)
+    - [以太网 → CAN](#以太网--can)
+    - [RS485 → CAN](#rs485--can)
+  - [开发阶段规划](#开发阶段规划)
+  - [快速开始](#快速开始)
+    - [环境准备](#环境准备)
+      - [硬件准备](#硬件准备)
+      - [开发环境 — Nix（推荐）](#开发环境--nix推荐)
+        - [提供的工具链](#提供的工具链)
+        - [使用 CMake 工具链文件进行交叉编译](#使用-cmake-工具链文件进行交叉编译)
+        - [Rust 交叉编译](#rust-交叉编译)
+        - [Web 监控模块](#web-监控模块)
+        - [可用的 Shell 环境](#可用的-shell-环境)
+        - [环境变量](#环境变量)
+      - [开发环境 — 传统方式（备选）](#开发环境--传统方式备选)
+    - [构建大核程序](#构建大核程序)
+    - [构建小核固件](#构建小核固件)
+    - [烧录小核固件](#烧录小核固件)
+    - [运行测试](#运行测试)
+  - [分支管理](#分支管理)
+    - [推荐分支示例](#推荐分支示例)
+    - [开发流程](#开发流程)
+  - [项目亮点](#项目亮点)
+  - [许可证](#许可证)
 
 ---
 
@@ -54,11 +83,11 @@ C51 低功耗唤醒管理（整机电源控制）
 
 ### 三层协同架构
 
-| 层级 | 处理器 | 运行环境 | 核心职责 |
-|------|--------|----------|----------|
-| **大核 (协议接入与解析层)** | Milk-V Duo 256M (大核) | Linux | 复杂协议接入、数据解析、统一帧封装 |
-| **小核 (实时转发层)** | Milk-V Duo 256M (小核) | RTOS | CAN 报文实时发送/接收、总线状态管理 |
-| **C51 (低功耗管理层)** | C51 单片机 | 裸机 | 低功耗状态控制、外部唤醒检测、电源管理 |
+| 层级                        | 处理器                 | 运行环境 | 核心职责                               |
+| --------------------------- | ---------------------- | -------- | -------------------------------------- |
+| **大核 (协议接入与解析层)** | Milk-V Duo 256M (大核) | Linux    | 复杂协议接入、数据解析、统一帧封装     |
+| **小核 (实时转发层)**       | Milk-V Duo 256M (小核) | RTOS     | CAN 报文实时发送/接收、总线状态管理    |
+| **C51 (低功耗管理层)**      | C51 单片机             | 裸机     | 低功耗状态控制、外部唤醒检测、电源管理 |
 
 ### 系统模块全景
 
@@ -73,7 +102,7 @@ C51 低功耗唤醒管理（整机电源控制）
         ↓           ↓            ↓          ↓          ↓
 ┌─ 大核 Linux 协议解析层 ──────────────────────────────────┐
 │  ┌──────────┐  ┌────────────┐  ┌──────────────────────┐  │
-│  │  4G 解析 │  │ WiFi 解析  │  │  RS485 CAN direct 解析 │  │
+│  │  4G 解析 │  │ WiFi 解析  │  │RS485 CAN direct 解析 │  │
 │  └──────────┘  └────────────┘  └──────────────────────┘  │
 │  ┌──────────┐  ┌────────────┐  ┌──────────────────────┐  │
 │  │ 蓝牙解析 │  │ 以太网解析 │  │  协议管理 & 统一打包 │  │
@@ -130,18 +159,18 @@ C51 低功耗唤醒管理（整机电源控制）
 
 ## 硬件平台
 
-| 组件 | 说明 |
-|------|------|
-| **主控板** | Milk-V Duo 256M（大核 Linux + 小核 RTOS） |
-| **4G 通信** | USB 转 4G 模块 |
-| **WiFi 通信** | USB 蓝牙/WiFi 二合一模块（WiFi 功能） |
-| **蓝牙通信** | USB 蓝牙/WiFi 二合一模块（蓝牙功能） |
-| **以太网** | 底板自带 RJ45 接口 |
-| **RS485** | 底板自带 RS485 接口 |
-| **CAN** | 外接 CAN 收发器 / 底板 CAN 接口 |
-| **低功耗管理** | C51 单片机 + 电源控制电路 + 唤醒检测电路 |
-| **状态指示** | LED 状态指示灯 |
-| **外壳** | 黑盒封装，保留必要接口 |
+| 组件           | 说明                                      |
+| -------------- | ----------------------------------------- |
+| **主控板**     | Milk-V Duo 256M（大核 Linux + 小核 RTOS） |
+| **4G 通信**    | USB 转 4G 模块                            |
+| **WiFi 通信**  | USB 蓝牙/WiFi 二合一模块（WiFi 功能）     |
+| **蓝牙通信**   | USB 蓝牙/WiFi 二合一模块（蓝牙功能）      |
+| **以太网**     | 底板自带 RJ45 接口                        |
+| **RS485**      | 底板自带 RS485 接口                       |
+| **CAN**        | 外接 CAN 收发器 / 底板 CAN 接口           |
+| **低功耗管理** | C51 单片机 + 电源控制电路 + 唤醒检测电路  |
+| **状态指示**   | LED 状态指示灯                            |
+| **外壳**       | 黑盒封装，保留必要接口                    |
 
 ---
 
@@ -320,13 +349,13 @@ typedef struct {
 
 ### 协议类型枚举
 
-| 枚举值 | 宏定义 | 说明 |
-|--------|--------|------|
-| `0x01` | `PROTOCOL_4G` | 4G 网络 |
-| `0x02` | `PROTOCOL_WIFI` | WiFi |
-| `0x03` | `PROTOCOL_BLUETOOTH` | 蓝牙 |
-| `0x04` | `PROTOCOL_RS485` | RS485 |
-| `0x05` | `PROTOCOL_ETHERNET` | 以太网 |
+| 枚举值 | 宏定义               | 说明    |
+| ------ | -------------------- | ------- |
+| `0x01` | `PROTOCOL_4G`        | 4G 网络 |
+| `0x02` | `PROTOCOL_WIFI`      | WiFi    |
+| `0x03` | `PROTOCOL_BLUETOOTH` | 蓝牙    |
+| `0x04` | `PROTOCOL_RS485`     | RS485   |
+| `0x05` | `PROTOCOL_ETHERNET`  | 以太网  |
 
 ### 设计优势
 
@@ -412,14 +441,14 @@ CAN 总线设备
 
 ## 开发阶段规划
 
-| 阶段 | 目标 | 主要产出 |
-|------|------|----------|
-| **第一阶段** | 需求分析与总体设计 | 架构图、数据流图、模块分工表、统一帧定义 |
-| **第二阶段** | 硬件验证 | 各模块连通性测试、接口测试代码、外设可用性确认 |
-| **第三阶段** | 大核协议接入开发 | 多协议接入程序、统一解析模块、数据模拟测试工具 |
-| **第四阶段** | 小核 RTOS CAN 转发开发 | CAN 驱动、CAN 转发/接收任务、错误处理模块 |
-| **第五阶段** | 大小核联调 | 完整通信链路演示、联调问题记录与解决 |
-| **第六阶段** | 低功耗与整机集成 | 低功耗唤醒演示、样机、黑盒封装、稳定性测试 |
+| 阶段         | 目标                   | 主要产出                                       |
+| ------------ | ---------------------- | ---------------------------------------------- |
+| **第一阶段** | 需求分析与总体设计     | 架构图、数据流图、模块分工表、统一帧定义       |
+| **第二阶段** | 硬件验证               | 各模块连通性测试、接口测试代码、外设可用性确认 |
+| **第三阶段** | 大核协议接入开发       | 多协议接入程序、统一解析模块、数据模拟测试工具 |
+| **第四阶段** | 小核 RTOS CAN 转发开发 | CAN 驱动、CAN 转发/接收任务、错误处理模块      |
+| **第五阶段** | 大小核联调             | 完整通信链路演示、联调问题记录与解决           |
+| **第六阶段** | 低功耗与整机集成       | 低功耗唤醒演示、样机、黑盒封装、稳定性测试     |
 
 ---
 
@@ -449,19 +478,19 @@ nix develop
 
 ##### 提供的工具链
 
-| 类别 | 组件 | 用途 |
-|------|------|------|
-| **基础构建** | `cmake`, `make`, `gcc`, `gdb` | 本地编译与调试 |
-| **RISC-V Linux 交叉编译** | `riscv64-unknown-linux-gnu-gcc` | 大核 Linux 应用编译 |
-| **RISC-V musl 交叉编译** | `riscv64-unknown-linux-musl-gcc` | Web 后端静态链接 |
-| **RISC-V 裸机交叉编译** | `riscv64-none-elf-gcc` | 小核 RTOS 固件编译 |
-| **ARM64 交叉编译** | `aarch64-linux-gnu-gcc` | 备选大核目标 |
-| **C51 编译器** | `sdcc` | C51 低功耗程序编译 |
-| **Rust** | `rustc`, `cargo`, `rustup` | Rust 语言支持 |
-| **Rust 交叉编译目标** | `riscv64gc-unknown-linux-gnu`、`riscv64gc-unknown-linux-musl` 等 | Rust 交叉编译 |
-| **Web 前端** | `node`, `npm` | Vue3 / Vite 构建 |
-| **Python 工具** | `python3`, `pyserial` | 调试脚本运行 |
-| **代码分析** | `clang-tools`, `cppcheck`, `clippy`, `rustfmt` | 代码质量检查 |
+| 类别                      | 组件                                                             | 用途                |
+| ------------------------- | ---------------------------------------------------------------- | ------------------- |
+| **基础构建**              | `cmake`, `make`, `gcc`, `gdb`                                    | 本地编译与调试      |
+| **RISC-V Linux 交叉编译** | `riscv64-unknown-linux-gnu-gcc`                                  | 大核 Linux 应用编译 |
+| **RISC-V musl 交叉编译**  | `riscv64-unknown-linux-musl-gcc`                                 | Web 后端静态链接    |
+| **RISC-V 裸机交叉编译**   | `riscv64-none-elf-gcc`                                           | 小核 RTOS 固件编译  |
+| **ARM64 交叉编译**        | `aarch64-linux-gnu-gcc`                                          | 备选大核目标        |
+| **C51 编译器**            | `sdcc`                                                           | C51 低功耗程序编译  |
+| **Rust**                  | `rustc`, `cargo`, `rustup`                                       | Rust 语言支持       |
+| **Rust 交叉编译目标**     | `riscv64gc-unknown-linux-gnu`、`riscv64gc-unknown-linux-musl` 等 | Rust 交叉编译       |
+| **Web 前端**              | `node`, `npm`                                                    | Vue3 / Vite 构建    |
+| **Python 工具**           | `python3`, `pyserial`                                            | 调试脚本运行        |
+| **代码分析**              | `clang-tools`, `cppcheck`, `clippy`, `rustfmt`                   | 代码质量检查        |
 
 ##### 使用 CMake 工具链文件进行交叉编译
 
@@ -516,15 +545,15 @@ nix-shell
 
 进入 Nix shell 后，以下环境变量可供 CMake / 脚本使用：
 
-| 变量 | 值示例 | 说明 |
-|------|--------|------|
-| `RISCV64_LINUX_CC` | `/nix/store/.../bin/riscv64-unknown-linux-gnu-gcc` | RISC-V Linux C 编译器路径 |
-| `RISCV64_LINUX_MUSL_CC` | `/nix/store/.../bin/riscv64-unknown-linux-musl-gcc` | RISC-V Linux musl C 编译器路径 |
-| `RISCV64_ELF_CC` | `/nix/store/.../bin/riscv64-none-elf-gcc` | RISC-V 裸机 C 编译器路径 |
-| `AARCH64_LINUX_CC` | `/nix/store/.../bin/aarch64-linux-gnu-gcc` | ARM64 C 编译器路径 |
-| `RUST_TARGET_RISCV64_LINUX` | `riscv64gc-unknown-linux-gnu` | Rust RISC-V Linux target |
-| `RUST_TARGET_RISCV64_LINUX_MUSL` | `riscv64gc-unknown-linux-musl` | Rust RISC-V Linux static Web target |
-| `RUST_TARGET_RISCV64_ELF` | `riscv64gc-unknown-none-elf` | Rust RISC-V bare-metal target |
+| 变量                             | 值示例                                              | 说明                                |
+| -------------------------------- | --------------------------------------------------- | ----------------------------------- |
+| `RISCV64_LINUX_CC`               | `/nix/store/.../bin/riscv64-unknown-linux-gnu-gcc`  | RISC-V Linux C 编译器路径           |
+| `RISCV64_LINUX_MUSL_CC`          | `/nix/store/.../bin/riscv64-unknown-linux-musl-gcc` | RISC-V Linux musl C 编译器路径      |
+| `RISCV64_ELF_CC`                 | `/nix/store/.../bin/riscv64-none-elf-gcc`           | RISC-V 裸机 C 编译器路径            |
+| `AARCH64_LINUX_CC`               | `/nix/store/.../bin/aarch64-linux-gnu-gcc`          | ARM64 C 编译器路径                  |
+| `RUST_TARGET_RISCV64_LINUX`      | `riscv64gc-unknown-linux-gnu`                       | Rust RISC-V Linux target            |
+| `RUST_TARGET_RISCV64_LINUX_MUSL` | `riscv64gc-unknown-linux-musl`                      | Rust RISC-V Linux static Web target |
+| `RUST_TARGET_RISCV64_ELF`        | `riscv64gc-unknown-none-elf`                        | Rust RISC-V bare-metal target       |
 
 #### 开发环境 — 传统方式（备选）
 
