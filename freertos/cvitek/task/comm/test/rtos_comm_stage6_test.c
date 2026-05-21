@@ -198,7 +198,7 @@ static int test_invalid_frames_are_rejected(void)
     CHECK(expect_frame_rejected(&frame, UNIFIED_FRAME_LENGTH) == 0);
 
     CHECK(make_frame(&frame, 0x123u, (uint8_t)UNIFIED_CAN_FLAG_NONE, 8u) == UNIFIED_OK);
-    frame.vehicle_type = 0x00u;
+    frame.vehicle_type = 0xFEu;
     refresh_frame_crc(&frame);
     CHECK(expect_frame_rejected(&frame, UNIFIED_FRAME_LENGTH) == 0);
 
