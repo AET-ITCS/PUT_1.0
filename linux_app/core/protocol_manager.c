@@ -1,4 +1,4 @@
-/* 协议管理实现：多协议线程接收，统一解析、打包、发送和状态统计。 */
+/* 协议管理实现：多协议线程接收，统一提取 CAN 字段、打包、发送和统计状态。 */
 #define _POSIX_C_SOURCE 200809L
 
 #include "protocol_manager.h"
@@ -14,11 +14,11 @@
 #include <termios.h>
 #include <unistd.h>
 
+#include "bluetooth_server.h"
 #include "ethernet_udp.h"
 #include "frame_packer.h"
 #include "ipc_to_rtos.h"
-#include "rs485_debug.h"
-#include "rs485_modbus.h"
+#include "rs485_can_direct.h"
 #include "status_collector.h"
 
 typedef struct {
@@ -32,15 +32,7 @@ typedef struct {
     status_module_id_t module_id;
 } worker_context_t;
 
-typedef struct {
-    uint8_t frame[RS485_DEBUG_FRAME_LENGTH];
-    size_t pos;
-} rs485_sync_t;
 
-typedef struct {
-    uint8_t frame[RS485_MODBUS_MAX_FRAME_LENGTH];
-    size_t pos;
-} rs485_modbus_sync_t;
 
 static void log_error(const char *stage, unified_error_t err)
 {
@@ -255,150 +247,30 @@ static unified_error_t configure_serial_raw(int fd, uint32_t baud)
     return UNIFIED_OK;
 }
 
-static bool rs485_sync_feed(rs485_sync_t *sync, uint8_t byte, uint8_t out_frame[RS485_DEBUG_FRAME_LENGTH])
-{
-    if (sync->pos == 0u) {
-        if (byte == 0xAAu) {
-            sync->frame[0] = byte;
-            sync->pos = 1u;
-        }
-        return false;
-    }
-
-    if (sync->pos == 1u) {
-        if (byte == 0x55u) {
-            sync->frame[1] = byte;
-            sync->pos = 2u;
-        } else if (byte == 0xAAu) {
-            sync->frame[0] = byte;
-            sync->pos = 1u;
-        } else {
-            sync->pos = 0u;
-        }
-        return false;
-    }
-
-    sync->frame[sync->pos++] = byte;
-    if (sync->pos == RS485_DEBUG_FRAME_LENGTH) {
-        memcpy(out_frame, sync->frame, RS485_DEBUG_FRAME_LENGTH);
-        sync->pos = 0u;
-        return true;
-    }
-
-    return false;
-}
-
-static bool rs485_modbus_sync_feed(rs485_modbus_sync_t *sync,
-                                   uint8_t byte,
-                                   uint8_t out_frame[RS485_MODBUS_MAX_FRAME_LENGTH],
-                                   size_t *out_length,
-                                   bool *out_invalid)
-{
-    size_t expected;
-
-    if ((sync == NULL) || (out_frame == NULL) || (out_length == NULL) || (out_invalid == NULL)) {
-        return false;
-    }
-
-    *out_invalid = false;
-    *out_length = 0u;
-
-    if (sync->pos >= RS485_MODBUS_MAX_FRAME_LENGTH) {
-        sync->pos = 0u;
-        *out_invalid = true;
-        return false;
-    }
-
-    sync->frame[sync->pos++] = byte;
-    expected = rs485_modbus_expected_length(sync->frame, sync->pos);
-    if (expected == RS485_MODBUS_FRAME_INCOMPLETE) {
-        return false;
-    }
-
-    if ((expected == RS485_MODBUS_FRAME_INVALID) || (expected > RS485_MODBUS_MAX_FRAME_LENGTH)) {
-        sync->pos = 0u;
-        *out_invalid = true;
-        return false;
-    }
-
-    if (sync->pos < expected) {
-        return false;
-    }
-
-    if (sync->pos > expected) {
-        sync->pos = 0u;
-        *out_invalid = true;
-        return false;
-    }
-
-    memcpy(out_frame, sync->frame, expected);
-    *out_length = expected;
-    sync->pos = 0u;
-    return true;
-}
-
-static unified_error_t write_rs485_response(int fd, const uint8_t *response, size_t response_length)
-{
-    size_t written = 0u;
-
-    if ((response == NULL) || (response_length == 0u)) {
-        return UNIFIED_OK;
-    }
-
-    while (written < response_length) {
-        ssize_t rc = write(fd, &response[written], response_length - written);
-        if (rc > 0) {
-            written += (size_t)rc;
-            continue;
-        }
-
-        if ((rc < 0) && ((errno == EINTR) || (errno == EAGAIN) || (errno == EWOULDBLOCK))) {
-            fd_set writefds;
-            struct timeval timeout;
-            int ready;
-
-            FD_ZERO(&writefds);
-            FD_SET(fd, &writefds);
-            timeout.tv_sec = 1;
-            timeout.tv_usec = 0;
-            ready = select(fd + 1, NULL, &writefds, NULL, &timeout);
-            if (ready >= 0) {
-                continue;
-            }
-        }
-
-        return UNIFIED_ERR_INVALID_ARG;
-    }
-
-    return UNIFIED_OK;
-}
-
 static const char *rs485_protocol_name(app_rs485_protocol_t protocol)
 {
     switch (protocol) {
-    case APP_RS485_PROTOCOL_DEBUG:
-        return "debug";
-    case APP_RS485_PROTOCOL_MODBUS_RTU:
-        return "modbus_rtu";
+    case APP_RS485_PROTOCOL_CAN_DIRECT:
+        return "can_direct";
     default:
         return "unknown";
     }
 }
 
-static void handle_rs485_debug_frame(protocol_manager_context_t *ctx,
-                                     const uint8_t frame_buf[RS485_DEBUG_FRAME_LENGTH],
-                                     bool *status_warning_printed)
+static void handle_rs485_can_direct_frame(protocol_manager_context_t *ctx,
+                                          const uint8_t frame_buf[RS485_CAN_DIRECT_FRAME_LENGTH],
+                                          bool *status_warning_printed)
 {
     protocol_parsed_msg_t parsed_msg;
     unified_error_t err;
 
-    status_collector_record_rx(&ctx->status, STATUS_MODULE_RS485, RS485_DEBUG_FRAME_LENGTH);
-    err = rs485_debug_parse_frame(frame_buf, RS485_DEBUG_FRAME_LENGTH, &parsed_msg);
+    status_collector_record_rx(&ctx->status, STATUS_MODULE_RS485, RS485_CAN_DIRECT_FRAME_LENGTH);
+    err = rs485_can_direct_parse_frame(frame_buf, RS485_CAN_DIRECT_FRAME_LENGTH, &parsed_msg);
     if (err != UNIFIED_OK) {
-        log_error("rs485_debug_parse_frame", err);
+        log_error("rs485_can_direct_parse_frame", err);
         status_collector_record_error(&ctx->status,
                                       STATUS_MODULE_RS485,
-                                      "rs485_debug_parse_frame",
+                                      "rs485_can_direct_parse_frame",
                                       err);
         write_status_snapshot(ctx, status_warning_printed);
         return;
@@ -408,58 +280,6 @@ static void handle_rs485_debug_frame(protocol_manager_context_t *ctx,
     write_status_snapshot(ctx, status_warning_printed);
 }
 
-static void handle_rs485_modbus_frame(protocol_manager_context_t *ctx,
-                                      int fd,
-                                      const uint8_t *frame_buf,
-                                      size_t frame_length,
-                                      bool *status_warning_printed)
-{
-    rs485_modbus_result_t result;
-    unified_error_t err;
-
-    status_collector_record_rx(&ctx->status, STATUS_MODULE_RS485, frame_length);
-    err = rs485_modbus_parse_request(frame_buf,
-                                     frame_length,
-                                     ctx->config->rs485_slave_id,
-                                     ctx->config->rs485_response_enabled,
-                                     &result);
-    if (err != UNIFIED_OK) {
-        log_error("rs485_modbus_parse_request", err);
-        status_collector_record_error(&ctx->status,
-                                      STATUS_MODULE_RS485,
-                                      "rs485_modbus_parse_request",
-                                      err);
-        write_status_snapshot(ctx, status_warning_printed);
-        return;
-    }
-
-    if (result.action == RS485_MODBUS_ACTION_EXCEPTION) {
-        status_collector_record_error(&ctx->status,
-                                      STATUS_MODULE_RS485,
-                                      "rs485_modbus_exception",
-                                      result.error);
-        if (result.response_required) {
-            err = write_rs485_response(fd, result.response, result.response_length);
-            if (err != UNIFIED_OK) {
-                status_collector_record_error(&ctx->status, STATUS_MODULE_RS485, "write_rs485_response", err);
-            }
-        }
-        write_status_snapshot(ctx, status_warning_printed);
-        return;
-    }
-
-    if (result.action == RS485_MODBUS_ACTION_FORWARD) {
-        err = process_parsed_message(ctx, STATUS_MODULE_RS485, &result.msg);
-        if ((err == UNIFIED_OK) && result.response_required) {
-            err = write_rs485_response(fd, result.response, result.response_length);
-            if (err != UNIFIED_OK) {
-                status_collector_record_error(&ctx->status, STATUS_MODULE_RS485, "write_rs485_response", err);
-            }
-        }
-        write_status_snapshot(ctx, status_warning_printed);
-    }
-}
-
 static void *rs485_worker(void *arg)
 {
     worker_context_t *worker = (worker_context_t *)arg;
@@ -467,11 +287,9 @@ static void *rs485_worker(void *arg)
     int fd;
     uint32_t frame_count = 0u;
     bool status_warning_printed = false;
-    rs485_sync_t sync;
-    rs485_modbus_sync_t modbus_sync;
+    rs485_can_direct_sync_t sync;
 
-    memset(&sync, 0, sizeof(sync));
-    memset(&modbus_sync, 0, sizeof(modbus_sync));
+    rs485_can_direct_sync_init(&sync);
 
     fd = open(ctx->config->rs485_dev, O_RDWR | O_NOCTTY | O_NONBLOCK);
     if (fd < 0) {
@@ -538,33 +356,14 @@ static void *rs485_worker(void *arg)
         }
 
         for (ssize_t i = 0; i < nread; ++i) {
-            if (ctx->config->rs485_protocol == APP_RS485_PROTOCOL_DEBUG) {
-                uint8_t frame_buf[RS485_DEBUG_FRAME_LENGTH];
-                if (!rs485_sync_feed(&sync, buffer[i], frame_buf)) {
-                    continue;
-                }
-                frame_count++;
-                handle_rs485_debug_frame(ctx, frame_buf, &status_warning_printed);
-                if ((ctx->config->max_packets != 0u) && (frame_count >= ctx->config->max_packets)) {
-                    break;
-                }
-            } else {
-                uint8_t frame_buf[RS485_MODBUS_MAX_FRAME_LENGTH];
-                size_t frame_length = 0u;
-                bool invalid = false;
-                if (rs485_modbus_sync_feed(&modbus_sync, buffer[i], frame_buf, &frame_length, &invalid)) {
-                    frame_count++;
-                    handle_rs485_modbus_frame(ctx, fd, frame_buf, frame_length, &status_warning_printed);
-                    if ((ctx->config->max_packets != 0u) && (frame_count >= ctx->config->max_packets)) {
-                        break;
-                    }
-                } else if (invalid) {
-                    status_collector_record_error(&ctx->status,
-                                                  STATUS_MODULE_RS485,
-                                                  "rs485_modbus_frame_sync",
-                                                  UNIFIED_ERR_LENGTH);
-                    write_status_snapshot(ctx, &status_warning_printed);
-                }
+            uint8_t frame_buf[RS485_CAN_DIRECT_FRAME_LENGTH];
+            if (!rs485_can_direct_sync_feed(&sync, buffer[i], frame_buf)) {
+                continue;
+            }
+            frame_count++;
+            handle_rs485_can_direct_frame(ctx, frame_buf, &status_warning_printed);
+            if ((ctx->config->max_packets != 0u) && (frame_count >= ctx->config->max_packets)) {
+                break;
             }
         }
     }
@@ -572,6 +371,162 @@ static void *rs485_worker(void *arg)
     status_collector_mark_stopped(&ctx->status, STATUS_MODULE_RS485, "RS485 worker stopped");
     write_status_snapshot(ctx, &status_warning_printed);
     close(fd);
+    return NULL;
+}
+
+static void *bluetooth_worker(void *arg)
+{
+    worker_context_t *worker = (worker_context_t *)arg;
+    protocol_manager_context_t *ctx = worker->ctx;
+    int server_fd = -1;
+    int client_fd = -1;
+    uint32_t packet_count = 0u;
+    bool status_warning_printed = false;
+
+    server_fd = socket(AF_BLUETOOTH, SOCK_STREAM, BTPROTO_RFCOMM);
+    if (server_fd < 0) {
+        perror("bluetooth socket");
+        status_collector_record_error(&ctx->status, STATUS_MODULE_BLUETOOTH, "socket", UNIFIED_ERR_INVALID_ARG);
+        write_status_snapshot(ctx, &status_warning_printed);
+        return NULL;
+    }
+
+    struct sockaddr_rc loc_addr = { 0 };
+    loc_addr.rc_family = AF_BLUETOOTH;
+    memset(&loc_addr.rc_bdaddr, 0, sizeof(loc_addr.rc_bdaddr));
+    loc_addr.rc_channel = ctx->config->bluetooth_channel;
+
+    if (bind(server_fd, (struct sockaddr *)&loc_addr, sizeof(loc_addr)) < 0) {
+        perror("bluetooth bind");
+        status_collector_record_error(&ctx->status, STATUS_MODULE_BLUETOOTH, "bind", UNIFIED_ERR_INVALID_ARG);
+        status_collector_mark_stopped(&ctx->status, STATUS_MODULE_BLUETOOTH, "Bluetooth bind failed");
+        write_status_snapshot(ctx, &status_warning_printed);
+        close(server_fd);
+        return NULL;
+    }
+
+    if (listen(server_fd, 1) < 0) {
+        perror("bluetooth listen");
+        status_collector_record_error(&ctx->status, STATUS_MODULE_BLUETOOTH, "listen", UNIFIED_ERR_INVALID_ARG);
+        status_collector_mark_stopped(&ctx->status, STATUS_MODULE_BLUETOOTH, "Bluetooth listen failed");
+        write_status_snapshot(ctx, &status_warning_printed);
+        close(server_fd);
+        return NULL;
+    }
+
+    printf("linux_app Bluetooth worker listening on channel %u\n", (unsigned)ctx->config->bluetooth_channel);
+    status_collector_mark_running(&ctx->status, STATUS_MODULE_BLUETOOTH);
+    write_status_snapshot(ctx, &status_warning_printed);
+
+    // 将 socket 设为非阻塞以进行 select 轮询，这样可以优雅地响应 max_packets 限制或超时
+    int flags = fcntl(server_fd, F_GETFL, 0);
+    (void)fcntl(server_fd, F_SETFL, flags | O_NONBLOCK);
+
+    while ((ctx->config->max_packets == 0u) || (packet_count < ctx->config->max_packets)) {
+        fd_set readfds;
+        struct timeval timeout;
+        int max_fd = server_fd;
+        int ready;
+
+        FD_ZERO(&readfds);
+        FD_SET(server_fd, &readfds);
+        if (client_fd >= 0) {
+            FD_SET(client_fd, &readfds);
+            if (client_fd > max_fd) {
+                max_fd = client_fd;
+            }
+        }
+
+        timeout.tv_sec = 1;
+        timeout.tv_usec = 0;
+
+        ready = select(max_fd + 1, &readfds, NULL, NULL, &timeout);
+        if (ready < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            perror("select bluetooth");
+            status_collector_record_error(&ctx->status, STATUS_MODULE_BLUETOOTH, "select", UNIFIED_ERR_INVALID_ARG);
+            break;
+        }
+
+        if (ready == 0) {
+            write_status_snapshot(ctx, &status_warning_printed);
+            continue;
+        }
+
+        // 检查是否有新客户端连接
+        if (FD_ISSET(server_fd, &readfds)) {
+            struct sockaddr_rc rem_addr = { 0 };
+            socklen_t opt = sizeof(rem_addr);
+            int new_client = accept(server_fd, (struct sockaddr *)&rem_addr, &opt);
+            if (new_client >= 0) {
+                char client_mac[32];
+                format_bdaddr(&rem_addr.rc_bdaddr, client_mac, sizeof(client_mac));
+                printf("Bluetooth client connected: %s on channel %u\n", client_mac, rem_addr.rc_channel);
+
+                if (client_fd >= 0) {
+                    close(client_fd); // 关闭旧客户端连接
+                }
+                client_fd = new_client;
+
+                // 设置 client_fd 为非阻塞
+                int c_flags = fcntl(client_fd, F_GETFL, 0);
+                (void)fcntl(client_fd, F_SETFL, c_flags | O_NONBLOCK);
+            } else {
+                if ((errno != EAGAIN) && (errno != EWOULDBLOCK) && (errno != EINTR)) {
+                    perror("accept bluetooth");
+                    status_collector_record_error(&ctx->status, STATUS_MODULE_BLUETOOTH, "accept", UNIFIED_ERR_INVALID_ARG);
+                }
+            }
+        }
+
+        // 检查客户端是否有数据可读
+        if ((client_fd >= 0) && FD_ISSET(client_fd, &readfds)) {
+            uint8_t buffer[BLUETOOTH_FRAME_LENGTH];
+            // 蓝牙采用流式 RFCOMM 协议，通过 recv_all 保证读取到完整的 76 字节数据包
+            ssize_t nread = recv_all(client_fd, buffer, BLUETOOTH_FRAME_LENGTH);
+            if (nread <= 0) {
+                // 客户端断开连接或发生错误
+                if (nread < 0) {
+                    perror("recv bluetooth");
+                    status_collector_record_error(&ctx->status, STATUS_MODULE_BLUETOOTH, "recv", UNIFIED_ERR_INVALID_ARG);
+                } else {
+                    printf("Bluetooth client disconnected\n");
+                }
+                close(client_fd);
+                client_fd = -1;
+                write_status_snapshot(ctx, &status_warning_printed);
+                continue;
+            }
+
+            packet_count++;
+            status_collector_record_rx(&ctx->status, STATUS_MODULE_BLUETOOTH, (size_t)nread);
+
+            protocol_parsed_msg_t parsed_msg;
+            unified_error_t err = bluetooth_parse_frame(buffer, (size_t)nread, &parsed_msg);
+            if (err != UNIFIED_OK) {
+                log_error("bluetooth_parse_frame", err);
+                status_collector_record_error(&ctx->status,
+                                              STATUS_MODULE_BLUETOOTH,
+                                              "bluetooth_parse_frame",
+                                              err);
+                write_status_snapshot(ctx, &status_warning_printed);
+                continue;
+            }
+
+            (void)process_parsed_message(ctx, STATUS_MODULE_BLUETOOTH, &parsed_msg);
+            write_status_snapshot(ctx, &status_warning_printed);
+        }
+    }
+
+    status_collector_mark_stopped(&ctx->status, STATUS_MODULE_BLUETOOTH, "Bluetooth worker stopped");
+    write_status_snapshot(ctx, &status_warning_printed);
+
+    if (client_fd >= 0) {
+        close(client_fd);
+    }
+    close(server_fd);
     return NULL;
 }
 
@@ -591,27 +546,27 @@ static void configure_status_modules(protocol_manager_context_t *ctx)
                                       false,
                                       "wifi",
                                       "WiFi protocol module is not implemented yet");
+    (void)snprintf(detail, sizeof(detail), "channel=%u", (unsigned)ctx->config->bluetooth_channel);
     status_collector_configure_module(&ctx->status,
                                       STATUS_MODULE_BLUETOOTH,
-                                      false,
-                                      false,
+                                      true,
+                                      ctx->config->bluetooth_enabled,
                                       "bluetooth",
-                                      "Bluetooth protocol module is not implemented yet");
+                                      detail);
 
     (void)snprintf(detail, sizeof(detail), "udp port=%u", (unsigned)ctx->config->ethernet_udp_port);
     status_collector_configure_module(&ctx->status,
                                       STATUS_MODULE_ETHERNET,
                                       true,
                                       ctx->config->ethernet_udp_enabled,
-                                      "udp",
+                                      "can_direct",
                                       detail);
 
     (void)snprintf(detail,
                    sizeof(detail),
-                   "dev=%.72s baud=%u slave=%u",
+                   "dev=%.72s baud=%u",
                    ctx->config->rs485_dev,
-                   (unsigned)ctx->config->rs485_baud,
-                   (unsigned)ctx->config->rs485_slave_id);
+                   (unsigned)ctx->config->rs485_baud);
     status_collector_configure_module(&ctx->status,
                                       STATUS_MODULE_RS485,
                                       true,
@@ -625,10 +580,13 @@ unified_error_t protocol_manager_run(const app_config_t *config)
     protocol_manager_context_t ctx;
     pthread_t udp_thread;
     pthread_t rs485_thread;
+    pthread_t bluetooth_thread;
     worker_context_t udp_worker_ctx;
     worker_context_t rs485_worker_ctx;
+    worker_context_t bluetooth_worker_ctx;
     bool udp_started = false;
     bool rs485_started = false;
+    bool bluetooth_started = false;
     bool status_warning_printed = false;
     int enabled_count = 0;
 
@@ -669,6 +627,17 @@ unified_error_t protocol_manager_run(const app_config_t *config)
         }
     }
 
+    if (config->bluetooth_enabled) {
+        bluetooth_worker_ctx.ctx = &ctx;
+        bluetooth_worker_ctx.module_id = STATUS_MODULE_BLUETOOTH;
+        if (pthread_create(&bluetooth_thread, NULL, bluetooth_worker, &bluetooth_worker_ctx) != 0) {
+            status_collector_record_error(&ctx.status, STATUS_MODULE_BLUETOOTH, "pthread_create_bluetooth", UNIFIED_ERR_INVALID_ARG);
+        } else {
+            bluetooth_started = true;
+            enabled_count++;
+        }
+    }
+
     if (enabled_count == 0) {
         fprintf(stderr, "no protocol module enabled\n");
         write_status_snapshot(&ctx, &status_warning_printed);
@@ -683,6 +652,10 @@ unified_error_t protocol_manager_run(const app_config_t *config)
 
     if (rs485_started) {
         (void)pthread_join(rs485_thread, NULL);
+    }
+
+    if (bluetooth_started) {
+        (void)pthread_join(bluetooth_thread, NULL);
     }
 
     write_status_snapshot(&ctx, &status_warning_printed);

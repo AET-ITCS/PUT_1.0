@@ -246,7 +246,7 @@ Web 模块本身**不解析外部协议、不读取共享内存 ring、不直接
 ```json
 {"timestamp_ms":12345670,"level":"info","source":"web","message":"monitor started","detail":"put-webd serving Vue dist and read-only API"}
 {"timestamp_ms":12345678,"level":"warn","source":"ipc","message":"rtos heartbeat delayed","detail":"last heartbeat arrived after 1500ms"}
-{"timestamp_ms":12345999,"level":"error","source":"rs485","message":"modbus crc mismatch","detail":"frame dropped before unified_frame packing"}
+{"timestamp_ms":12345999,"level":"error","source":"rs485","message":"can direct crc mismatch","detail":"frame dropped before unified_frame packing"}
 ```
 
 **字段说明：**
@@ -308,7 +308,7 @@ Web 模块本身**不解析外部协议、不读取共享内存 ring、不直接
 不强制但建议的格式：
 
 ```text
-[2025-01-15T10:30:00.123Z] [info] [linux_app] rs485 modbus frame received, length=42
+[2025-01-15T10:30:00.123Z] [info] [linux_app] rs485 can_direct frame received, length=76
 [2025-01-15T10:30:01.456Z] [warn] [can] tx ring usage at 75%
 [2025-01-15T10:30:02.789Z] [error] [ipc] rtos heartbeat timeout, missed 3 heartbeats
 ```

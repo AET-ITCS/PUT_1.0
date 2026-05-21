@@ -1,4 +1,4 @@
-/* linux_app 入口：加载配置并启动多协议转换任务。 */
+/* linux_app 入口：加载配置并启动多协议 CAN 网关任务。 */
 #include <errno.h>
 #include <stdbool.h>
 #include <stdint.h>

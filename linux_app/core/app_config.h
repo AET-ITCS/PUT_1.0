@@ -16,8 +16,7 @@ extern "C" {
 #define APP_CONFIG_DEV_PATH_MAX 128u
 
 typedef enum {
-    APP_RS485_PROTOCOL_DEBUG = 0,
-    APP_RS485_PROTOCOL_MODBUS_RTU = 1,
+    APP_RS485_PROTOCOL_CAN_DIRECT = 0,
 } app_rs485_protocol_t;
 
 typedef struct {
@@ -28,11 +27,12 @@ typedef struct {
     char rs485_dev[APP_CONFIG_DEV_PATH_MAX];
     uint32_t rs485_baud;
     app_rs485_protocol_t rs485_protocol;
-    uint8_t rs485_slave_id;
-    bool rs485_response_enabled;
 
     bool status_enabled;
     char status_dir[APP_CONFIG_PATH_MAX];
+
+    bool bluetooth_enabled;
+    uint8_t bluetooth_channel;
 
     uint32_t max_packets;
 } app_config_t;

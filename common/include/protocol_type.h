@@ -1,4 +1,4 @@
-/* 公共协议类型定义：描述外部来源协议、车身业务类型和统一帧/CAN 标志。 */
+/* 公共协议类型定义：描述外部来源通道、RAW_CAN/预留业务类型和统一帧/CAN 标志。 */
 #ifndef PROTOCOL_TYPE_H
 #define PROTOCOL_TYPE_H
 
@@ -30,6 +30,7 @@ typedef enum {
  * 但本项目主流程不要求外部输入先转换为 anyMSG。
  */
 typedef enum {
+    VEHICLE_MSG_TYPE_RAW_CAN = 0x00,
     VEHICLE_MSG_TYPE_SEAT_CONTROL = 0x47,
     VEHICLE_MSG_TYPE_SEAT_FEEDBACK = 0x48,
     VEHICLE_MSG_TYPE_LIGHT_CONTROL = 0x49,

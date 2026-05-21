@@ -241,7 +241,7 @@ web/
       "tx_count": 1000,
       "error_count": 2,
       "last_seen_ms": 12345000,
-      "message": "Modbus RTU active"
+      "message": "CAN direct active"
     }
   ]
 }
