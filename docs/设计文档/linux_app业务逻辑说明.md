@@ -42,7 +42,7 @@ linux_app/
 ├── ethernet/
 │   └── ethernet_udp.c/.h      # UDP 入口，调用 can_direct parser
 ├── rs485/
-│   └── rs485_debug.c/.h       # RS485 入口，按 AA 55 同步 CAN direct 帧
+│   └── rs485_can_direct.c/.h       # RS485 入口，按 AA 55 同步 CAN direct 帧
 └── ipc/
     └── ipc_to_rtos.c/.h       # 大核到小核发送接口，当前为 stub
 ```
@@ -69,7 +69,7 @@ protocol_manager_run()
   ↓
 按配置启动 UDP worker / RS485 worker
   ↓
-ethernet_udp_parse_frame() / rs485_debug_parse_frame()
+ethernet_udp_parse_frame() / rs485_can_direct_parse_frame()
   ↓
 can_direct_parse_frame()
   ↓

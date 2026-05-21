@@ -179,7 +179,7 @@ PUT_1.0/
 │   │   ├── wifi_server.c           # WiFi TCP/UDP 服务
 │   │   ├── bluetooth_server.c      # 蓝牙通信
 │   │   ├── ethernet_tcp.c          # 以太网 TCP/UDP
-│   │   └── rs485_debug.c           # RS485 CAN direct
+│   │   └── rs485_can_direct.c           # RS485 CAN direct
 │   ├── drivers/                    # 驱动封装
 │   │   ├── uart_linux.c            # Linux 串口驱动
 │   │   ├── usb_device.c            # USB 设备管理

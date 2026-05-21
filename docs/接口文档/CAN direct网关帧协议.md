@@ -33,7 +33,7 @@ ipc_to_rtos_send() 交给小核
 | 字节序 | little-endian |
 | 接收解析代码 | `linux_app/core/can_direct_frame.c` |
 | UDP 入口 | `linux_app/ethernet/ethernet_udp.c` |
-| RS485 入口 | `linux_app/rs485/rs485_debug.c` |
+| RS485 入口 | `linux_app/rs485/rs485_can_direct.c` |
 | 发送测试工具 | `tools/send_udp_frame.py` |
 
 ## 3. 帧格式
