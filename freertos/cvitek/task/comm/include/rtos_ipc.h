@@ -18,6 +18,13 @@ typedef struct {
     uint32_t detail;
 } rtos_ipc_event_t;
 
+typedef enum {
+    RTOS_IPC_EVENT_LINUX_HEARTBEAT_TIMEOUT = 1u,
+    RTOS_IPC_EVENT_CAN_BUS_OFF = 2u,
+    RTOS_IPC_EVENT_SPI_ERROR = 3u,
+    RTOS_IPC_EVENT_RX_OVERFLOW = 4u,
+} rtos_ipc_event_type_t;
+
 typedef unified_error_t (*rtos_ipc_can_rx_sender_fn_t)(const rtos_can_message_t *message);
 typedef unified_error_t (*rtos_ipc_status_sender_fn_t)(const rtos_status_snapshot_t *status);
 typedef unified_error_t (*rtos_ipc_event_sender_fn_t)(const rtos_ipc_event_t *event);

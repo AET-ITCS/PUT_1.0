@@ -15,6 +15,7 @@ add_library(rtos_comm_mock STATIC
     src/riscv64/rtos_can_task.c
     src/riscv64/rtos_ipc.c
     src/riscv64/rtos_protocol_adapter.c
+    src/riscv64/rtos_recovery.c
     src/riscv64/rtos_status.c
 )
 
@@ -37,6 +38,12 @@ if(RTOS_COMM_BUILD_TESTS)
     )
     target_link_libraries(rtos_comm_stage4_test PRIVATE rtos_comm_mock)
     add_test(NAME rtos_comm_stage4 COMMAND rtos_comm_stage4_test)
+
+    add_executable(rtos_comm_stage5_test
+        test/rtos_comm_stage5_test.c
+    )
+    target_link_libraries(rtos_comm_stage5_test PRIVATE rtos_comm_mock)
+    add_test(NAME rtos_comm_stage5 COMMAND rtos_comm_stage5_test)
 
     add_executable(rtos_xl2515_fake_test
         src/riscv64/rtos_can_driver.c
@@ -61,6 +68,7 @@ if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
     if(RTOS_COMM_BUILD_TESTS)
         target_compile_options(rtos_comm_mock_test PRIVATE -Wall -Wextra)
         target_compile_options(rtos_comm_stage4_test PRIVATE -Wall -Wextra)
+        target_compile_options(rtos_comm_stage5_test PRIVATE -Wall -Wextra)
         target_compile_options(rtos_xl2515_fake_test PRIVATE -Wall -Wextra)
     endif()
 endif()

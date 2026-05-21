@@ -35,11 +35,18 @@ typedef struct {
     rtos_can_driver_error_t last_error;
 } rtos_can_driver_mock_snapshot_t;
 
+typedef struct {
+    bool bus_off;
+    bool error_passive;
+    bool rx_overflow;
+} rtos_can_driver_health_t;
+
 unified_error_t rtos_can_driver_init(void);
 unified_error_t rtos_can_driver_set_bitrate(uint32_t bitrate);
 unified_error_t rtos_can_driver_send(const rtos_can_message_t *message);
 unified_error_t rtos_can_driver_read(rtos_can_message_t *out_message);
 rtos_can_driver_error_t rtos_can_driver_get_error(void);
+unified_error_t rtos_can_driver_get_health(rtos_can_driver_health_t *out_health);
 unified_error_t rtos_can_driver_abort_tx(void);
 unified_error_t rtos_can_driver_clear_tx_buffers(void);
 unified_error_t rtos_can_driver_set_listen_only(void);
@@ -48,6 +55,11 @@ unified_error_t rtos_can_driver_reset(void);
 void rtos_can_driver_get_mock_snapshot(rtos_can_driver_mock_snapshot_t *out_snapshot);
 void rtos_can_driver_mock_reset_rx(void);
 unified_error_t rtos_can_driver_mock_inject_rx(const rtos_can_message_t *message);
+void rtos_can_driver_mock_set_send_error(rtos_can_driver_error_t error,
+                                         uint32_t fail_count);
+void rtos_can_driver_mock_set_health(bool bus_off,
+                                     bool error_passive,
+                                     bool rx_overflow);
 
 #ifdef __cplusplus
 }

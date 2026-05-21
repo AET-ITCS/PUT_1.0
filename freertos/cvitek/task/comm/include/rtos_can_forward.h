@@ -11,6 +11,10 @@ extern "C" {
 
 unified_error_t gateway_forward_init(void);
 unified_error_t rtos_can_forward_submit_message(const rtos_can_message_t *message);
+unified_error_t rtos_can_forward_enqueue_message(const rtos_can_message_t *message);
+uint32_t rtos_can_forward_drain_tx_queue_once(void);
+uint32_t rtos_can_forward_purge_tx_queue(void);
+uint32_t rtos_can_forward_get_tx_queue_depth(void);
 
 #ifdef __cplusplus
 }
