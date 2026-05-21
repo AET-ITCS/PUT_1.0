@@ -8,7 +8,7 @@ unified_error_t rtos_ipc_init(void)
     return UNIFIED_OK;
 }
 
-unified_error_t rtos_ipc_mock_receive_frame(const unified_frame_t *frame)
+unified_error_t rtos_ipc_mock_receive_can_message(const rtos_can_message_t *message)
 {
-    return rtos_can_forward_submit_frame(frame);
+    return rtos_can_forward_submit_message(message);
 }

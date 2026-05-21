@@ -1,4 +1,4 @@
-/* FreeRTOS comm 帧校验实现：只依赖公共统一帧 ABI 和 CRC16。 */
+/* Legacy FreeRTOS comm 帧校验实现：旧 unified_frame_t 实验链路，非当前正式接口。 */
 #include "rtos_gateway_frame.h"
 
 #include <string.h>
@@ -45,10 +45,10 @@ static void fill_can_message(const unified_frame_t *frame, rtos_can_message_t *o
     memset(out_msg, 0, sizeof(*out_msg));
     out_msg->can_id = frame->can_id;
     out_msg->can_dlc = frame->can_dlc;
-    out_msg->can_flags = frame->can_flags;
-    out_msg->sequence = frame->sequence;
-    out_msg->timestamp_ms = frame->timestamp_ms;
-    memcpy(out_msg->can_data, frame->can_data, UNIFIED_CAN_CLASSIC_DATA_MAX_LEN);
+    out_msg->can_flags =
+        ((frame->can_flags & (uint8_t)UNIFIED_CAN_FLAG_EXTENDED_ID) != 0u) ?
+        (uint8_t)RTOS_CAN_FLAG_EXTENDED_ID : (uint8_t)RTOS_CAN_FLAG_NONE;
+    memcpy(out_msg->can_data, frame->can_data, RTOS_CAN_CLASSIC_DATA_MAX_LEN);
 }
 
 rtos_frame_validate_error_t rtos_gateway_frame_validate(const unified_frame_t *frame,

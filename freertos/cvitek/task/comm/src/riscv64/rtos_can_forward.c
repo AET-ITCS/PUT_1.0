@@ -1,4 +1,4 @@
-/* FreeRTOS comm 转发主逻辑：mock 阶段同步消费软件 TX 队列。 */
+/* FreeRTOS comm 转发主逻辑：mock 阶段同步消费协议适配层输出的 CAN TX 队列。 */
 #include "rtos_can_forward.h"
 
 #include <stdbool.h>
@@ -6,7 +6,6 @@
 
 #include "rtos_can_driver.h"
 #include "rtos_config.h"
-#include "rtos_gateway_frame.h"
 #include "rtos_ipc.h"
 #include "rtos_status.h"
 
@@ -61,6 +60,45 @@ static void tx_queue_drain_once(void)
     }
 }
 
+static bool can_message_flags_are_supported(uint8_t can_flags)
+{
+    return (can_flags & (uint8_t)~RTOS_CAN_FLAG_EXTENDED_ID) == 0u;
+}
+
+static bool can_message_id_is_valid(uint32_t can_id, uint8_t can_flags)
+{
+    if ((can_flags & (uint8_t)RTOS_CAN_FLAG_EXTENDED_ID) != 0u) {
+        return can_id <= RTOS_CAN_EXTENDED_ID_MAX;
+    }
+
+    return can_id <= RTOS_CAN_STANDARD_ID_MAX;
+}
+
+static unified_error_t validate_can_message(const rtos_can_message_t *message)
+{
+    if (message == NULL) {
+        rtos_status_inc_drop_null();
+        return UNIFIED_ERR_INVALID_ARG;
+    }
+
+    if (!can_message_flags_are_supported(message->can_flags)) {
+        rtos_status_inc_drop_flag();
+        return UNIFIED_ERR_INVALID_ARG;
+    }
+
+    if (!can_message_id_is_valid(message->can_id, message->can_flags)) {
+        rtos_status_inc_drop_can_id();
+        return UNIFIED_ERR_INVALID_ARG;
+    }
+
+    if (message->can_dlc > RTOS_CAN_CLASSIC_DATA_MAX_LEN) {
+        rtos_status_inc_drop_dlc();
+        return UNIFIED_ERR_INVALID_ARG;
+    }
+
+    return UNIFIED_OK;
+}
+
 unified_error_t gateway_forward_init(void)
 {
     unified_error_t result;
@@ -90,27 +128,21 @@ unified_error_t gateway_forward_init(void)
     return UNIFIED_OK;
 }
 
-unified_error_t rtos_can_forward_submit_frame(const unified_frame_t *frame)
+unified_error_t rtos_can_forward_submit_message(const rtos_can_message_t *message)
 {
-    rtos_can_message_t message;
-    rtos_frame_validate_error_t validate_result;
+    unified_error_t validate_result;
 
-    rtos_status_inc_rx_from_linux();
-    validate_result = rtos_gateway_frame_validate(frame, &message);
-    if (validate_result != RTOS_FRAME_VALIDATE_OK) {
-        rtos_status_record_validation_error(validate_result);
-        return UNIFIED_ERR_INVALID_ARG;
+    validate_result = validate_can_message(message);
+    if (validate_result != UNIFIED_OK) {
+        return validate_result;
     }
 
-    if (frame->frame_type != (uint8_t)UNIFIED_FRAME_TYPE_CAN_DATA) {
-        return UNIFIED_OK;
-    }
-
-    if (!tx_queue_push(&message)) {
+    if (!tx_queue_push(message)) {
         rtos_status_inc_drop_queue_full();
         return UNIFIED_ERR_INVALID_ARG;
     }
 
+    rtos_status_inc_rx_from_linux();
     tx_queue_drain_once();
     return UNIFIED_OK;
 }
