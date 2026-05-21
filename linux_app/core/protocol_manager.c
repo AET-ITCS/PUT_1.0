@@ -1,4 +1,4 @@
-/* 协议管理实现：多协议线程接收，统一解析、打包、发送和状态统计。 */
+/* 协议管理实现：多协议线程接收，统一提取 CAN 字段、打包、发送和统计状态。 */
 #define _POSIX_C_SOURCE 200809L
 
 #include "protocol_manager.h"

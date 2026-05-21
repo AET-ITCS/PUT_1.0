@@ -1,4 +1,4 @@
-/* 统一帧打包接口：把协议中间消息封装为大核到小核的 unified_frame_t。 */
+/* 统一帧打包接口：把 CAN 转发字段封装为大核到小核的 unified_frame_t。 */
 #ifndef FRAME_PACKER_H
 #define FRAME_PACKER_H
 

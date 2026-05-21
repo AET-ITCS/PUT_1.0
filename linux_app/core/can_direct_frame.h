@@ -1,4 +1,4 @@
-/* CAN direct 网关帧解析接口：外部通道只承载 CAN 字段，不解释应用语义。 */
+/* CAN direct 网关帧字段提取接口：外部通道只承载 CAN 字段，不解释应用语义。 */
 #ifndef CAN_DIRECT_FRAME_H
 #define CAN_DIRECT_FRAME_H
 

@@ -1,4 +1,4 @@
-/* 统一帧打包实现：校验协议中间消息并生成 unified_frame_t、序号、时间戳和 CRC。 */
+/* 统一帧打包实现：校验 CAN 转发字段并生成 unified_frame_t、序号、时间戳和 CRC。 */
 #define _POSIX_C_SOURCE 200809L
 
 #include "frame_packer.h"

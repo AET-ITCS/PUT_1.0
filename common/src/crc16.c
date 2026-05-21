@@ -1,4 +1,4 @@
-/* CRC16 公共实现：计算统一帧和外部简单二进制帧使用的 CRC-16/CCITT-FALSE。 */
+/* CRC16 公共实现：计算统一帧和 CAN direct 网关帧使用的 CRC-16/CCITT-FALSE。 */
 #include "crc16.h"
 
 uint16_t unified_crc16_ccitt_false(const uint8_t *data, size_t length)
