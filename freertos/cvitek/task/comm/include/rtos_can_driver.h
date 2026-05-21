@@ -29,6 +29,7 @@ typedef struct {
     uint32_t reset_count;
     uint32_t abort_tx_count;
     uint32_t clear_tx_count;
+    uint32_t bitrate;
     bool initialized;
     bool listen_only;
     rtos_can_driver_error_t last_error;

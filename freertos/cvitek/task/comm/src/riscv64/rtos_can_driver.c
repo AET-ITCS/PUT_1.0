@@ -691,6 +691,7 @@ void rtos_can_driver_get_mock_snapshot(rtos_can_driver_mock_snapshot_t *out_snap
     }
 
     *out_snapshot = g_driver;
+    out_snapshot->bitrate = g_bitrate;
 }
 
 #else /* RTOS_CAN_DRIVER_XL2515_ENABLE */
@@ -806,7 +807,7 @@ void rtos_can_driver_get_mock_snapshot(rtos_can_driver_mock_snapshot_t *out_snap
     }
 
     *out_snapshot = g_driver;
-    (void)g_bitrate;
+    out_snapshot->bitrate = g_bitrate;
 }
 
 #endif /* RTOS_CAN_DRIVER_XL2515_ENABLE */

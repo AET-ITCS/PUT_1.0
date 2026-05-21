@@ -2,8 +2,10 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "rtos_config.h"
 #include "rtos_can_driver.h"
 #include "rtos_can_forward.h"
+#include "rtos_ipc.h"
 #include "rtos_status.h"
 
 #define CHECK(condition)                                                     \
@@ -28,15 +30,38 @@ static void fill_valid_message(rtos_can_message_t *message)
     memcpy(message->can_data, payload, sizeof(payload));
 }
 
+extern int comm_main(void);
+
 int main(void)
 {
     rtos_can_message_t message;
     rtos_status_snapshot_t status;
     rtos_can_driver_mock_snapshot_t driver;
 
+    CHECK(comm_main() == 0);
+    rtos_status_get_snapshot(&status);
+    rtos_can_driver_get_mock_snapshot(&driver);
+    CHECK(status.can_ready);
+    CHECK(status.linux_online);
+    CHECK(driver.initialized);
+    CHECK(driver.init_count == 1u);
+    CHECK(driver.bitrate == RTOS_CAN_BITRATE);
+    CHECK(!driver.listen_only);
+    CHECK(driver.last_error == RTOS_CAN_DRIVER_ERROR_NONE);
+
     fill_valid_message(&message);
     CHECK(gateway_forward_init() == UNIFIED_OK);
     CHECK(rtos_can_forward_submit_message(&message) == UNIFIED_OK);
+    rtos_status_get_snapshot(&status);
+    rtos_can_driver_get_mock_snapshot(&driver);
+    CHECK(status.rx_from_linux == 1u);
+    CHECK(status.tx_to_can_ok == 1u);
+    CHECK(status.tx_to_can_fail == 0u);
+    CHECK(driver.send_count == 1u);
+
+    CHECK(gateway_forward_init() == UNIFIED_OK);
+    fill_valid_message(&message);
+    CHECK(rtos_ipc_mock_receive_can_message(&message) == UNIFIED_OK);
     rtos_status_get_snapshot(&status);
     rtos_can_driver_get_mock_snapshot(&driver);
     CHECK(status.rx_from_linux == 1u);
@@ -103,6 +128,19 @@ int main(void)
     CHECK(status.rx_from_linux == 0u);
     CHECK(status.drop_dlc == 1u);
     CHECK(driver.send_count == 0u);
+
+    CHECK(gateway_forward_init() == UNIFIED_OK);
+    fill_valid_message(&message);
+    CHECK(rtos_can_driver_set_listen_only() == UNIFIED_OK);
+    CHECK(rtos_can_forward_submit_message(&message) == UNIFIED_OK);
+    rtos_status_get_snapshot(&status);
+    rtos_can_driver_get_mock_snapshot(&driver);
+    CHECK(status.rx_from_linux == 1u);
+    CHECK(status.tx_to_can_ok == 0u);
+    CHECK(status.tx_to_can_fail == 1u);
+    CHECK(driver.send_count == 0u);
+    CHECK(driver.listen_only);
+    CHECK(driver.last_error == RTOS_CAN_DRIVER_ERROR_LISTEN_ONLY);
 
     return 0;
 }
