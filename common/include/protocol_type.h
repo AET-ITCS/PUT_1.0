@@ -30,6 +30,7 @@ typedef enum {
  * 但本项目主流程不要求外部输入先转换为 anyMSG。
  */
 typedef enum {
+    VEHICLE_MSG_TYPE_RAW_CAN = 0x00,
     VEHICLE_MSG_TYPE_SEAT_CONTROL = 0x47,
     VEHICLE_MSG_TYPE_SEAT_FEEDBACK = 0x48,
     VEHICLE_MSG_TYPE_LIGHT_CONTROL = 0x49,

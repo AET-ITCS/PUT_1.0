@@ -55,41 +55,22 @@ void rtos_status_inc_drop_queue_full(void)
     ++g_status.drop_queue_full;
 }
 
-void rtos_status_record_validation_error(rtos_frame_validate_error_t error)
+void rtos_status_inc_drop_null(void)
 {
-    switch (error) {
-    case RTOS_FRAME_VALIDATE_NULL:
-        ++g_status.drop_null;
-        break;
-    case RTOS_FRAME_VALIDATE_MAGIC:
-        ++g_status.drop_magic;
-        break;
-    case RTOS_FRAME_VALIDATE_VERSION:
-        ++g_status.drop_version;
-        break;
-    case RTOS_FRAME_VALIDATE_TYPE:
-        ++g_status.drop_type;
-        break;
-    case RTOS_FRAME_VALIDATE_SOURCE_PROTOCOL:
-        ++g_status.drop_source_protocol;
-        break;
-    case RTOS_FRAME_VALIDATE_VEHICLE_TYPE:
-        ++g_status.drop_vehicle_type;
-        break;
-    case RTOS_FRAME_VALIDATE_FLAG:
-        ++g_status.drop_flag;
-        break;
-    case RTOS_FRAME_VALIDATE_CAN_ID:
-        ++g_status.drop_can_id;
-        break;
-    case RTOS_FRAME_VALIDATE_DLC:
-        ++g_status.drop_dlc;
-        break;
-    case RTOS_FRAME_VALIDATE_CRC:
-        ++g_status.drop_crc;
-        break;
-    case RTOS_FRAME_VALIDATE_OK:
-    default:
-        break;
-    }
+    ++g_status.drop_null;
+}
+
+void rtos_status_inc_drop_flag(void)
+{
+    ++g_status.drop_flag;
+}
+
+void rtos_status_inc_drop_can_id(void)
+{
+    ++g_status.drop_can_id;
+}
+
+void rtos_status_inc_drop_dlc(void)
+{
+    ++g_status.drop_dlc;
 }

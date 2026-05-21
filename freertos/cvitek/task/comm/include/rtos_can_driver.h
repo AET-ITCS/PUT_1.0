@@ -1,4 +1,4 @@
-/* FreeRTOS comm CAN driver 抽象：v1 使用 mock，占位后续 XL2515 实现。 */
+/* FreeRTOS comm CAN driver 抽象：只处理小核内部 CAN 消息，不绑定上层协议。 */
 #ifndef RTOS_CAN_DRIVER_H
 #define RTOS_CAN_DRIVER_H
 
@@ -6,7 +6,7 @@
 #include <stdint.h>
 
 #include "error_code.h"
-#include "rtos_gateway_frame.h"
+#include "rtos_can_message.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -16,8 +16,10 @@ typedef enum {
     RTOS_CAN_DRIVER_ERROR_NONE = 0,
     RTOS_CAN_DRIVER_ERROR_NOT_READY,
     RTOS_CAN_DRIVER_ERROR_LISTEN_ONLY,
+    RTOS_CAN_DRIVER_ERROR_NO_RX,
     RTOS_CAN_DRIVER_ERROR_SPI,
     RTOS_CAN_DRIVER_ERROR_BUS_OFF,
+    RTOS_CAN_DRIVER_ERROR_TIMEOUT,
 } rtos_can_driver_error_t;
 
 typedef struct {
@@ -27,6 +29,7 @@ typedef struct {
     uint32_t reset_count;
     uint32_t abort_tx_count;
     uint32_t clear_tx_count;
+    uint32_t bitrate;
     bool initialized;
     bool listen_only;
     rtos_can_driver_error_t last_error;

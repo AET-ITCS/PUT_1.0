@@ -6,12 +6,13 @@ set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
 
+option(RTOS_COMM_BUILD_TESTS "Build FreeRTOS comm mock tests" ON)
+
 add_library(rtos_comm_mock STATIC
     src/riscv64/comm_main.c
     src/riscv64/rtos_can_driver.c
     src/riscv64/rtos_can_forward.c
     src/riscv64/rtos_can_task.c
-    src/riscv64/rtos_gateway_frame.c
     src/riscv64/rtos_ipc.c
     src/riscv64/rtos_status.c
 )
@@ -21,14 +22,11 @@ target_include_directories(rtos_comm_mock PUBLIC
     ../../../../common/include
 )
 
-option(RTOS_COMM_BUILD_TESTS "Build FreeRTOS comm mock tests" ON)
-
 if(RTOS_COMM_BUILD_TESTS)
     enable_testing()
 
     add_executable(rtos_comm_mock_test
         test/rtos_comm_mock_test.c
-        ../../../../common/src/crc16.c
     )
     target_link_libraries(rtos_comm_mock_test PRIVATE rtos_comm_mock)
     add_test(NAME rtos_comm_mock COMMAND rtos_comm_mock_test)

@@ -7,6 +7,8 @@ set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
 
+find_package(Threads REQUIRED)
+
 add_library(common_crc STATIC
     ../common/src/crc16.c
 )
@@ -16,26 +18,29 @@ target_include_directories(common_crc PUBLIC
 
 add_executable(linux_app
     main.c
+    core/app_config.c
+    core/can_direct_frame.c
     core/frame_packer.c
     core/protocol_manager.c
+    core/status_collector.c
     ipc/ipc_to_rtos.c
-    以太网/ethernet_status.c
-    以太网/ethernet_udp.c
-    bluetooth/bluetooth_status.c
+    rs485/rs485_debug.c
+    ethernet/ethernet_udp.c
     bluetooth/bluetooth_server.c
 )
 
 target_include_directories(linux_app PRIVATE
     core
     ipc
-    以太网
+    rs485
+    ethernet
     bluetooth
     ../common/include
 )
 
 target_link_libraries(linux_app PRIVATE
     common_crc
-    pthread
+    Threads::Threads
 )
 
 target_compile_definitions(linux_app PRIVATE

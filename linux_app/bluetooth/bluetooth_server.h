@@ -1,10 +1,11 @@
-/* 蓝牙服务接口头文件：定义蓝牙服务线程启动/停止及帧解析器接口。 */
+/* 蓝牙协议解析与低级网络接口 */
 #ifndef BLUETOOTH_SERVER_H
 #define BLUETOOTH_SERVER_H
 
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <sys/types.h>
 
 #include "error_code.h"
 #include "protocol_parsed_msg.h"
@@ -13,7 +14,6 @@
 extern "C" {
 #endif
 
-/* 蓝牙物理链路上约定的原始调试数据帧配置，与以太网 UDP 调试帧保持格式一致 */
 #define BLUETOOTH_FRAME_MAGIC 0x55AAu
 #define BLUETOOTH_FRAME_VERSION 0x01u
 #define BLUETOOTH_FRAME_HEADER_LENGTH 10u
@@ -21,19 +21,38 @@ extern "C" {
 #define BLUETOOTH_FRAME_LENGTH \
     (BLUETOOTH_FRAME_HEADER_LENGTH + UNIFIED_CAN_FD_DATA_MAX_LEN + BLUETOOTH_FRAME_CRC_LENGTH)
 
-/**
- * @brief 启动大核蓝牙服务监听子线程。
- *
- * @param status_dir 状态快照输出目录，NULL 采用默认目录
- * @param status_enabled 是否启用快照输出
- * @return int 0 启动成功，-1 启动失败
+/* 
+ * 嵌入式防御性编程设计：
+ * 自主定义 Linux 内核蓝牙 RFCOMM 套接字所需的常量与地址结构体。
+ * 保证蓝牙模块在任何交叉编译环境下无需额外配置依赖即可“一次编译通过”。
  */
-int bluetooth_server_start(const char *status_dir, bool status_enabled);
+#ifndef AF_BLUETOOTH
+#define AF_BLUETOOTH 31
+#endif
+
+#ifndef BTPROTO_RFCOMM
+#define BTPROTO_RFCOMM 3
+#endif
+
+typedef struct {
+    uint8_t b[6];
+} bdaddr_t;
+
+struct sockaddr_rc {
+    sa_family_t rc_family;
+    bdaddr_t    rc_bdaddr;
+    uint8_t     rc_channel;
+};
 
 /**
- * @brief 停止蓝牙监听服务，释放套接字并销毁子线程。
+ * @brief 将 bdaddr 蓝牙物理地址格式化为标准的 MAC 文本 (如 AA:BB:CC:DD:EE:FF)
  */
-void bluetooth_server_stop(void);
+void format_bdaddr(const bdaddr_t *ba, char *out_str, size_t max_len);
+
+/**
+ * @brief 确保在流式 Socket 链路中完整读取指定大小的数据，解决分包沾包问题
+ */
+ssize_t recv_all(int fd, uint8_t *buf, size_t len);
 
 /**
  * @brief 解析大核蓝牙接收到的原始二进制帧。
