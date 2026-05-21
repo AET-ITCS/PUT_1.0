@@ -19,13 +19,12 @@ target_include_directories(common_crc PUBLIC
 add_executable(linux_app
     main.c
     core/app_config.c
+    core/can_direct_frame.c
     core/frame_packer.c
     core/protocol_manager.c
     core/status_collector.c
     ipc/ipc_to_rtos.c
     rs485/rs485_debug.c
-    rs485/rs485_modbus.c
-    rs485/rs485_register_map.c
     ethernet/ethernet_udp.c
 )
 

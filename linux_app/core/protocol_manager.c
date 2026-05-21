@@ -18,7 +18,6 @@
 #include "frame_packer.h"
 #include "ipc_to_rtos.h"
 #include "rs485_debug.h"
-#include "rs485_modbus.h"
 #include "status_collector.h"
 
 typedef struct {
@@ -31,16 +30,6 @@ typedef struct {
     protocol_manager_context_t *ctx;
     status_module_id_t module_id;
 } worker_context_t;
-
-typedef struct {
-    uint8_t frame[RS485_DEBUG_FRAME_LENGTH];
-    size_t pos;
-} rs485_sync_t;
-
-typedef struct {
-    uint8_t frame[RS485_MODBUS_MAX_FRAME_LENGTH];
-    size_t pos;
-} rs485_modbus_sync_t;
 
 static void log_error(const char *stage, unified_error_t err)
 {
@@ -255,139 +244,19 @@ static unified_error_t configure_serial_raw(int fd, uint32_t baud)
     return UNIFIED_OK;
 }
 
-static bool rs485_sync_feed(rs485_sync_t *sync, uint8_t byte, uint8_t out_frame[RS485_DEBUG_FRAME_LENGTH])
-{
-    if (sync->pos == 0u) {
-        if (byte == 0xAAu) {
-            sync->frame[0] = byte;
-            sync->pos = 1u;
-        }
-        return false;
-    }
-
-    if (sync->pos == 1u) {
-        if (byte == 0x55u) {
-            sync->frame[1] = byte;
-            sync->pos = 2u;
-        } else if (byte == 0xAAu) {
-            sync->frame[0] = byte;
-            sync->pos = 1u;
-        } else {
-            sync->pos = 0u;
-        }
-        return false;
-    }
-
-    sync->frame[sync->pos++] = byte;
-    if (sync->pos == RS485_DEBUG_FRAME_LENGTH) {
-        memcpy(out_frame, sync->frame, RS485_DEBUG_FRAME_LENGTH);
-        sync->pos = 0u;
-        return true;
-    }
-
-    return false;
-}
-
-static bool rs485_modbus_sync_feed(rs485_modbus_sync_t *sync,
-                                   uint8_t byte,
-                                   uint8_t out_frame[RS485_MODBUS_MAX_FRAME_LENGTH],
-                                   size_t *out_length,
-                                   bool *out_invalid)
-{
-    size_t expected;
-
-    if ((sync == NULL) || (out_frame == NULL) || (out_length == NULL) || (out_invalid == NULL)) {
-        return false;
-    }
-
-    *out_invalid = false;
-    *out_length = 0u;
-
-    if (sync->pos >= RS485_MODBUS_MAX_FRAME_LENGTH) {
-        sync->pos = 0u;
-        *out_invalid = true;
-        return false;
-    }
-
-    sync->frame[sync->pos++] = byte;
-    expected = rs485_modbus_expected_length(sync->frame, sync->pos);
-    if (expected == RS485_MODBUS_FRAME_INCOMPLETE) {
-        return false;
-    }
-
-    if ((expected == RS485_MODBUS_FRAME_INVALID) || (expected > RS485_MODBUS_MAX_FRAME_LENGTH)) {
-        sync->pos = 0u;
-        *out_invalid = true;
-        return false;
-    }
-
-    if (sync->pos < expected) {
-        return false;
-    }
-
-    if (sync->pos > expected) {
-        sync->pos = 0u;
-        *out_invalid = true;
-        return false;
-    }
-
-    memcpy(out_frame, sync->frame, expected);
-    *out_length = expected;
-    sync->pos = 0u;
-    return true;
-}
-
-static unified_error_t write_rs485_response(int fd, const uint8_t *response, size_t response_length)
-{
-    size_t written = 0u;
-
-    if ((response == NULL) || (response_length == 0u)) {
-        return UNIFIED_OK;
-    }
-
-    while (written < response_length) {
-        ssize_t rc = write(fd, &response[written], response_length - written);
-        if (rc > 0) {
-            written += (size_t)rc;
-            continue;
-        }
-
-        if ((rc < 0) && ((errno == EINTR) || (errno == EAGAIN) || (errno == EWOULDBLOCK))) {
-            fd_set writefds;
-            struct timeval timeout;
-            int ready;
-
-            FD_ZERO(&writefds);
-            FD_SET(fd, &writefds);
-            timeout.tv_sec = 1;
-            timeout.tv_usec = 0;
-            ready = select(fd + 1, NULL, &writefds, NULL, &timeout);
-            if (ready >= 0) {
-                continue;
-            }
-        }
-
-        return UNIFIED_ERR_INVALID_ARG;
-    }
-
-    return UNIFIED_OK;
-}
-
 static const char *rs485_protocol_name(app_rs485_protocol_t protocol)
 {
     switch (protocol) {
-    case APP_RS485_PROTOCOL_DEBUG:
-        return "debug";
-    case APP_RS485_PROTOCOL_MODBUS_RTU:
-        return "modbus_rtu";
+    case APP_RS485_PROTOCOL_CAN_DIRECT:
+        return "can_direct";
     default:
         return "unknown";
     }
 }
 
-static void handle_rs485_debug_frame(protocol_manager_context_t *ctx,
-                                     const uint8_t frame_buf[RS485_DEBUG_FRAME_LENGTH],
-                                     bool *status_warning_printed)
+static void handle_rs485_can_direct_frame(protocol_manager_context_t *ctx,
+                                          const uint8_t frame_buf[RS485_DEBUG_FRAME_LENGTH],
+                                          bool *status_warning_printed)
 {
     protocol_parsed_msg_t parsed_msg;
     unified_error_t err;
@@ -395,10 +264,10 @@ static void handle_rs485_debug_frame(protocol_manager_context_t *ctx,
     status_collector_record_rx(&ctx->status, STATUS_MODULE_RS485, RS485_DEBUG_FRAME_LENGTH);
     err = rs485_debug_parse_frame(frame_buf, RS485_DEBUG_FRAME_LENGTH, &parsed_msg);
     if (err != UNIFIED_OK) {
-        log_error("rs485_debug_parse_frame", err);
+        log_error("rs485_can_direct_parse_frame", err);
         status_collector_record_error(&ctx->status,
                                       STATUS_MODULE_RS485,
-                                      "rs485_debug_parse_frame",
+                                      "rs485_can_direct_parse_frame",
                                       err);
         write_status_snapshot(ctx, status_warning_printed);
         return;
@@ -408,58 +277,6 @@ static void handle_rs485_debug_frame(protocol_manager_context_t *ctx,
     write_status_snapshot(ctx, status_warning_printed);
 }
 
-static void handle_rs485_modbus_frame(protocol_manager_context_t *ctx,
-                                      int fd,
-                                      const uint8_t *frame_buf,
-                                      size_t frame_length,
-                                      bool *status_warning_printed)
-{
-    rs485_modbus_result_t result;
-    unified_error_t err;
-
-    status_collector_record_rx(&ctx->status, STATUS_MODULE_RS485, frame_length);
-    err = rs485_modbus_parse_request(frame_buf,
-                                     frame_length,
-                                     ctx->config->rs485_slave_id,
-                                     ctx->config->rs485_response_enabled,
-                                     &result);
-    if (err != UNIFIED_OK) {
-        log_error("rs485_modbus_parse_request", err);
-        status_collector_record_error(&ctx->status,
-                                      STATUS_MODULE_RS485,
-                                      "rs485_modbus_parse_request",
-                                      err);
-        write_status_snapshot(ctx, status_warning_printed);
-        return;
-    }
-
-    if (result.action == RS485_MODBUS_ACTION_EXCEPTION) {
-        status_collector_record_error(&ctx->status,
-                                      STATUS_MODULE_RS485,
-                                      "rs485_modbus_exception",
-                                      result.error);
-        if (result.response_required) {
-            err = write_rs485_response(fd, result.response, result.response_length);
-            if (err != UNIFIED_OK) {
-                status_collector_record_error(&ctx->status, STATUS_MODULE_RS485, "write_rs485_response", err);
-            }
-        }
-        write_status_snapshot(ctx, status_warning_printed);
-        return;
-    }
-
-    if (result.action == RS485_MODBUS_ACTION_FORWARD) {
-        err = process_parsed_message(ctx, STATUS_MODULE_RS485, &result.msg);
-        if ((err == UNIFIED_OK) && result.response_required) {
-            err = write_rs485_response(fd, result.response, result.response_length);
-            if (err != UNIFIED_OK) {
-                status_collector_record_error(&ctx->status, STATUS_MODULE_RS485, "write_rs485_response", err);
-            }
-        }
-        write_status_snapshot(ctx, status_warning_printed);
-    }
-}
-
 static void *rs485_worker(void *arg)
 {
     worker_context_t *worker = (worker_context_t *)arg;
@@ -467,11 +284,9 @@ static void *rs485_worker(void *arg)
     int fd;
     uint32_t frame_count = 0u;
     bool status_warning_printed = false;
-    rs485_sync_t sync;
-    rs485_modbus_sync_t modbus_sync;
+    rs485_debug_sync_t sync;
 
-    memset(&sync, 0, sizeof(sync));
-    memset(&modbus_sync, 0, sizeof(modbus_sync));
+    rs485_debug_sync_init(&sync);
 
     fd = open(ctx->config->rs485_dev, O_RDWR | O_NOCTTY | O_NONBLOCK);
     if (fd < 0) {
@@ -538,33 +353,14 @@ static void *rs485_worker(void *arg)
         }
 
         for (ssize_t i = 0; i < nread; ++i) {
-            if (ctx->config->rs485_protocol == APP_RS485_PROTOCOL_DEBUG) {
-                uint8_t frame_buf[RS485_DEBUG_FRAME_LENGTH];
-                if (!rs485_sync_feed(&sync, buffer[i], frame_buf)) {
-                    continue;
-                }
-                frame_count++;
-                handle_rs485_debug_frame(ctx, frame_buf, &status_warning_printed);
-                if ((ctx->config->max_packets != 0u) && (frame_count >= ctx->config->max_packets)) {
-                    break;
-                }
-            } else {
-                uint8_t frame_buf[RS485_MODBUS_MAX_FRAME_LENGTH];
-                size_t frame_length = 0u;
-                bool invalid = false;
-                if (rs485_modbus_sync_feed(&modbus_sync, buffer[i], frame_buf, &frame_length, &invalid)) {
-                    frame_count++;
-                    handle_rs485_modbus_frame(ctx, fd, frame_buf, frame_length, &status_warning_printed);
-                    if ((ctx->config->max_packets != 0u) && (frame_count >= ctx->config->max_packets)) {
-                        break;
-                    }
-                } else if (invalid) {
-                    status_collector_record_error(&ctx->status,
-                                                  STATUS_MODULE_RS485,
-                                                  "rs485_modbus_frame_sync",
-                                                  UNIFIED_ERR_LENGTH);
-                    write_status_snapshot(ctx, &status_warning_printed);
-                }
+            uint8_t frame_buf[RS485_DEBUG_FRAME_LENGTH];
+            if (!rs485_debug_sync_feed(&sync, buffer[i], frame_buf)) {
+                continue;
+            }
+            frame_count++;
+            handle_rs485_can_direct_frame(ctx, frame_buf, &status_warning_printed);
+            if ((ctx->config->max_packets != 0u) && (frame_count >= ctx->config->max_packets)) {
+                break;
             }
         }
     }
@@ -603,15 +399,14 @@ static void configure_status_modules(protocol_manager_context_t *ctx)
                                       STATUS_MODULE_ETHERNET,
                                       true,
                                       ctx->config->ethernet_udp_enabled,
-                                      "udp",
+                                      "can_direct",
                                       detail);
 
     (void)snprintf(detail,
                    sizeof(detail),
-                   "dev=%.72s baud=%u slave=%u",
+                   "dev=%.72s baud=%u",
                    ctx->config->rs485_dev,
-                   (unsigned)ctx->config->rs485_baud,
-                   (unsigned)ctx->config->rs485_slave_id);
+                   (unsigned)ctx->config->rs485_baud);
     status_collector_configure_module(&ctx->status,
                                       STATUS_MODULE_RS485,
                                       true,

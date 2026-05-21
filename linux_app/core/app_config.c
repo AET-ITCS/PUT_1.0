@@ -116,13 +116,11 @@ static int parse_rs485_protocol(const char *text, app_rs485_protocol_t *out_prot
         return -1;
     }
 
-    if ((strcmp(text, "debug") == 0) || (strcmp(text, "rs485-debug") == 0)) {
-        *out_protocol = APP_RS485_PROTOCOL_DEBUG;
-        return 0;
-    }
-
-    if ((strcmp(text, "modbus_rtu") == 0) || (strcmp(text, "modbus") == 0)) {
-        *out_protocol = APP_RS485_PROTOCOL_MODBUS_RTU;
+    if ((strcmp(text, "can_direct") == 0) ||
+        (strcmp(text, "direct") == 0) ||
+        (strcmp(text, "debug") == 0) ||
+        (strcmp(text, "rs485-debug") == 0)) {
+        *out_protocol = APP_RS485_PROTOCOL_CAN_DIRECT;
         return 0;
     }
 
@@ -150,9 +148,7 @@ void app_config_set_defaults(app_config_t *config)
     config->rs485_enabled = false;
     copy_string(config->rs485_dev, sizeof(config->rs485_dev), "/dev/ttyS1");
     config->rs485_baud = 115200u;
-    config->rs485_protocol = APP_RS485_PROTOCOL_MODBUS_RTU;
-    config->rs485_slave_id = 1u;
-    config->rs485_response_enabled = true;
+    config->rs485_protocol = APP_RS485_PROTOCOL_CAN_DIRECT;
     config->status_enabled = true;
     copy_string(config->status_dir, sizeof(config->status_dir), "/run/put/status");
     config->max_packets = 0u;
@@ -184,6 +180,13 @@ static unified_error_t apply_key_value(app_config_t *config,
                 return UNIFIED_ERR_INVALID_ARG;
             }
             config->ethernet_udp_port = (uint16_t)u32_value;
+            return UNIFIED_OK;
+        }
+
+        if (strcmp(key, "protocol") == 0) {
+            if ((strcmp(value, "can_direct") != 0) && (strcmp(value, "direct") != 0)) {
+                return UNIFIED_ERR_INVALID_ARG;
+            }
             return UNIFIED_OK;
         }
     } else if (strcmp(section, "rs485") == 0) {
@@ -218,21 +221,7 @@ static unified_error_t apply_key_value(app_config_t *config,
             return UNIFIED_OK;
         }
 
-        if (strcmp(key, "slave_id") == 0) {
-            if ((parse_u32(value, &u32_value) != 0) || (u32_value == 0u) || (u32_value > 247u)) {
-                return UNIFIED_ERR_INVALID_ARG;
-            }
-            config->rs485_slave_id = (uint8_t)u32_value;
-            return UNIFIED_OK;
-        }
-
-        if (strcmp(key, "response_enabled") == 0) {
-            if (parse_bool(value, &bool_value) != 0) {
-                return UNIFIED_ERR_INVALID_ARG;
-            }
-            config->rs485_response_enabled = bool_value;
-            return UNIFIED_OK;
-        }
+        /* slave_id/response_enabled 是旧 Modbus 配置项，纯网关模式下忽略。 */
     } else if (strcmp(section, "status") == 0) {
         if (strcmp(key, "enabled") == 0) {
             if (parse_bool(value, &bool_value) != 0) {
@@ -338,13 +327,7 @@ unified_error_t app_config_validate(const app_config_t *config)
         return UNIFIED_ERR_INVALID_ARG;
     }
 
-    if (config->rs485_enabled &&
-        (config->rs485_protocol != APP_RS485_PROTOCOL_DEBUG) &&
-        (config->rs485_protocol != APP_RS485_PROTOCOL_MODBUS_RTU)) {
-        return UNIFIED_ERR_INVALID_ARG;
-    }
-
-    if (config->rs485_enabled && ((config->rs485_slave_id == 0u) || (config->rs485_slave_id > 247u))) {
+    if (config->rs485_enabled && (config->rs485_protocol != APP_RS485_PROTOCOL_CAN_DIRECT)) {
         return UNIFIED_ERR_INVALID_ARG;
     }
 

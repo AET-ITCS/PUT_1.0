@@ -72,7 +72,8 @@ UNIFIED_STATIC_ASSERT(sizeof(unified_frame_t) == UNIFIED_FRAME_LENGTH,
 
 static inline bool vehicle_msg_type_is_valid(uint8_t type)
 {
-    return (type == (uint8_t)VEHICLE_MSG_TYPE_SEAT_CONTROL) ||
+    return (type == (uint8_t)VEHICLE_MSG_TYPE_RAW_CAN) ||
+           (type == (uint8_t)VEHICLE_MSG_TYPE_SEAT_CONTROL) ||
            (type == (uint8_t)VEHICLE_MSG_TYPE_SEAT_FEEDBACK) ||
            (type == (uint8_t)VEHICLE_MSG_TYPE_LIGHT_CONTROL) ||
            (type == (uint8_t)VEHICLE_MSG_TYPE_LIGHT_FEEDBACK) ||
