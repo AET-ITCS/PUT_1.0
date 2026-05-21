@@ -5,6 +5,7 @@
 
 #include <errno.h>
 #include <inttypes.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/stat.h>
@@ -518,9 +519,20 @@ int ethernet_status_write_all(ethernet_status_t *status)
     now_ms = now_monotonic_ms();
     status->updated_at_ms = now_ms;
 
-    if (write_atomic_json(status, "modules.json", write_modules_json, now_ms) != 0) {
+    // 联合状态写出：在以太网侧使用相同的全局互斥锁保护 modules.json 写入，避免写冲突
+    extern pthread_mutex_t g_status_mutex;
+    extern void *g_bluetooth_status; // 声明为 void* 以规避头文件依赖
+    extern int gateway_status_write_modules_json(const char *status_dir,
+                                                 bool status_enabled,
+                                                 const void *eth_status_raw,
+                                                 const void *bt_status_raw);
+
+    (void)pthread_mutex_lock(&g_status_mutex);
+    if (gateway_status_write_modules_json(status->status_dir, status->enabled, status, g_bluetooth_status) != 0) {
         rc = -1;
     }
+    (void)pthread_mutex_unlock(&g_status_mutex);
+
     if (write_atomic_json(status, "ipc_status.json", write_ipc_status_json, now_ms) != 0) {
         rc = -1;
     }

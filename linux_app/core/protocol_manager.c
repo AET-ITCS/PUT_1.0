@@ -16,6 +16,9 @@
 #include "frame_packer.h"
 #include "ipc_to_rtos.h"
 
+/* 全局以太网状态指针，供蓝牙快照子系统合并 JSON 数据时只读拉取 */
+ethernet_status_t *g_ethernet_status = NULL;
+
 static void log_error(const char *stage, unified_error_t err)
 {
     fprintf(stderr, "[%s] error=%d\n", stage, (int)err);
@@ -57,6 +60,7 @@ unified_error_t protocol_manager_run_udp_with_status(uint16_t port,
     }
 
     ethernet_status_init(&status, status_dir, port, status_enabled);
+    g_ethernet_status = &status; // 关联全局以太网状态指针，供蓝牙合并 JSON 使用
     write_status_snapshot(&status, &status_warning_printed);
 
     fd = socket(AF_INET, SOCK_DGRAM, 0);
@@ -64,6 +68,7 @@ unified_error_t protocol_manager_run_udp_with_status(uint16_t port,
         perror("socket");
         ethernet_status_record_error(&status, "socket", UNIFIED_ERR_INVALID_ARG);
         write_status_snapshot(&status, &status_warning_printed);
+        g_ethernet_status = NULL;
         return UNIFIED_ERR_INVALID_ARG;
     }
 
@@ -77,6 +82,7 @@ unified_error_t protocol_manager_run_udp_with_status(uint16_t port,
         ethernet_status_record_error(&status, "bind", UNIFIED_ERR_INVALID_ARG);
         write_status_snapshot(&status, &status_warning_printed);
         close(fd);
+        g_ethernet_status = NULL;
         return UNIFIED_ERR_INVALID_ARG;
     }
 
@@ -108,6 +114,7 @@ unified_error_t protocol_manager_run_udp_with_status(uint16_t port,
             ethernet_status_record_error(&status, "select", UNIFIED_ERR_INVALID_ARG);
             write_status_snapshot(&status, &status_warning_printed);
             close(fd);
+            g_ethernet_status = NULL;
             return UNIFIED_ERR_INVALID_ARG;
         }
 
@@ -125,6 +132,7 @@ unified_error_t protocol_manager_run_udp_with_status(uint16_t port,
             ethernet_status_record_error(&status, "recvfrom", UNIFIED_ERR_INVALID_ARG);
             write_status_snapshot(&status, &status_warning_printed);
             close(fd);
+            g_ethernet_status = NULL;
             return UNIFIED_ERR_INVALID_ARG;
         }
 
@@ -161,6 +169,7 @@ unified_error_t protocol_manager_run_udp_with_status(uint16_t port,
 
     ethernet_status_mark_stopped(&status, "UDP listener stopped after reaching max packet limit");
     write_status_snapshot(&status, &status_warning_printed);
+    g_ethernet_status = NULL; // 退出并清空全局指针
     close(fd);
     return UNIFIED_OK;
 }

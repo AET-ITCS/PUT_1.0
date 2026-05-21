@@ -21,17 +21,21 @@ add_executable(linux_app
     ipc/ipc_to_rtos.c
     以太网/ethernet_status.c
     以太网/ethernet_udp.c
+    bluetooth/bluetooth_status.c
+    bluetooth/bluetooth_server.c
 )
 
 target_include_directories(linux_app PRIVATE
     core
     ipc
     以太网
+    bluetooth
     ../common/include
 )
 
 target_link_libraries(linux_app PRIVATE
     common_crc
+    pthread
 )
 
 target_compile_definitions(linux_app PRIVATE

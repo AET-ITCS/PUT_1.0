@@ -8,6 +8,7 @@
 
 #include "frame_packer.h"
 #include "protocol_manager.h"
+#include "bluetooth_server.h"
 
 #define DEFAULT_UDP_PORT 5000u
 
@@ -88,8 +89,16 @@ int main(int argc, char **argv)
     }
 
     frame_packer_init(1u);
-    return (protocol_manager_run_udp_with_status((uint16_t)port, max_packets, status_dir, status_enabled) ==
-            UNIFIED_OK)
-               ? EXIT_SUCCESS
-               : EXIT_FAILURE;
+
+    // 异步启动蓝牙 RFCOMM SPP 服务子线程
+    if (bluetooth_server_start(status_dir, status_enabled) != 0) {
+        fprintf(stderr, "Warning: failed to start bluetooth server thread\n");
+    }
+
+    unified_error_t err = protocol_manager_run_udp_with_status((uint16_t)port, max_packets, status_dir, status_enabled);
+
+    // 程序退出前，优雅停止蓝牙服务并销毁/回收子线程资源
+    bluetooth_server_stop();
+
+    return (err == UNIFIED_OK) ? EXIT_SUCCESS : EXIT_FAILURE;
 }
