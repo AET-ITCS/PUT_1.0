@@ -1,4 +1,11 @@
-/* FreeRTOS comm CAN driver：默认 mock，可通过 RTOS_CAN_DRIVER_XL2515_ENABLE 启用 XL2515。 */
+/**
+ * @file rtos_can_driver.c
+ * @brief FreeRTOS comm CAN driver 实现。
+ *
+ * 默认构建使用 host mock driver。定义 RTOS_CAN_DRIVER_XL2515_ENABLE 后启用
+ * XL2515/MCP2515-like SPI CAN 控制器路径；测试可通过
+ * RTOS_CAN_DRIVER_XL2515_FAKE_PLATFORM 使用 fake SPI 平台。
+ */
 #include "rtos_can_driver.h"
 
 #include <string.h>
@@ -69,7 +76,11 @@ extern void rtos_xl2515_fake_config_spi2_pinmux(void);
 #define XL2515_CANINTF_WAKIF 0x40u
 #define XL2515_CANINTF_MERRF 0x80u
 
+#define XL2515_EFLG_RXEP 0x08u
+#define XL2515_EFLG_TXEP 0x10u
 #define XL2515_EFLG_TXBO 0x20u
+#define XL2515_EFLG_RX0OVR 0x40u
+#define XL2515_EFLG_RX1OVR 0x80u
 #define XL2515_TXBCTRL_TXREQ 0x08u
 #define XL2515_SIDL_EXIDE 0x08u
 #define XL2515_RXBCTRL_ACCEPT_ALL 0x60u
@@ -535,6 +546,8 @@ unified_error_t rtos_can_driver_send(const rtos_can_message_t *message)
         if ((txb0ctrl & XL2515_TXBCTRL_TXREQ) == 0u) {
             xl2515_bit_modify(XL2515_REG_CANINTF, XL2515_CANINTF_TX0IF, 0x00u);
             ++g_driver.send_count;
+            g_driver.last_tx_message = *message;
+            g_driver.has_last_tx_message = true;
             g_driver.last_error = RTOS_CAN_DRIVER_ERROR_NONE;
             return UNIFIED_OK;
         }
@@ -590,6 +603,32 @@ unified_error_t rtos_can_driver_read(rtos_can_message_t *out_message)
 rtos_can_driver_error_t rtos_can_driver_get_error(void)
 {
     return g_driver.last_error;
+}
+
+unified_error_t rtos_can_driver_get_health(rtos_can_driver_health_t *out_health)
+{
+    uint8_t eflg;
+
+    if (out_health == NULL) {
+        return UNIFIED_ERR_NULL;
+    }
+
+    memset(out_health, 0, sizeof(*out_health));
+
+    if (!g_driver.initialized) {
+        g_driver.last_error = RTOS_CAN_DRIVER_ERROR_NOT_READY;
+        return UNIFIED_ERR_INVALID_ARG;
+    }
+
+    if (xl2515_read_reg(XL2515_REG_EFLG, &eflg) != UNIFIED_OK) {
+        g_driver.last_error = RTOS_CAN_DRIVER_ERROR_SPI;
+        return UNIFIED_ERR_INVALID_ARG;
+    }
+
+    out_health->bus_off = (eflg & XL2515_EFLG_TXBO) != 0u;
+    out_health->error_passive = (eflg & (XL2515_EFLG_RXEP | XL2515_EFLG_TXEP)) != 0u;
+    out_health->rx_overflow = (eflg & (XL2515_EFLG_RX0OVR | XL2515_EFLG_RX1OVR)) != 0u;
+    return UNIFIED_OK;
 }
 
 unified_error_t rtos_can_driver_abort_tx(void)
@@ -694,11 +733,90 @@ void rtos_can_driver_get_mock_snapshot(rtos_can_driver_mock_snapshot_t *out_snap
     out_snapshot->bitrate = g_bitrate;
 }
 
+void rtos_can_driver_mock_reset_rx(void)
+{
+}
+
+unified_error_t rtos_can_driver_mock_inject_rx(const rtos_can_message_t *message)
+{
+    if (message == NULL) {
+        return UNIFIED_ERR_NULL;
+    }
+
+    return UNIFIED_ERR_INVALID_ARG;
+}
+
+void rtos_can_driver_mock_set_send_error(rtos_can_driver_error_t error,
+                                         uint32_t fail_count)
+{
+    (void)error;
+    (void)fail_count;
+}
+
+void rtos_can_driver_mock_set_health(bool bus_off,
+                                     bool error_passive,
+                                     bool rx_overflow)
+{
+    (void)bus_off;
+    (void)error_passive;
+    (void)rx_overflow;
+}
+
 #else /* RTOS_CAN_DRIVER_XL2515_ENABLE */
+
+typedef struct {
+    rtos_can_message_t slots[RTOS_CAN_MOCK_RX_QUEUE_LEN];
+    uint32_t head;
+    uint32_t tail;
+    uint32_t count;
+} rtos_can_mock_rx_queue_t;
+
+static rtos_can_mock_rx_queue_t g_mock_rx_queue;
+static rtos_can_driver_error_t g_mock_send_error;
+static uint32_t g_mock_send_error_count;
+static rtos_can_driver_health_t g_mock_health;
+
+static void mock_rx_queue_reset(void)
+{
+    memset(&g_mock_rx_queue, 0, sizeof(g_mock_rx_queue));
+}
+
+static void mock_error_reset(void)
+{
+    g_mock_send_error = RTOS_CAN_DRIVER_ERROR_NONE;
+    g_mock_send_error_count = 0u;
+    memset(&g_mock_health, 0, sizeof(g_mock_health));
+}
+
+static bool mock_rx_queue_push(const rtos_can_message_t *message)
+{
+    if ((message == NULL) || (g_mock_rx_queue.count >= RTOS_CAN_MOCK_RX_QUEUE_LEN)) {
+        return false;
+    }
+
+    g_mock_rx_queue.slots[g_mock_rx_queue.tail] = *message;
+    g_mock_rx_queue.tail = (g_mock_rx_queue.tail + 1u) % RTOS_CAN_MOCK_RX_QUEUE_LEN;
+    ++g_mock_rx_queue.count;
+    return true;
+}
+
+static bool mock_rx_queue_pop(rtos_can_message_t *out_message)
+{
+    if ((out_message == NULL) || (g_mock_rx_queue.count == 0u)) {
+        return false;
+    }
+
+    *out_message = g_mock_rx_queue.slots[g_mock_rx_queue.head];
+    g_mock_rx_queue.head = (g_mock_rx_queue.head + 1u) % RTOS_CAN_MOCK_RX_QUEUE_LEN;
+    --g_mock_rx_queue.count;
+    return true;
+}
 
 unified_error_t rtos_can_driver_init(void)
 {
     memset(&g_driver, 0, sizeof(g_driver));
+    mock_rx_queue_reset();
+    mock_error_reset();
     g_driver.initialized = true;
     g_driver.last_error = RTOS_CAN_DRIVER_ERROR_NONE;
     g_bitrate = 0u;
@@ -734,7 +852,16 @@ unified_error_t rtos_can_driver_send(const rtos_can_message_t *message)
         return UNIFIED_ERR_INVALID_ARG;
     }
 
+    if (g_mock_send_error_count > 0u) {
+        --g_mock_send_error_count;
+        ++g_driver.send_count;
+        g_driver.last_error = g_mock_send_error;
+        return UNIFIED_ERR_INVALID_ARG;
+    }
+
     ++g_driver.send_count;
+    g_driver.last_tx_message = *message;
+    g_driver.has_last_tx_message = true;
     g_driver.last_error = RTOS_CAN_DRIVER_ERROR_NONE;
     return UNIFIED_OK;
 }
@@ -745,14 +872,39 @@ unified_error_t rtos_can_driver_read(rtos_can_message_t *out_message)
         return UNIFIED_ERR_NULL;
     }
 
-    memset(out_message, 0, sizeof(*out_message));
+    if (!g_driver.initialized) {
+        g_driver.last_error = RTOS_CAN_DRIVER_ERROR_NOT_READY;
+        return UNIFIED_ERR_INVALID_ARG;
+    }
+
+    if (!mock_rx_queue_pop(out_message)) {
+        g_driver.last_error = RTOS_CAN_DRIVER_ERROR_NO_RX;
+        return UNIFIED_ERR_INVALID_ARG;
+    }
+
     ++g_driver.read_count;
+    g_driver.last_error = RTOS_CAN_DRIVER_ERROR_NONE;
     return UNIFIED_OK;
 }
 
 rtos_can_driver_error_t rtos_can_driver_get_error(void)
 {
     return g_driver.last_error;
+}
+
+unified_error_t rtos_can_driver_get_health(rtos_can_driver_health_t *out_health)
+{
+    if (out_health == NULL) {
+        return UNIFIED_ERR_NULL;
+    }
+
+    if (!g_driver.initialized) {
+        g_driver.last_error = RTOS_CAN_DRIVER_ERROR_NOT_READY;
+        return UNIFIED_ERR_INVALID_ARG;
+    }
+
+    *out_health = g_mock_health;
+    return UNIFIED_OK;
 }
 
 unified_error_t rtos_can_driver_abort_tx(void)
@@ -808,6 +960,40 @@ void rtos_can_driver_get_mock_snapshot(rtos_can_driver_mock_snapshot_t *out_snap
 
     *out_snapshot = g_driver;
     out_snapshot->bitrate = g_bitrate;
+}
+
+void rtos_can_driver_mock_reset_rx(void)
+{
+    mock_rx_queue_reset();
+}
+
+unified_error_t rtos_can_driver_mock_inject_rx(const rtos_can_message_t *message)
+{
+    if (message == NULL) {
+        return UNIFIED_ERR_NULL;
+    }
+
+    if (!mock_rx_queue_push(message)) {
+        return UNIFIED_ERR_INVALID_ARG;
+    }
+
+    return UNIFIED_OK;
+}
+
+void rtos_can_driver_mock_set_send_error(rtos_can_driver_error_t error,
+                                         uint32_t fail_count)
+{
+    g_mock_send_error = error;
+    g_mock_send_error_count = (error == RTOS_CAN_DRIVER_ERROR_NONE) ? 0u : fail_count;
+}
+
+void rtos_can_driver_mock_set_health(bool bus_off,
+                                     bool error_passive,
+                                     bool rx_overflow)
+{
+    g_mock_health.bus_off = bus_off;
+    g_mock_health.error_passive = error_passive;
+    g_mock_health.rx_overflow = rx_overflow;
 }
 
 #endif /* RTOS_CAN_DRIVER_XL2515_ENABLE */

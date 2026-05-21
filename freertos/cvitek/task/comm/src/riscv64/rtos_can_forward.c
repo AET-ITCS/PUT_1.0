@@ -1,18 +1,32 @@
-/* FreeRTOS comm 转发主逻辑：mock 阶段同步消费协议适配层输出的 CAN TX 队列。 */
+/**
+ * @file rtos_can_forward.c
+ * @brief FreeRTOS comm CAN 转发核心实现。
+ *
+ * 本模块负责内部 CAN 消息校验、TX 软件队列、driver send/retry 和
+ * recovery 状态机联动。当前 host mock 路径仍支持 submit 后同步 drain。
+ */
 #include "rtos_can_forward.h"
 
 #include <stdbool.h>
 #include <string.h>
 
 #include "rtos_can_driver.h"
+#include "rtos_can_task.h"
 #include "rtos_config.h"
 #include "rtos_ipc.h"
+#include "rtos_protocol_adapter.h"
+#include "rtos_recovery.h"
 #include "rtos_status.h"
 
+/** @brief CAN TX 软件队列。 */
 typedef struct {
+    /** @brief 环形队列槽位。 */
     rtos_can_message_t slots[RTOS_CAN_TX_QUEUE_LEN];
+    /** @brief 下一个出队位置。 */
     uint32_t head;
+    /** @brief 下一个入队位置。 */
     uint32_t tail;
+    /** @brief 当前队列深度。 */
     uint32_t count;
 } rtos_can_tx_queue_t;
 
@@ -47,17 +61,84 @@ static bool tx_queue_pop(rtos_can_message_t *out_message)
     return true;
 }
 
-static void tx_queue_drain_once(void)
+static bool driver_error_is_retryable(rtos_can_driver_error_t error)
+{
+    return (error == RTOS_CAN_DRIVER_ERROR_SPI) ||
+           (error == RTOS_CAN_DRIVER_ERROR_TIMEOUT);
+}
+
+static void report_driver_event(uint32_t event_type, uint32_t detail)
+{
+    rtos_ipc_event_t event;
+
+    event.event_type = event_type;
+    event.detail = detail;
+    (void)rtos_ipc_send_error_event(&event);
+}
+
+static void recover_after_driver_error(rtos_can_driver_error_t error)
+{
+    if ((error == RTOS_CAN_DRIVER_ERROR_SPI) ||
+        (error == RTOS_CAN_DRIVER_ERROR_TIMEOUT)) {
+        rtos_status_inc_spi_error();
+        if (rtos_can_driver_reset() == UNIFIED_OK) {
+            rtos_status_set_can_ready(true);
+        } else {
+            rtos_status_set_can_ready(false);
+        }
+        report_driver_event(RTOS_IPC_EVENT_SPI_ERROR, (uint32_t)error);
+    } else if (error == RTOS_CAN_DRIVER_ERROR_BUS_OFF) {
+        rtos_status_inc_can_bus_off();
+        if ((rtos_can_driver_reset() == UNIFIED_OK) &&
+            (rtos_can_driver_set_normal() == UNIFIED_OK)) {
+            rtos_status_set_can_ready(true);
+        } else {
+            rtos_status_set_can_ready(false);
+        }
+        report_driver_event(RTOS_IPC_EVENT_CAN_BUS_OFF, (uint32_t)error);
+    }
+}
+
+static unified_error_t send_message_with_recovery(const rtos_can_message_t *message)
+{
+    uint32_t retry_count = 0u;
+
+    while (true) {
+        rtos_can_driver_error_t error;
+
+        if (rtos_can_driver_send(message) == UNIFIED_OK) {
+            rtos_status_inc_tx_to_can_ok();
+            return UNIFIED_OK;
+        }
+
+        error = rtos_can_driver_get_error();
+        rtos_status_inc_tx_to_can_fail();
+
+        if (driver_error_is_retryable(error) && (retry_count < RTOS_CAN_TX_RETRY_MAX)) {
+            ++retry_count;
+            continue;
+        }
+
+        recover_after_driver_error(error);
+        return UNIFIED_ERR_INVALID_ARG;
+    }
+}
+
+uint32_t rtos_can_forward_drain_tx_queue_once(void)
 {
     rtos_can_message_t message;
+    uint32_t drained = 0u;
+
+    if (!rtos_recovery_tx_enabled()) {
+        return 0u;
+    }
 
     while (tx_queue_pop(&message)) {
-        if (rtos_can_driver_send(&message) == UNIFIED_OK) {
-            rtos_status_inc_tx_to_can_ok();
-        } else {
-            rtos_status_inc_tx_to_can_fail();
-        }
+        (void)send_message_with_recovery(&message);
+        ++drained;
     }
+
+    return drained;
 }
 
 static bool can_message_flags_are_supported(uint8_t can_flags)
@@ -99,11 +180,26 @@ static unified_error_t validate_can_message(const rtos_can_message_t *message)
     return UNIFIED_OK;
 }
 
+uint32_t rtos_can_forward_purge_tx_queue(void)
+{
+    uint32_t purged = g_tx_queue.count;
+
+    tx_queue_reset();
+    rtos_status_add_tx_queue_purged(purged);
+    return purged;
+}
+
+uint32_t rtos_can_forward_get_tx_queue_depth(void)
+{
+    return g_tx_queue.count;
+}
+
 unified_error_t gateway_forward_init(void)
 {
     unified_error_t result;
 
     rtos_status_init();
+    rtos_protocol_adapter_init();
     tx_queue_reset();
 
     result = rtos_ipc_init();
@@ -123,14 +219,24 @@ unified_error_t gateway_forward_init(void)
         return result;
     }
 
+    result = rtos_can_task_init_gpio14_irq();
+    if (result != UNIFIED_OK) {
+        rtos_status_set_can_ready(false);
+        return result;
+    }
+
+    rtos_recovery_init();
     rtos_status_set_can_ready(true);
-    rtos_status_set_linux_online(true);
     return UNIFIED_OK;
 }
 
-unified_error_t rtos_can_forward_submit_message(const rtos_can_message_t *message)
+unified_error_t rtos_can_forward_enqueue_message(const rtos_can_message_t *message)
 {
     unified_error_t validate_result;
+
+    if (!rtos_recovery_tx_enabled()) {
+        return UNIFIED_ERR_INVALID_ARG;
+    }
 
     validate_result = validate_can_message(message);
     if (validate_result != UNIFIED_OK) {
@@ -143,6 +249,18 @@ unified_error_t rtos_can_forward_submit_message(const rtos_can_message_t *messag
     }
 
     rtos_status_inc_rx_from_linux();
-    tx_queue_drain_once();
+    return UNIFIED_OK;
+}
+
+unified_error_t rtos_can_forward_submit_message(const rtos_can_message_t *message)
+{
+    unified_error_t result;
+
+    result = rtos_can_forward_enqueue_message(message);
+    if (result != UNIFIED_OK) {
+        return result;
+    }
+
+    (void)rtos_can_forward_drain_tx_queue_once();
     return UNIFIED_OK;
 }

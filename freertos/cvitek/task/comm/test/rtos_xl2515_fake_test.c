@@ -1,3 +1,7 @@
+/**
+ * @file rtos_xl2515_fake_test.c
+ * @brief Host tests for XL2515 driver register, loopback, and error paths.
+ */
 #include <stdio.h>
 #include <string.h>
 

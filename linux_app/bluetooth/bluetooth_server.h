@@ -11,6 +11,8 @@
 #include <basetsd.h>
 typedef intptr_t ssize_t;
 typedef unsigned short sa_family_t;
+#else
+#include <sys/socket.h>
 #endif
 
 #include "error_code.h"

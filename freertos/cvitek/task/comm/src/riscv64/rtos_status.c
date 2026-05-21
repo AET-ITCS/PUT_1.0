@@ -1,4 +1,9 @@
-/* FreeRTOS comm 状态统计实现：mock 阶段使用单实例计数器。 */
+/**
+ * @file rtos_status.c
+ * @brief FreeRTOS comm 状态统计实现。
+ *
+ * 当前实现使用单实例计数器，适合小核 comm 任务和 host mock 测试共享。
+ */
 #include "rtos_status.h"
 
 #include <string.h>
@@ -73,4 +78,79 @@ void rtos_status_inc_drop_can_id(void)
 void rtos_status_inc_drop_dlc(void)
 {
     ++g_status.drop_dlc;
+}
+
+void rtos_status_inc_rx_from_can(void)
+{
+    ++g_status.rx_from_can;
+}
+
+void rtos_status_inc_tx_to_linux(void)
+{
+    ++g_status.tx_to_linux;
+}
+
+void rtos_status_inc_drop_ring_full(void)
+{
+    ++g_status.drop_ring_full;
+}
+
+void rtos_status_inc_ipc_payload_drop(void)
+{
+    ++g_status.ipc_payload_drop;
+}
+
+void rtos_status_inc_rx_overrun(void)
+{
+    ++g_status.rx_overrun;
+}
+
+void rtos_status_inc_xl2515_rx_overflow(void)
+{
+    ++g_status.xl2515_rx_overflow;
+}
+
+void rtos_status_inc_spi_error(void)
+{
+    ++g_status.spi_error;
+}
+
+void rtos_status_inc_can_bus_off(void)
+{
+    ++g_status.can_bus_off;
+}
+
+void rtos_status_inc_can_error_passive(void)
+{
+    ++g_status.can_error_passive;
+}
+
+void rtos_status_inc_linux_heartbeat_timeout(void)
+{
+    ++g_status.linux_heartbeat_timeout;
+}
+
+void rtos_status_inc_linux_offline_enter(void)
+{
+    ++g_status.linux_offline_enter;
+}
+
+void rtos_status_add_tx_queue_purged(uint32_t count)
+{
+    g_status.tx_queue_purged += count;
+}
+
+void rtos_status_inc_xl2515_tx_aborted(void)
+{
+    ++g_status.xl2515_tx_aborted;
+}
+
+void rtos_status_inc_listen_only_enter(void)
+{
+    ++g_status.listen_only_enter;
+}
+
+void rtos_status_inc_linux_rehandshake_ok(void)
+{
+    ++g_status.linux_rehandshake_ok;
 }

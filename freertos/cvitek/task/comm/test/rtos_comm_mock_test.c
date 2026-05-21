@@ -1,3 +1,7 @@
+/**
+ * @file rtos_comm_mock_test.c
+ * @brief Host mock tests for stage 2 FreeRTOS comm CAN forwarding.
+ */
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>

@@ -1,3 +1,7 @@
+/**
+ * @file rtos_xl2515_fake_platform.c
+ * @brief Fake XL2515 SPI platform used by host tests.
+ */
 #include "rtos_xl2515_fake_platform.h"
 
 #include <string.h>
