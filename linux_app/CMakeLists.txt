@@ -19,6 +19,7 @@ add_executable(linux_app
     core/frame_packer.c
     core/protocol_manager.c
     ipc/ipc_to_rtos.c
+    以太网/ethernet_status.c
     以太网/ethernet_udp.c
 )
 
