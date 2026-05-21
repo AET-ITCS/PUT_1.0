@@ -1,4 +1,4 @@
-/* CAN direct 网关帧解析实现：校验 magic/version/CRC 并提取 CAN 转发字段。 */
+/* CAN direct 网关帧字段提取实现：校验帧头/CRC 后提取 CAN 转发字段。 */
 #include "can_direct_frame.h"
 
 #include <string.h>

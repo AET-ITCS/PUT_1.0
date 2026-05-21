@@ -24,7 +24,7 @@ add_executable(linux_app
     core/protocol_manager.c
     core/status_collector.c
     ipc/ipc_to_rtos.c
-    rs485/rs485_debug.c
+    rs485/rs485_can_direct.c
     ethernet/ethernet_udp.c
     bluetooth/bluetooth_server.c
 )

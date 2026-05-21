@@ -1,4 +1,4 @@
-/* 协议管理实现：多协议线程接收，统一解析、打包、发送和状态统计。 */
+/* 协议管理实现：多协议线程接收，统一提取 CAN 字段、打包、发送和统计状态。 */
 #define _POSIX_C_SOURCE 200809L
 
 #include "protocol_manager.h"
@@ -18,7 +18,7 @@
 #include "ethernet_udp.h"
 #include "frame_packer.h"
 #include "ipc_to_rtos.h"
-#include "rs485_debug.h"
+#include "rs485_can_direct.h"
 #include "status_collector.h"
 
 typedef struct {
@@ -258,14 +258,14 @@ static const char *rs485_protocol_name(app_rs485_protocol_t protocol)
 }
 
 static void handle_rs485_can_direct_frame(protocol_manager_context_t *ctx,
-                                          const uint8_t frame_buf[RS485_DEBUG_FRAME_LENGTH],
+                                          const uint8_t frame_buf[RS485_CAN_DIRECT_FRAME_LENGTH],
                                           bool *status_warning_printed)
 {
     protocol_parsed_msg_t parsed_msg;
     unified_error_t err;
 
-    status_collector_record_rx(&ctx->status, STATUS_MODULE_RS485, RS485_DEBUG_FRAME_LENGTH);
-    err = rs485_debug_parse_frame(frame_buf, RS485_DEBUG_FRAME_LENGTH, &parsed_msg);
+    status_collector_record_rx(&ctx->status, STATUS_MODULE_RS485, RS485_CAN_DIRECT_FRAME_LENGTH);
+    err = rs485_can_direct_parse_frame(frame_buf, RS485_CAN_DIRECT_FRAME_LENGTH, &parsed_msg);
     if (err != UNIFIED_OK) {
         log_error("rs485_can_direct_parse_frame", err);
         status_collector_record_error(&ctx->status,
@@ -287,9 +287,9 @@ static void *rs485_worker(void *arg)
     int fd;
     uint32_t frame_count = 0u;
     bool status_warning_printed = false;
-    rs485_debug_sync_t sync;
+    rs485_can_direct_sync_t sync;
 
-    rs485_debug_sync_init(&sync);
+    rs485_can_direct_sync_init(&sync);
 
     fd = open(ctx->config->rs485_dev, O_RDWR | O_NOCTTY | O_NONBLOCK);
     if (fd < 0) {
@@ -356,8 +356,8 @@ static void *rs485_worker(void *arg)
         }
 
         for (ssize_t i = 0; i < nread; ++i) {
-            uint8_t frame_buf[RS485_DEBUG_FRAME_LENGTH];
-            if (!rs485_debug_sync_feed(&sync, buffer[i], frame_buf)) {
+            uint8_t frame_buf[RS485_CAN_DIRECT_FRAME_LENGTH];
+            if (!rs485_can_direct_sync_feed(&sync, buffer[i], frame_buf)) {
                 continue;
             }
             frame_count++;

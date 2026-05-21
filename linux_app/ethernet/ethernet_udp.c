@@ -1,4 +1,4 @@
-/* 以太网 UDP CAN direct 网关帧解析实现。 */
+/* 以太网 UDP CAN direct 网关入口：从 UDP payload 提取 CAN 转发字段。 */
 #include "ethernet_udp.h"
 
 #include "can_direct_frame.h"

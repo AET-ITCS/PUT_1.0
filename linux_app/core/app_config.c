@@ -117,9 +117,7 @@ static int parse_rs485_protocol(const char *text, app_rs485_protocol_t *out_prot
     }
 
     if ((strcmp(text, "can_direct") == 0) ||
-        (strcmp(text, "direct") == 0) ||
-        (strcmp(text, "debug") == 0) ||
-        (strcmp(text, "rs485-debug") == 0)) {
+        (strcmp(text, "direct") == 0)) {
         *out_protocol = APP_RS485_PROTOCOL_CAN_DIRECT;
         return 0;
     }

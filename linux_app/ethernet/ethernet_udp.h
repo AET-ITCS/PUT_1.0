@@ -1,4 +1,4 @@
-/* 以太网 UDP CAN direct 网关帧解析接口：把 UDP payload 转换为协议中间消息。 */
+/* 以太网 UDP CAN direct 网关接口：从 UDP payload 提取 CAN 字段。 */
 #ifndef ETHERNET_UDP_H
 #define ETHERNET_UDP_H
 
