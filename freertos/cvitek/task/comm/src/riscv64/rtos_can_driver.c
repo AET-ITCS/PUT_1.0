@@ -439,6 +439,10 @@ static unified_error_t xl2515_read_rx_buffer(uint8_t sidh_reg, rtos_can_message_
     return UNIFIED_OK;
 }
 
+/**
+ * @brief 初始化 CAN driver。
+ * @return UNIFIED_OK 表示成功，否则返回公共错误码。
+ */
 unified_error_t rtos_can_driver_init(void)
 {
     uint8_t target_mode;
@@ -474,6 +478,11 @@ unified_error_t rtos_can_driver_init(void)
     return UNIFIED_OK;
 }
 
+/**
+ * @brief 配置 CAN bitrate。
+ * @param bitrate 目标 bitrate，v1 默认仅支持 RTOS_CAN_BITRATE。
+ * @return UNIFIED_OK 表示成功，否则返回公共错误码。
+ */
 unified_error_t rtos_can_driver_set_bitrate(uint32_t bitrate)
 {
     uint8_t restore_mode;
@@ -503,6 +512,11 @@ unified_error_t rtos_can_driver_set_bitrate(uint32_t bitrate)
     return UNIFIED_OK;
 }
 
+/**
+ * @brief 发送一帧 CAN 报文。
+ * @param message 待发送的内部 CAN 报文。
+ * @return UNIFIED_OK 表示发送完成，否则返回公共错误码。
+ */
 unified_error_t rtos_can_driver_send(const rtos_can_message_t *message)
 {
     uint32_t i;
@@ -560,6 +574,11 @@ unified_error_t rtos_can_driver_send(const rtos_can_message_t *message)
     return UNIFIED_ERR_INVALID_ARG;
 }
 
+/**
+ * @brief 读取一帧 CAN RX 报文。
+ * @param[out] out_message 输出报文。
+ * @return UNIFIED_OK 表示读到报文；无 RX 或失败返回错误码。
+ */
 unified_error_t rtos_can_driver_read(rtos_can_message_t *out_message)
 {
     uint8_t status;
@@ -600,11 +619,20 @@ unified_error_t rtos_can_driver_read(rtos_can_message_t *out_message)
     return UNIFIED_OK;
 }
 
+/**
+ * @brief 获取最近一次 driver 错误。
+ * @return 最近一次错误枚举。
+ */
 rtos_can_driver_error_t rtos_can_driver_get_error(void)
 {
     return g_driver.last_error;
 }
 
+/**
+ * @brief 获取 CAN 控制器健康状态。
+ * @param[out] out_health 输出健康状态。
+ * @return UNIFIED_OK 表示成功，否则返回公共错误码。
+ */
 unified_error_t rtos_can_driver_get_health(rtos_can_driver_health_t *out_health)
 {
     uint8_t eflg;
@@ -631,6 +659,10 @@ unified_error_t rtos_can_driver_get_health(rtos_can_driver_health_t *out_health)
     return UNIFIED_OK;
 }
 
+/**
+ * @brief 取消已请求发送的 TX buffer。
+ * @return UNIFIED_OK 表示成功，否则返回公共错误码。
+ */
 unified_error_t rtos_can_driver_abort_tx(void)
 {
     ++g_driver.abort_tx_count;
@@ -650,6 +682,10 @@ unified_error_t rtos_can_driver_abort_tx(void)
     return UNIFIED_OK;
 }
 
+/**
+ * @brief 清空 TX buffer 控制状态。
+ * @return UNIFIED_OK 表示成功，否则返回公共错误码。
+ */
 unified_error_t rtos_can_driver_clear_tx_buffers(void)
 {
     ++g_driver.clear_tx_count;
@@ -663,6 +699,10 @@ unified_error_t rtos_can_driver_clear_tx_buffers(void)
     return UNIFIED_OK;
 }
 
+/**
+ * @brief 将 CAN 控制器切换到 Listen-Only 模式。
+ * @return UNIFIED_OK 表示成功，否则返回公共错误码。
+ */
 unified_error_t rtos_can_driver_set_listen_only(void)
 {
     if (!g_driver.initialized) {
@@ -679,6 +719,10 @@ unified_error_t rtos_can_driver_set_listen_only(void)
     return UNIFIED_OK;
 }
 
+/**
+ * @brief 将 CAN 控制器切换到 Normal 模式。
+ * @return UNIFIED_OK 表示成功，否则返回公共错误码。
+ */
 unified_error_t rtos_can_driver_set_normal(void)
 {
     uint8_t target_mode;
@@ -698,6 +742,10 @@ unified_error_t rtos_can_driver_set_normal(void)
     return UNIFIED_OK;
 }
 
+/**
+ * @brief 复位并重新初始化 CAN 控制器。
+ * @return UNIFIED_OK 表示成功，否则返回公共错误码。
+ */
 unified_error_t rtos_can_driver_reset(void)
 {
     ++g_driver.reset_count;
@@ -723,6 +771,10 @@ unified_error_t rtos_can_driver_reset(void)
     return UNIFIED_OK;
 }
 
+/**
+ * @brief 获取 mock driver 快照。
+ * @param[out] out_snapshot 输出快照；NULL 时忽略。
+ */
 void rtos_can_driver_get_mock_snapshot(rtos_can_driver_mock_snapshot_t *out_snapshot)
 {
     if (out_snapshot == NULL) {
@@ -733,10 +785,16 @@ void rtos_can_driver_get_mock_snapshot(rtos_can_driver_mock_snapshot_t *out_snap
     out_snapshot->bitrate = g_bitrate;
 }
 
+/** @brief 清空 mock RX 注入队列。 */
 void rtos_can_driver_mock_reset_rx(void)
 {
 }
 
+/**
+ * @brief 向 mock driver 注入一帧 RX 报文。
+ * @param message 待注入报文。
+ * @return UNIFIED_OK 表示成功，否则返回公共错误码。
+ */
 unified_error_t rtos_can_driver_mock_inject_rx(const rtos_can_message_t *message)
 {
     if (message == NULL) {
@@ -746,6 +804,11 @@ unified_error_t rtos_can_driver_mock_inject_rx(const rtos_can_message_t *message
     return UNIFIED_ERR_INVALID_ARG;
 }
 
+/**
+ * @brief 配置 mock send 错误注入。
+ * @param error 注入的错误类型；RTOS_CAN_DRIVER_ERROR_NONE 表示关闭注入。
+ * @param fail_count 连续失败次数。
+ */
 void rtos_can_driver_mock_set_send_error(rtos_can_driver_error_t error,
                                          uint32_t fail_count)
 {
@@ -753,6 +816,12 @@ void rtos_can_driver_mock_set_send_error(rtos_can_driver_error_t error,
     (void)fail_count;
 }
 
+/**
+ * @brief 配置 mock driver 健康状态。
+ * @param bus_off bus-off 标志。
+ * @param error_passive error passive 标志。
+ * @param rx_overflow RX overflow 标志。
+ */
 void rtos_can_driver_mock_set_health(bool bus_off,
                                      bool error_passive,
                                      bool rx_overflow)
@@ -812,6 +881,10 @@ static bool mock_rx_queue_pop(rtos_can_message_t *out_message)
     return true;
 }
 
+/**
+ * @brief 初始化 CAN driver。
+ * @return UNIFIED_OK 表示成功，否则返回公共错误码。
+ */
 unified_error_t rtos_can_driver_init(void)
 {
     memset(&g_driver, 0, sizeof(g_driver));
@@ -824,6 +897,11 @@ unified_error_t rtos_can_driver_init(void)
     return UNIFIED_OK;
 }
 
+/**
+ * @brief 配置 CAN bitrate。
+ * @param bitrate 目标 bitrate，v1 默认仅支持 RTOS_CAN_BITRATE。
+ * @return UNIFIED_OK 表示成功，否则返回公共错误码。
+ */
 unified_error_t rtos_can_driver_set_bitrate(uint32_t bitrate)
 {
     if (!g_driver.initialized || (bitrate == 0u)) {
@@ -836,6 +914,11 @@ unified_error_t rtos_can_driver_set_bitrate(uint32_t bitrate)
     return UNIFIED_OK;
 }
 
+/**
+ * @brief 发送一帧 CAN 报文。
+ * @param message 待发送的内部 CAN 报文。
+ * @return UNIFIED_OK 表示发送完成，否则返回公共错误码。
+ */
 unified_error_t rtos_can_driver_send(const rtos_can_message_t *message)
 {
     if (message == NULL) {
@@ -866,6 +949,11 @@ unified_error_t rtos_can_driver_send(const rtos_can_message_t *message)
     return UNIFIED_OK;
 }
 
+/**
+ * @brief 读取一帧 CAN RX 报文。
+ * @param[out] out_message 输出报文。
+ * @return UNIFIED_OK 表示读到报文；无 RX 或失败返回错误码。
+ */
 unified_error_t rtos_can_driver_read(rtos_can_message_t *out_message)
 {
     if (out_message == NULL) {
@@ -887,11 +975,20 @@ unified_error_t rtos_can_driver_read(rtos_can_message_t *out_message)
     return UNIFIED_OK;
 }
 
+/**
+ * @brief 获取最近一次 driver 错误。
+ * @return 最近一次错误枚举。
+ */
 rtos_can_driver_error_t rtos_can_driver_get_error(void)
 {
     return g_driver.last_error;
 }
 
+/**
+ * @brief 获取 CAN 控制器健康状态。
+ * @param[out] out_health 输出健康状态。
+ * @return UNIFIED_OK 表示成功，否则返回公共错误码。
+ */
 unified_error_t rtos_can_driver_get_health(rtos_can_driver_health_t *out_health)
 {
     if (out_health == NULL) {
@@ -907,18 +1004,30 @@ unified_error_t rtos_can_driver_get_health(rtos_can_driver_health_t *out_health)
     return UNIFIED_OK;
 }
 
+/**
+ * @brief 取消已请求发送的 TX buffer。
+ * @return UNIFIED_OK 表示成功，否则返回公共错误码。
+ */
 unified_error_t rtos_can_driver_abort_tx(void)
 {
     ++g_driver.abort_tx_count;
     return UNIFIED_OK;
 }
 
+/**
+ * @brief 清空 TX buffer 控制状态。
+ * @return UNIFIED_OK 表示成功，否则返回公共错误码。
+ */
 unified_error_t rtos_can_driver_clear_tx_buffers(void)
 {
     ++g_driver.clear_tx_count;
     return UNIFIED_OK;
 }
 
+/**
+ * @brief 将 CAN 控制器切换到 Listen-Only 模式。
+ * @return UNIFIED_OK 表示成功，否则返回公共错误码。
+ */
 unified_error_t rtos_can_driver_set_listen_only(void)
 {
     if (!g_driver.initialized) {
@@ -931,6 +1040,10 @@ unified_error_t rtos_can_driver_set_listen_only(void)
     return UNIFIED_OK;
 }
 
+/**
+ * @brief 将 CAN 控制器切换到 Normal 模式。
+ * @return UNIFIED_OK 表示成功，否则返回公共错误码。
+ */
 unified_error_t rtos_can_driver_set_normal(void)
 {
     if (!g_driver.initialized) {
@@ -943,6 +1056,10 @@ unified_error_t rtos_can_driver_set_normal(void)
     return UNIFIED_OK;
 }
 
+/**
+ * @brief 复位并重新初始化 CAN 控制器。
+ * @return UNIFIED_OK 表示成功，否则返回公共错误码。
+ */
 unified_error_t rtos_can_driver_reset(void)
 {
     ++g_driver.reset_count;
@@ -952,6 +1069,10 @@ unified_error_t rtos_can_driver_reset(void)
     return UNIFIED_OK;
 }
 
+/**
+ * @brief 获取 mock driver 快照。
+ * @param[out] out_snapshot 输出快照；NULL 时忽略。
+ */
 void rtos_can_driver_get_mock_snapshot(rtos_can_driver_mock_snapshot_t *out_snapshot)
 {
     if (out_snapshot == NULL) {
@@ -962,11 +1083,17 @@ void rtos_can_driver_get_mock_snapshot(rtos_can_driver_mock_snapshot_t *out_snap
     out_snapshot->bitrate = g_bitrate;
 }
 
+/** @brief 清空 mock RX 注入队列。 */
 void rtos_can_driver_mock_reset_rx(void)
 {
     mock_rx_queue_reset();
 }
 
+/**
+ * @brief 向 mock driver 注入一帧 RX 报文。
+ * @param message 待注入报文。
+ * @return UNIFIED_OK 表示成功，否则返回公共错误码。
+ */
 unified_error_t rtos_can_driver_mock_inject_rx(const rtos_can_message_t *message)
 {
     if (message == NULL) {
@@ -980,6 +1107,11 @@ unified_error_t rtos_can_driver_mock_inject_rx(const rtos_can_message_t *message
     return UNIFIED_OK;
 }
 
+/**
+ * @brief 配置 mock send 错误注入。
+ * @param error 注入的错误类型；RTOS_CAN_DRIVER_ERROR_NONE 表示关闭注入。
+ * @param fail_count 连续失败次数。
+ */
 void rtos_can_driver_mock_set_send_error(rtos_can_driver_error_t error,
                                          uint32_t fail_count)
 {
@@ -987,6 +1119,12 @@ void rtos_can_driver_mock_set_send_error(rtos_can_driver_error_t error,
     g_mock_send_error_count = (error == RTOS_CAN_DRIVER_ERROR_NONE) ? 0u : fail_count;
 }
 
+/**
+ * @brief 配置 mock driver 健康状态。
+ * @param bus_off bus-off 标志。
+ * @param error_passive error passive 标志。
+ * @param rx_overflow RX overflow 标志。
+ */
 void rtos_can_driver_mock_set_health(bool bus_off,
                                      bool error_passive,
                                      bool rx_overflow)

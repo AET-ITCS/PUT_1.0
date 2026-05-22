@@ -92,6 +92,7 @@ static void fake_copy_txb0_to_rxb0(void)
     g_fake.regs[XL2515_REG_CANINTF] |= XL2515_CANINTF_RX0IF;
 }
 
+/** @brief Reset fake XL2515 register state. */
 void rtos_xl2515_fake_reset(void)
 {
     memset(&g_fake, 0, sizeof(g_fake));
@@ -99,11 +100,13 @@ void rtos_xl2515_fake_reset(void)
     fake_set_mode(XL2515_MODE_CONFIG);
 }
 
+/** @brief Enable or disable automatic TX completion. */
 void rtos_xl2515_fake_set_tx_auto_complete(bool enabled)
 {
     g_fake.tx_auto_complete = enabled;
 }
 
+/** @brief Set or clear fake bus-off flag. */
 void rtos_xl2515_fake_set_bus_off(bool enabled)
 {
     if (enabled) {
@@ -113,6 +116,7 @@ void rtos_xl2515_fake_set_bus_off(bool enabled)
     }
 }
 
+/** @brief Load one CAN frame into fake RXB0. */
 void rtos_xl2515_fake_load_rx0(const rtos_can_message_t *message)
 {
     uint8_t regs[13];
@@ -129,31 +133,37 @@ void rtos_xl2515_fake_load_rx0(const rtos_can_message_t *message)
     g_fake.regs[XL2515_REG_CANINTF] |= XL2515_CANINTF_RX0IF;
 }
 
+/** @brief Read one fake XL2515 register. */
 uint8_t rtos_xl2515_fake_read_reg(uint8_t reg)
 {
     return g_fake.regs[reg];
 }
 
+/** @brief Get fake SPI init call count. */
 uint32_t rtos_xl2515_fake_get_spi_init_count(void)
 {
     return g_fake.spi_init_count;
 }
 
+/** @brief Get last SPI frequency passed to fake platform. */
 uint32_t rtos_xl2515_fake_get_last_spi_hz(void)
 {
     return g_fake.last_spi_hz;
 }
 
+/** @brief Get SPI2 pinmux configuration call count. */
 uint32_t rtos_xl2515_fake_get_pinmux_count(void)
 {
     return g_fake.pinmux_count;
 }
 
+/** @brief Get XL2515 reset command count. */
 uint32_t rtos_xl2515_fake_get_reset_command_count(void)
 {
     return g_fake.reset_command_count;
 }
 
+/** @brief Fake SPI init hook used by rtos_can_driver.c. */
 unified_error_t rtos_xl2515_fake_spi_init(uint32_t hz)
 {
     ++g_fake.spi_init_count;
@@ -161,6 +171,7 @@ unified_error_t rtos_xl2515_fake_spi_init(uint32_t hz)
     return UNIFIED_OK;
 }
 
+/** @brief Fake SPI transfer hook used by rtos_can_driver.c. */
 unified_error_t rtos_xl2515_fake_spi_xfer(const uint8_t *tx_buf,
                                           uint8_t *rx_buf,
                                           uint16_t length)
@@ -237,11 +248,13 @@ unified_error_t rtos_xl2515_fake_spi_xfer(const uint8_t *tx_buf,
     return UNIFIED_OK;
 }
 
+/** @brief Fake microsecond delay hook. */
 void rtos_xl2515_fake_delay_us(uint32_t usec)
 {
     g_fake.delay_us += usec;
 }
 
+/** @brief Fake SPI2 pinmux hook. */
 void rtos_xl2515_fake_config_spi2_pinmux(void)
 {
     ++g_fake.pinmux_count;
