@@ -57,6 +57,12 @@ static void fill_can_message(const unified_frame_t *frame, rtos_can_message_t *o
     memcpy(out_msg->can_data, frame->can_data, RTOS_CAN_CLASSIC_DATA_MAX_LEN);
 }
 
+/**
+ * @brief 校验 legacy unified_frame_t 并转换为内部 CAN 消息。
+ * @param frame 待校验 legacy frame。
+ * @param[out] out_msg 校验成功时输出 CAN 消息；可为 NULL。
+ * @return legacy validator 返回码。
+ */
 rtos_frame_validate_error_t rtos_gateway_frame_validate(const unified_frame_t *frame,
                                                         rtos_can_message_t *out_msg)
 {

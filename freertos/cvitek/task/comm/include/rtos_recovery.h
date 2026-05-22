@@ -17,57 +17,22 @@
 extern "C" {
 #endif
 
-/** @brief 初始化恢复状态机。 */
 void rtos_recovery_init(void);
 
-/**
- * @brief 记录一次 Linux heartbeat。
- * @param now_ms 当前时间，单位毫秒。
- */
 void rtos_recovery_note_linux_heartbeat(uint32_t now_ms);
 
-/**
- * @brief 单步执行 watchdog/recovery 检查。
- * @param now_ms 当前时间，单位毫秒。
- * @return UNIFIED_OK 表示检查完成，否则返回恢复动作错误码。
- */
 unified_error_t rtos_recovery_watchdog_check_once(uint32_t now_ms);
 
-/**
- * @brief 标记 Linux HELLO/READY 重新握手完成。
- * @param now_ms 当前时间，单位毫秒。
- * @return UNIFIED_OK 表示恢复到 Normal/TX enabled，否则返回错误码。
- */
 unified_error_t rtos_recovery_complete_linux_rehandshake(uint32_t now_ms);
 
-/**
- * @brief 查询 Linux 是否在线。
- * @return true 表示 Linux online。
- */
 bool rtos_recovery_linux_online(void);
 
-/**
- * @brief 查询 TX 路径是否允许发送。
- * @return true 表示可消费 CAN TX 队列。
- */
 bool rtos_recovery_tx_enabled(void);
 
-/**
- * @brief 查询是否处于 fail-safe offline。
- * @return true 表示处于 offline 状态。
- */
 bool rtos_recovery_is_offline(void);
 
-/**
- * @brief 设置 mock 当前时间，供 Watchdog_Task 占位入口使用。
- * @param now_ms 当前时间，单位毫秒。
- */
 void rtos_recovery_mock_set_now(uint32_t now_ms);
 
-/**
- * @brief 使用 mock 当前时间执行一次 watchdog 检查。
- * @return UNIFIED_OK 表示检查完成，否则返回恢复动作错误码。
- */
 unified_error_t rtos_recovery_watchdog_task_check_once(void);
 
 #ifdef __cplusplus

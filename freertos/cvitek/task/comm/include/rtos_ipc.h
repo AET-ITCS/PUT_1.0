@@ -19,110 +19,47 @@
 extern "C" {
 #endif
 
-/** @brief RTOS->Linux 错误/状态事件占位结构。 */
 typedef struct {
-    /** @brief 事件类型，取值见 @ref rtos_ipc_event_type_t。 */
-    uint32_t event_type;
+    uint32_t event_type;    // 事件类型，取值见 rtos_ipc_event_type_t。
 
-    /** @brief 事件附加信息，由事件类型解释。 */
-    uint32_t detail;
-} rtos_ipc_event_t;
+    uint32_t detail;        // 事件附加信息，由事件类型解释。
+} rtos_ipc_event_t;         // RTOS->Linux 错误/状态事件占位结构。
 
-/** @brief RTOS->Linux 事件类型。 */
 typedef enum {
-    /** @brief Linux heartbeat 超时。 */
-    RTOS_IPC_EVENT_LINUX_HEARTBEAT_TIMEOUT = 1u,
-    /** @brief CAN bus-off。 */
-    RTOS_IPC_EVENT_CAN_BUS_OFF = 2u,
-    /** @brief SPI/driver 错误。 */
-    RTOS_IPC_EVENT_SPI_ERROR = 3u,
-    /** @brief XL2515 RX overflow。 */
-    RTOS_IPC_EVENT_RX_OVERFLOW = 4u,
-} rtos_ipc_event_type_t;
+    RTOS_IPC_EVENT_LINUX_HEARTBEAT_TIMEOUT = 1u,  // Linux heartbeat 超时。
+    RTOS_IPC_EVENT_CAN_BUS_OFF = 2u,              // CAN bus-off。
+    RTOS_IPC_EVENT_SPI_ERROR = 3u,                // SPI/driver 错误。
+    RTOS_IPC_EVENT_RX_OVERFLOW = 4u,              // XL2515 RX overflow。
+} rtos_ipc_event_type_t;                          // RTOS->Linux 事件类型。
 
-/** @brief CAN RX 回传 hook 类型。 */
-typedef unified_error_t (*rtos_ipc_can_rx_sender_fn_t)(const rtos_can_message_t *message);
+typedef unified_error_t (*rtos_ipc_can_rx_sender_fn_t)(const rtos_can_message_t *message);      // CAN RX 回传 hook 类型。
 
-/** @brief RTOS->Linux payload 回传 hook 类型。 */
-typedef unified_error_t (*rtos_ipc_payload_sender_fn_t)(const rtos_ipc_payload_t *payload);
+typedef unified_error_t (*rtos_ipc_payload_sender_fn_t)(const rtos_ipc_payload_t *payload);     // RTOS->Linux payload 回传 hook 类型。
 
-/** @brief 状态快照回传 hook 类型。 */
-typedef unified_error_t (*rtos_ipc_status_sender_fn_t)(const rtos_status_snapshot_t *status);
+typedef unified_error_t (*rtos_ipc_status_sender_fn_t)(const rtos_status_snapshot_t *status);   // 状态快照回传 hook 类型。
 
-/** @brief 错误事件回传 hook 类型。 */
-typedef unified_error_t (*rtos_ipc_event_sender_fn_t)(const rtos_ipc_event_t *event);
+typedef unified_error_t (*rtos_ipc_event_sender_fn_t)(const rtos_ipc_event_t *event);           // 错误事件回传 hook 类型。
 
-/**
- * @brief 初始化 IPC mock 队列和回传 hook。
- * @return UNIFIED_OK 表示成功。
- */
 unified_error_t rtos_ipc_init(void);
 
-/**
- * @brief 阶段 2 兼容入口：直接注入一帧 CAN message。
- * @param message 待提交 CAN message。
- * @return UNIFIED_OK 表示成功，否则返回公共错误码。
- */
 unified_error_t rtos_ipc_mock_receive_can_message(const rtos_can_message_t *message);
 
-/**
- * @brief 向 mock Linux->RTOS payload queue 注入 opaque payload。
- * @param bytes payload 字节指针；length 为 0 时可为 NULL。
- * @param length payload 长度。
- * @return UNIFIED_OK 表示成功，否则返回公共错误码。
- */
 unified_error_t rtos_ipc_mock_receive_payload(const uint8_t *bytes, uint16_t length);
 
-/**
- * @brief 非阻塞读取一个 Linux->RTOS mock payload。
- * @param[out] out_payload 输出 payload。
- * @return UNIFIED_OK 表示读到 payload；空队列返回错误码。
- */
 unified_error_t rtos_ipc_poll_linux_payload(rtos_ipc_payload_t *out_payload);
 
-/**
- * @brief 注册 CAN RX 回传 hook。
- * @param sender 回传函数；NULL 表示使用默认 no-op。
- */
 void rtos_ipc_set_can_rx_sender(rtos_ipc_can_rx_sender_fn_t sender);
 
-/**
- * @brief 注册 RTOS->Linux payload 回传 hook。
- * @param sender 回传函数；NULL 表示使用默认 no-op。
- */
 void rtos_ipc_set_payload_sender(rtos_ipc_payload_sender_fn_t sender);
 
-/**
- * @brief 注册状态快照回传 hook。
- * @param sender 回传函数；NULL 表示使用默认 no-op。
- */
 void rtos_ipc_set_status_sender(rtos_ipc_status_sender_fn_t sender);
 
-/**
- * @brief 注册错误事件回传 hook。
- * @param sender 回传函数；NULL 表示使用默认 no-op。
- */
 void rtos_ipc_set_event_sender(rtos_ipc_event_sender_fn_t sender);
 
-/**
- * @brief 通过回传 hook 发送 CAN RX 消息。
- * @param message CAN RX 消息。
- * @return UNIFIED_OK 表示发送成功或未注册 hook；hook 失败返回错误码。
- */
 unified_error_t rtos_ipc_send_can_rx(const rtos_can_message_t *message);
 
-/**
- * @brief 通过回传 hook 发送状态快照。
- * @param status 状态快照。
- * @return UNIFIED_OK 表示发送成功或未注册 hook；hook 失败返回错误码。
- */
 unified_error_t rtos_ipc_send_status(const rtos_status_snapshot_t *status);
 
-/**
- * @brief 通过回传 hook 发送错误事件。
- * @param event 错误事件。
- * @return UNIFIED_OK 表示发送成功或未注册 hook；hook 失败返回错误码。
- */
 unified_error_t rtos_ipc_send_error_event(const rtos_ipc_event_t *event);
 
 #ifdef __cplusplus
