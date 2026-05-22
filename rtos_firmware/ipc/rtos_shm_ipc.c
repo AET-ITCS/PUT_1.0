@@ -83,6 +83,22 @@ static void call_memory_barrier(const rtos_shm_platform_ops_t *ops)
 }
 
 /**
+ * @brief 判断平台通知操作是否可用。
+ *
+ * @param ops 平台操作集合。
+ * @return true 表示 notify 回调可调用，false 表示平台操作未就绪。
+ */
+static bool is_notify_ready(const rtos_shm_platform_ops_t *ops)
+{
+    if ((ops == 0) || (ops->notify == 0)) {
+        /* notify 缺失属于发布前可发现的配置错误，不能写入半成品消息。 */
+        return false;
+    }
+
+    return true;
+}
+
+/**
  * @brief 调用 doorbell/mailbox 通知操作。
  *
  * @param ops 平台操作集合。
@@ -94,14 +110,14 @@ static unified_error_t call_notify(const rtos_shm_platform_ops_t *ops,
 {
     unified_error_t notify_result; /**< 平台通知结果。 */
 
-    if ((ops == 0) || (ops->notify == 0)) {
-        /* 平台通知缺失说明 IPC 尚不可安全运行。 */
+    if (!is_notify_ready(ops)) {
+        /* 正常入队路径会在发布前检查 notify，这里保留防御式保护。 */
         return UNIFIED_ERR_IPC_NOT_READY;
     }
 
     notify_result = ops->notify(direction, ops->user_context);
     if (notify_result != UNIFIED_OK) {
-        /* ring 已发布但通知失败，调用方需要通过错误码感知 doorbell 异常。 */
+        /* doorbell 异常只能说明唤醒失败，不能说明共享内存消息未写入。 */
         return UNIFIED_ERR_IPC_NOTIFY_FAILED;
     }
 
@@ -130,6 +146,7 @@ static void format_ring(put_shm_ring_t *ring, put_shm_direction_t direction)
     ring->producer.slot_size = PUT_SHM_SLOT_SIZE;
     ring->producer.drop_count = 0u;
     ring->producer.notify_count = 0u;
+    ring->producer.notify_fail_count = 0u;
 
     ring->consumer.read_seq = 0u;
     ring->consumer.dequeue_count = 0u;
@@ -404,6 +421,11 @@ unified_error_t rtos_shm_ring_enqueue(put_shm_ring_t *ring,
 
     resolved_ops = resolve_ops(ops);
 
+    if (!is_notify_ready(resolved_ops)) {
+        /* notify 配置错误在写 slot 前即可发现，直接拒绝本次入队。 */
+        return UNIFIED_ERR_IPC_NOT_READY;
+    }
+
     op_result = call_cache_invalidate(resolved_ops, &ring->consumer, sizeof(ring->consumer));
     if (op_result != UNIFIED_OK) {
         /* 生产者需要读取消费者 read_seq，读取前必须先 invalidate。 */
@@ -455,8 +477,10 @@ unified_error_t rtos_shm_ring_enqueue(put_shm_ring_t *ring,
 
     op_result = call_notify(resolved_ops, (put_shm_direction_t)ring->header.direction);
     if (op_result != UNIFIED_OK) {
-        /* 消息已入队但通知失败，返回明确 IPC notify 错误。 */
-        return op_result;
+        /* write_seq 已发布，消息已经入队；记录通知失败但不让上层误判可重试发送失败。 */
+        ring->producer.notify_fail_count = ring->producer.notify_fail_count + 1u;
+        (void)call_cache_flush(resolved_ops, &ring->producer, sizeof(ring->producer));
+        return UNIFIED_OK;
     }
 
     ring->producer.notify_count = ring->producer.notify_count + 1u;

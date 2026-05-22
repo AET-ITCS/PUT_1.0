@@ -98,6 +98,8 @@ rtos_to_linux：RTOS 单生产者，Linux 单消费者
 | ---- | ------ | ---- |
 | `write_seq` | 生产者 | 单调递增写入序号 |
 | `read_seq` | 消费者 | 单调递增读取序号 |
+| `notify_count` | 生产者 | 成功触发 doorbell/mailbox 的计数 |
+| `notify_fail_count` | 生产者 | 消息已发布但 doorbell/mailbox 失败的计数 |
 
 状态判断：
 
@@ -199,6 +201,8 @@ flush consumer cache line
 
 doorbell 只表示“对应 ring 可能有新消息”，不承载业务 payload。通知丢失时，接收端必须可通过周期 drain 兜底；共享内存 ring 是唯一数据源。
 
+发送接口的成功判定以 `write_seq` 是否发布为准。若 slot 已写入并且 `write_seq` 已发布，后续 doorbell/mailbox/cmdqu 通知失败只递增 `notify_fail_count`，发送函数仍返回成功，避免调用方把“已入队消息”当作“未发送消息”重试并造成重复帧。
+
 ---
 
 ## 6. heartbeat / rehandshake / fail-safe
@@ -259,6 +263,8 @@ IPC 专用错误码已经加入：
 | `UNIFIED_ERR_IPC_OFFLINE` | 对端离线或 fail-safe 状态下拒绝业务帧 |
 
 现有错误码数值保持不变，IPC 错误码独立放在 `-30` 区间。
+
+`UNIFIED_ERR_IPC_NOTIFY_FAILED` 表示底层通知动作失败；对 ring 发送 API 而言，如果失败发生在 `write_seq` 发布之后，该消息已经成为可见数据，API 不应返回该错误给可重试发送调用方，只应记录 `notify_fail_count` 并依赖接收端周期 drain 兜底。
 
 ---
 

@@ -62,6 +62,7 @@
 - 通知方式：
   - v1 用 `/dev/cvi-rtos-cmdqu` 或 BSP mailbox 作为 doorbell，只通知“对应 ring 有新数据”，不承载业务 payload。
   - 通知丢失时，接收端通过周期 drain 兜底；ring 是唯一数据源。
+  - 若消息 slot 和 `write_seq` 已发布，doorbell 失败不再作为可重试发送失败返回；发送方递增 `notify_fail_count`，接收方依靠周期 drain 读取已入队消息。
 
 ## Recovery
 
@@ -78,7 +79,7 @@
 
 - ABI 测试：`sizeof`、offset、slot 256-byte、payload 128-byte、`unified_frame_t` 96-byte 兼容。
 - ring 测试：空读、写满、满写拒绝、回绕、顺序保持、CRC 错误、magic/version 错误。
-- Linux 单测：`ipc_to_rtos_send()` 对 NULL、未初始化、队列满、notify 失败返回正确错误码。
+- Linux 单测：`ipc_to_rtos_send()` 对 NULL、未初始化、队列满返回正确错误码；notify 在 `write_seq` 发布后失败时必须验证消息已入队且不会触发重试语义。
 - RTOS host 测试：真实 ring 替换 mock queue 后，现有 `rtos_protocol_adapter` 和 CAN forward 测试继续通过。
 - 硬件联调：cache 一致性、cmdqu doorbell、Linux 重启重握手、heartbeat timeout、CAN 高负载下不发送旧帧。
 

@@ -298,6 +298,43 @@ static int test_ring_full_preserves_oldest(void)
 }
 
 /**
+ * @brief 测试 notify 失败后消息仍保持已入队状态。
+ *
+ * @return 0 表示通过，非 0 表示失败。
+ */
+static int test_notify_failure_keeps_message_enqueued(void)
+{
+    mock_platform_context_t context; /**< mock 平台上下文。 */
+    rtos_shm_platform_ops_t ops;     /**< mock 平台操作集合。 */
+    uint8_t payload[2];              /**< 测试 payload。 */
+    rtos_shm_message_t message;      /**< 输出消息。 */
+
+    setup_region(&context, &ops);
+    context.fail_notify = true;
+    payload[0] = 0x12u;
+    payload[1] = 0x34u;
+
+    CHECK(rtos_shm_ring_enqueue(&g_region.linux_to_rtos,
+                                (uint16_t)PUT_SHM_MESSAGE_TYPE_EVENT,
+                                payload,
+                                sizeof(payload),
+                                3u,
+                                &ops) == UNIFIED_OK);
+    CHECK(context.notify_count == 1u);
+    CHECK(g_region.linux_to_rtos.producer.write_seq == 1u);
+    CHECK(g_region.linux_to_rtos.producer.notify_count == 0u);
+    CHECK(g_region.linux_to_rtos.producer.notify_fail_count == 1u);
+
+    CHECK(rtos_shm_ring_dequeue(&g_region.linux_to_rtos, &message, &ops) == UNIFIED_OK);
+    CHECK(message.message_type == (uint16_t)PUT_SHM_MESSAGE_TYPE_EVENT);
+    CHECK(message.sequence == 0u);
+    CHECK(message.epoch == 3u);
+    CHECK(message.payload_length == sizeof(payload));
+    CHECK(memcmp(message.payload, payload, sizeof(payload)) == 0);
+    return 0;
+}
+
+/**
  * @brief 测试 CRC 错误 slot 会被消费。
  *
  * @return 0 表示通过，非 0 表示失败。
@@ -401,6 +438,7 @@ int main(void)
     CHECK(test_empty_dequeue() == 0);
     CHECK(test_enqueue_dequeue() == 0);
     CHECK(test_ring_full_preserves_oldest() == 0);
+    CHECK(test_notify_failure_keeps_message_enqueued() == 0);
     CHECK(test_crc_error_consumes_slot() == 0);
     CHECK(test_bad_length_consumes_slot() == 0);
     CHECK(test_ipc_send_to_linux() == 0);

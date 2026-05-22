@@ -235,7 +235,8 @@ typedef struct PUT_SHM_PACKED_ALIGNED {
     uint32_t slot_size;          /**< slot 大小冗余副本，用于快速校验。 */
     uint32_t drop_count;         /**< 生产者因 ring full 丢弃最新消息的计数。 */
     uint32_t notify_count;       /**< 生产者成功触发 doorbell/mailbox 的计数。 */
-    uint8_t reserved[44];        /**< 保留字段，初始化时必须填 0。 */
+    uint32_t notify_fail_count;  /**< 生产者发布消息后 doorbell/mailbox 通知失败的计数。 */
+    uint8_t reserved[40];        /**< 保留字段，初始化时必须填 0。 */
 } put_shm_ring_producer_t;
 
 /**
