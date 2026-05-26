@@ -13,7 +13,6 @@
 #include <stdint.h>
 
 #include "error_code.h"
-#include "unified_frame.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -27,11 +26,19 @@ extern "C" {
 #define PUT_SHM_PACKED_ALIGNED
 #endif
 
+#if defined(__STDC_VERSION__) && (__STDC_VERSION__ >= 201112L)
+#define PUT_SHM_STATIC_ASSERT(condition, message) _Static_assert((condition), message)
+#else
+#define PUT_SHM_CONCAT_INNER(a, b) a##b
+#define PUT_SHM_CONCAT(a, b) PUT_SHM_CONCAT_INNER(a, b)
+#define PUT_SHM_STATIC_ASSERT(condition, message) \
+    typedef char PUT_SHM_CONCAT(put_shm_static_assert_, __LINE__)[(condition) ? 1 : -1]
+#endif
+
 /**
  * @brief 共享内存 IPC ABI 版本。
  *
- * v1 固定使用双向 SPSC ring，Linux -> RTOS 业务 payload 固定承载
- * 96 字节 unified_frame_t。
+ * v1 固定使用双向 SPSC ring，payload 作为 opaque bytes 搬运。
  */
 #define PUT_SHM_IPC_VERSION 1u
 
@@ -47,8 +54,11 @@ extern "C" {
 /** @brief 共享内存 cache line 对齐长度，SG2002 双核通信按 64 字节规划。 */
 #define PUT_SHM_CACHE_LINE_SIZE 64u
 
-/** @brief 单个 IPC payload 最大长度，必须能够容纳 96 字节 unified_frame_t。 */
+/** @brief 单个 IPC payload 最大长度。 */
 #define PUT_SHM_PAYLOAD_MAX_LEN 128u
+
+/** @brief 经典 CAN 数据区长度，仅用于历史 CAN RX 回传 payload。 */
+#define PUT_SHM_CAN_CLASSIC_DATA_MAX_LEN 8u
 
 /** @brief 单个共享内存 slot 固定长度，便于按 cache line 对齐和跳转。 */
 #define PUT_SHM_SLOT_SIZE 256u
@@ -104,7 +114,7 @@ typedef enum {
  */
 typedef enum {
     PUT_SHM_MESSAGE_TYPE_NONE = 0u,          /**< 空消息或未初始化 slot。 */
-    PUT_SHM_MESSAGE_TYPE_UNIFIED_FRAME = 1u, /**< Linux -> RTOS 业务下发，payload 为 unified_frame_t。 */
+    PUT_SHM_MESSAGE_TYPE_OPAQUE_PAYLOAD = 1u, /**< 业务 payload，IPC 层不解释内容。 */
     PUT_SHM_MESSAGE_TYPE_HEARTBEAT = 2u,     /**< payload 为 put_shm_heartbeat_payload_t。 */
     PUT_SHM_MESSAGE_TYPE_STATUS = 3u,        /**< payload 为 put_shm_status_payload_t。 */
     PUT_SHM_MESSAGE_TYPE_EVENT = 4u,         /**< payload 为 put_shm_event_payload_t。 */
@@ -138,8 +148,7 @@ typedef struct PUT_SHM_PACKED {
 /**
  * @brief RTOS -> Linux CAN RX 公共 payload。
  *
- * v1 只冻结经典 CAN 回传。can_flags 使用 unified_can_flag_t 语义，
- * 当前只允许 UNIFIED_CAN_FLAG_NONE 和 UNIFIED_CAN_FLAG_EXTENDED_ID。
+ * v1 只冻结经典 CAN 回传。can_flags 为共享内存私有 bitmask。
  */
 typedef struct PUT_SHM_PACKED {
     uint32_t sequence;       /**< CAN RX 回传序号，由 RTOS 侧递增。 */
@@ -148,7 +157,7 @@ typedef struct PUT_SHM_PACKED {
     uint8_t can_dlc;         /**< CAN 数据字节数，v1 范围为 0 ~ 8。 */
     uint8_t can_flags;       /**< CAN flag bitmask，v1 只允许标准帧或扩展帧。 */
     uint8_t reserved0[2];    /**< 保留字节，发送方必须填 0。 */
-    uint8_t can_data[UNIFIED_CAN_CLASSIC_DATA_MAX_LEN]; /**< 经典 CAN 数据区。 */
+    uint8_t can_data[PUT_SHM_CAN_CLASSIC_DATA_MAX_LEN]; /**< 经典 CAN 数据区。 */
     uint32_t reserved1[4];   /**< 保留字段，发送方必须填 0。 */
 } put_shm_can_rx_payload_t;
 
@@ -288,41 +297,30 @@ typedef struct PUT_SHM_PACKED_ALIGNED {
     uint8_t reserved[PUT_SHM_REGION_RESERVED_LEN]; /**< 尾部保留区，初始化时必须填 0。 */
 } put_shm_region_t;
 
-UNIFIED_STATIC_ASSERT(PUT_SHM_PAYLOAD_MAX_LEN >= UNIFIED_FRAME_LENGTH,
-                      "shared memory payload must fit unified_frame_t");
-UNIFIED_STATIC_ASSERT(sizeof(put_shm_heartbeat_payload_t) <= PUT_SHM_PAYLOAD_MAX_LEN,
+PUT_SHM_STATIC_ASSERT(sizeof(put_shm_heartbeat_payload_t) <= PUT_SHM_PAYLOAD_MAX_LEN,
                       "heartbeat payload must fit shared memory payload");
-UNIFIED_STATIC_ASSERT(sizeof(put_shm_can_rx_payload_t) <= PUT_SHM_PAYLOAD_MAX_LEN,
+PUT_SHM_STATIC_ASSERT(sizeof(put_shm_can_rx_payload_t) <= PUT_SHM_PAYLOAD_MAX_LEN,
                       "CAN RX payload must fit shared memory payload");
-UNIFIED_STATIC_ASSERT(sizeof(put_shm_status_payload_t) <= PUT_SHM_PAYLOAD_MAX_LEN,
+PUT_SHM_STATIC_ASSERT(sizeof(put_shm_status_payload_t) <= PUT_SHM_PAYLOAD_MAX_LEN,
                       "status payload must fit shared memory payload");
-UNIFIED_STATIC_ASSERT(sizeof(put_shm_event_payload_t) <= PUT_SHM_PAYLOAD_MAX_LEN,
+PUT_SHM_STATIC_ASSERT(sizeof(put_shm_event_payload_t) <= PUT_SHM_PAYLOAD_MAX_LEN,
                       "event payload must fit shared memory payload");
-UNIFIED_STATIC_ASSERT(sizeof(put_shm_slot_header_t) == PUT_SHM_SLOT_HEADER_SIZE,
+PUT_SHM_STATIC_ASSERT(sizeof(put_shm_slot_header_t) == PUT_SHM_SLOT_HEADER_SIZE,
                       "shared memory slot header must be 32 bytes");
-UNIFIED_STATIC_ASSERT(sizeof(put_shm_slot_t) == PUT_SHM_SLOT_SIZE,
+PUT_SHM_STATIC_ASSERT(sizeof(put_shm_slot_t) == PUT_SHM_SLOT_SIZE,
                       "shared memory slot must be 256 bytes");
-UNIFIED_STATIC_ASSERT(sizeof(put_shm_ring_header_t) == PUT_SHM_RING_HEADER_SIZE,
+PUT_SHM_STATIC_ASSERT(sizeof(put_shm_ring_header_t) == PUT_SHM_RING_HEADER_SIZE,
                       "shared memory ring header must be one cache line");
-UNIFIED_STATIC_ASSERT(sizeof(put_shm_ring_producer_t) == PUT_SHM_RING_PRODUCER_SIZE,
+PUT_SHM_STATIC_ASSERT(sizeof(put_shm_ring_producer_t) == PUT_SHM_RING_PRODUCER_SIZE,
                       "shared memory producer state must be one cache line");
-UNIFIED_STATIC_ASSERT(sizeof(put_shm_ring_consumer_t) == PUT_SHM_RING_CONSUMER_SIZE,
+PUT_SHM_STATIC_ASSERT(sizeof(put_shm_ring_consumer_t) == PUT_SHM_RING_CONSUMER_SIZE,
                       "shared memory consumer state must be one cache line");
-UNIFIED_STATIC_ASSERT(sizeof(put_shm_ring_t) == PUT_SHM_RING_SIZE,
+PUT_SHM_STATIC_ASSERT(sizeof(put_shm_ring_t) == PUT_SHM_RING_SIZE,
                       "shared memory ring size must match ABI constant");
-UNIFIED_STATIC_ASSERT(sizeof(put_shm_region_header_t) == PUT_SHM_REGION_HEADER_SIZE,
+PUT_SHM_STATIC_ASSERT(sizeof(put_shm_region_header_t) == PUT_SHM_REGION_HEADER_SIZE,
                       "shared memory region header must be one cache line");
-UNIFIED_STATIC_ASSERT(sizeof(put_shm_region_t) == PUT_SHM_REGION_SIZE,
+PUT_SHM_STATIC_ASSERT(sizeof(put_shm_region_t) == PUT_SHM_REGION_SIZE,
                       "shared memory region must be 64 KiB");
-
-/**
- * @brief 共享内存 IPC 发送接口契约。
- *
- * 大核协议转换层只依赖“可以发送一帧 const unified_frame_t”这个最小能力。
- * 具体实现应将该帧作为 PUT_SHM_MESSAGE_TYPE_UNIFIED_FRAME payload 写入
- * Linux -> RTOS ring，并完成 cache 同步和 doorbell 通知。
- */
-typedef unified_error_t (*shared_memory_ipc_send_fn_t)(const unified_frame_t *frame);
 
 #ifdef __cplusplus
 }

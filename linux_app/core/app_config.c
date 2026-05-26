@@ -110,21 +110,6 @@ static int parse_u32(const char *text, uint32_t *out_value)
     return 0;
 }
 
-static int parse_rs485_protocol(const char *text, app_rs485_protocol_t *out_protocol)
-{
-    if ((text == NULL) || (out_protocol == NULL)) {
-        return -1;
-    }
-
-    if ((strcmp(text, "can_direct") == 0) ||
-        (strcmp(text, "direct") == 0)) {
-        *out_protocol = APP_RS485_PROTOCOL_CAN_DIRECT;
-        return 0;
-    }
-
-    return -1;
-}
-
 static void copy_string(char *dst, size_t dst_size, const char *src)
 {
     if ((dst == NULL) || (dst_size == 0u)) {
@@ -141,12 +126,6 @@ void app_config_set_defaults(app_config_t *config)
     }
 
     memset(config, 0, sizeof(*config));
-    config->ethernet_udp_enabled = true;
-    config->ethernet_udp_port = 5000u;
-    config->rs485_enabled = false;
-    copy_string(config->rs485_dev, sizeof(config->rs485_dev), "/dev/ttyS1");
-    config->rs485_baud = 115200u;
-    config->rs485_protocol = APP_RS485_PROTOCOL_CAN_DIRECT;
     config->status_enabled = true;
     copy_string(config->status_dir, sizeof(config->status_dir), "/run/put/status");
     config->bluetooth_enabled = false;
@@ -166,63 +145,8 @@ static unified_error_t apply_key_value(app_config_t *config,
         return UNIFIED_ERR_NULL;
     }
 
-    if (strcmp(section, "ethernet_udp") == 0) {
-        if (strcmp(key, "enabled") == 0) {
-            if (parse_bool(value, &bool_value) != 0) {
-                return UNIFIED_ERR_INVALID_ARG;
-            }
-            config->ethernet_udp_enabled = bool_value;
-            return UNIFIED_OK;
-        }
+    if (strcmp(section, "status") == 0) {
 
-        if (strcmp(key, "port") == 0) {
-            if ((parse_u32(value, &u32_value) != 0) || (u32_value == 0u) || (u32_value > UINT16_MAX)) {
-                return UNIFIED_ERR_INVALID_ARG;
-            }
-            config->ethernet_udp_port = (uint16_t)u32_value;
-            return UNIFIED_OK;
-        }
-
-        if (strcmp(key, "protocol") == 0) {
-            if ((strcmp(value, "can_direct") != 0) && (strcmp(value, "direct") != 0)) {
-                return UNIFIED_ERR_INVALID_ARG;
-            }
-            return UNIFIED_OK;
-        }
-    } else if (strcmp(section, "rs485") == 0) {
-        if (strcmp(key, "enabled") == 0) {
-            if (parse_bool(value, &bool_value) != 0) {
-                return UNIFIED_ERR_INVALID_ARG;
-            }
-            config->rs485_enabled = bool_value;
-            return UNIFIED_OK;
-        }
-
-        if (strcmp(key, "dev") == 0) {
-            if (value[0] == '\0') {
-                return UNIFIED_ERR_INVALID_ARG;
-            }
-            copy_string(config->rs485_dev, sizeof(config->rs485_dev), value);
-            return UNIFIED_OK;
-        }
-
-        if (strcmp(key, "baud") == 0) {
-            if ((parse_u32(value, &u32_value) != 0) || (u32_value == 0u)) {
-                return UNIFIED_ERR_INVALID_ARG;
-            }
-            config->rs485_baud = u32_value;
-            return UNIFIED_OK;
-        }
-
-        if (strcmp(key, "protocol") == 0) {
-            if (parse_rs485_protocol(value, &config->rs485_protocol) != 0) {
-                return UNIFIED_ERR_INVALID_ARG;
-            }
-            return UNIFIED_OK;
-        }
-
-        /* slave_id/response_enabled 是旧 Modbus 配置项，纯网关模式下忽略。 */
-    } else if (strcmp(section, "status") == 0) {
         if (strcmp(key, "enabled") == 0) {
             if (parse_bool(value, &bool_value) != 0) {
                 return UNIFIED_ERR_INVALID_ARG;
@@ -329,22 +253,6 @@ unified_error_t app_config_validate(const app_config_t *config)
 {
     if (config == NULL) {
         return UNIFIED_ERR_NULL;
-    }
-
-    if (config->ethernet_udp_port == 0u) {
-        return UNIFIED_ERR_INVALID_ARG;
-    }
-
-    if (config->rs485_enabled && (config->rs485_dev[0] == '\0')) {
-        return UNIFIED_ERR_INVALID_ARG;
-    }
-
-    if (config->rs485_enabled && (config->rs485_baud == 0u)) {
-        return UNIFIED_ERR_INVALID_ARG;
-    }
-
-    if (config->rs485_enabled && (config->rs485_protocol != APP_RS485_PROTOCOL_CAN_DIRECT)) {
-        return UNIFIED_ERR_INVALID_ARG;
     }
 
     if (config->status_enabled && (config->status_dir[0] == '\0')) {
