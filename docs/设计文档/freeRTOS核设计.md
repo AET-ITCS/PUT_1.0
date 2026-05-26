@@ -56,19 +56,19 @@ FreeRTOS 小核定位为：
 
 ## 3. 系统职责划分
 
-| 模块 | 职责 |
-|---|---|
-| Linux 大核 | 负责 CAN、RS485、Ethernet、WiFi、Bluetooth、4G 等物理层实际收发 |
-| Linux 大核 | 负责复杂协议解析、封装和解包 |
-| Linux 大核 | 接收外部数据后封装为统一帧，并写入对应物理层 RX Ring |
-| FreeRTOS 小核 | 从共享内存 RX Ring 读取统一帧 |
-| FreeRTOS 小核 | 根据目的通信地址选择目标 TX Ring |
-| FreeRTOS 小核 | 根据 priority 对帧进行排序 |
-| FreeRTOS 小核 | 将帧写入对应物理层 TX Ring |
-| FreeRTOS 小核 | 设置 TX Pending Bitmap |
-| FreeRTOS 小核 | 当 TX Ring 从空变非空时通过 Mailbox Doorbell 通知 Linux |
-| FreeRTOS 小核 | 识别 `type = 0x00` 端到网关心跳并维护端在线状态 |
-| Linux 大核 | 收到通知后读取 TX Ring，并调用真实物理层驱动发送 |
+| 模块          | 职责                                                            |
+| ------------- | --------------------------------------------------------------- |
+| Linux 大核    | 负责 CAN、RS485、Ethernet、WiFi、Bluetooth、4G 等物理层实际收发 |
+| Linux 大核    | 负责复杂协议解析、封装和解包                                    |
+| Linux 大核    | 接收外部数据后封装为统一帧，并写入对应物理层 RX Ring            |
+| FreeRTOS 小核 | 从共享内存 RX Ring 读取统一帧                                   |
+| FreeRTOS 小核 | 根据目的通信地址选择目标 TX Ring                                |
+| FreeRTOS 小核 | 根据 priority 对帧进行排序                                      |
+| FreeRTOS 小核 | 将帧写入对应物理层 TX Ring                                      |
+| FreeRTOS 小核 | 设置 TX Pending Bitmap                                          |
+| FreeRTOS 小核 | 当 TX Ring 从空变非空时通过 Mailbox Doorbell 通知 Linux         |
+| FreeRTOS 小核 | 识别 `type = 0x00` 端到网关心跳并维护端在线状态                 |
+| Linux 大核    | 收到通知后读取 TX Ring，并调用真实物理层驱动发送                |
 
 一句话总结：
 
@@ -175,12 +175,12 @@ LTE_TX_RING
 
 从小核视角理解：
 
-| Ring | 生产者 | 消费者 | 含义 |
-|---|---|---|---|
-| `xxx_RX_RING` | Linux | 小核 | Linux 收到外部数据后交给小核路由 |
-| `xxx_TX_RING` | 小核 | Linux | 小核路由完成后交给 Linux 发送 |
-| `rx_pending_bitmap` | Linux 写 | 小核读/清 | 表示哪些 RX Ring 有新数据 |
-| `tx_pending_bitmap` | 小核写 | Linux 读/清 | 表示哪些 TX Ring 有待发送数据 |
+| Ring                | 生产者   | 消费者      | 含义                             |
+| ------------------- | -------- | ----------- | -------------------------------- |
+| `xxx_RX_RING`       | Linux    | 小核        | Linux 收到外部数据后交给小核路由 |
+| `xxx_TX_RING`       | 小核     | Linux       | 小核路由完成后交给 Linux 发送    |
+| `rx_pending_bitmap` | Linux 写 | 小核读/清   | 表示哪些 RX Ring 有新数据        |
+| `tx_pending_bitmap` | 小核写   | Linux 读/清 | 表示哪些 TX Ring 有待发送数据    |
 
 注意：
 
@@ -199,19 +199,19 @@ RX Ring / TX Ring 只是共享内存中的数据方向。
 ┌────────────────────────────────────────────────────────────┐
 │                    Linux 大核                              │
 │                                                            │
-│  CAN RX / RS485 RX / ETH RX / WIFI RX / BT RX / LTE RX      │
+│  CAN RX / RS485 RX / ETH RX / WIFI RX / BT RX / LTE RX     │
 │        │                                                   │
 │        ▼                                                   │
-│  协议解析 / 统一帧封装                                      │
+│  协议解析 / 统一帧封装                                     │
 │        │                                                   │
 │        ▼                                                   │
-│  写对应物理层 RX Ring                                       │
+│  写对应物理层 RX Ring                                      │
 │        │                                                   │
 │        ▼                                                   │
-│  设置 RX Pending Bitmap                                     │
+│  设置 RX Pending Bitmap                                    │
 │        │                                                   │
 │        ▼                                                   │
-│  RX Ring 从空变非空时 Doorbell                              │
+│  RX Ring 从空变非空时 Doorbell                             │
 └────────┬───────────────────────────────────────────────────┘
          │
          ▼
@@ -224,38 +224,38 @@ RX Ring / TX Ring 只是共享内存中的数据方向。
 │  IPC Event Task                                            │
 │        │                                                   │
 │        ├── 读取 RX Pending Bitmap                          │
-│        ├── Drain 各物理层 RX Ring                           │
-│        ├── 校验 epoch / TTL / header                        │
+│        ├── Drain 各物理层 RX Ring                          │
+│        ├── 校验 epoch / TTL / header                       │
 │        ├── 读取 priority                                   │
-│        └── 查询目的地址路由表                               │
+│        └── 查询目的地址路由表                              │
 │                                                            │
 │  Router Scheduler Task                                     │
 │        │                                                   │
-│        ├── 按 priority 排序                                 │
-│        ├── 按目标物理层分类                                 │
-│        └── 选择目标 TX Ring                                 │
+│        ├── 按 priority 排序                                │
+│        ├── 按目标物理层分类                                │
+│        └── 选择目标 TX Ring                                │
 │                                                            │
 │  TX Ring Writer Task                                       │
 │        │                                                   │
-│        ├── 写目标 TX Ring                                   │
-│        ├── 设置 TX Pending Bitmap                           │
-│        └── TX Ring 从空变非空时 Doorbell 通知 Linux          │
+│        ├── 写目标 TX Ring                                  │
+│        ├── 设置 TX Pending Bitmap                          │
+│        └── TX Ring 从空变非空时 Doorbell 通知 Linux        │
 └────────┬───────────────────────────────────────────────────┘
          │
          ▼
 ┌────────────────────────────────────────────────────────────┐
 │                    Linux 大核                              │
 │                                                            │
-│  读取 TX Pending Bitmap                                     │
+│  读取 TX Pending Bitmap                                    │
 │        │                                                   │
 │        ▼                                                   │
-│  唤醒对应发送进程                                           │
+│  唤醒对应发送进程                                          │
 │        │                                                   │
 │        ▼                                                   │
-│  读取对应 TX Ring                                           │
+│  读取对应 TX Ring                                          │
 │        │                                                   │
 │        ▼                                                   │
-│  CAN TX / RS485 TX / ETH TX / WIFI TX / BT TX / LTE TX      │
+│  CAN TX / RS485 TX / ETH TX / WIFI TX / BT TX / LTE TX     │
 └────────────────────────────────────────────────────────────┘
 ```
 
@@ -265,16 +265,16 @@ RX Ring / TX Ring 只是共享内存中的数据方向。
 
 建议 FreeRTOS 小核任务如下：
 
-| 任务 | 作用 |
-|---|---|
-| Mailbox ISR | 接收 Mailbox 中断，只清中断并唤醒 IPC Event Task |
-| IPC Event Task | 读取 RX Pending Bitmap，Drain 各物理层 RX Ring，识别端到网关心跳 |
-| Router Scheduler Task | 根据 priority 和目的通信地址进行排序与路由决策 |
-| TX Ring Writer Task | 将排序后的统一帧写入目标 TX Ring |
-| Heartbeat Task | 更新 RTOS 心跳，检测 Linux 心跳，维护端到网关心跳表 |
-| Recovery Task | 处理共享内存重建、epoch 更新、Ring 重映射 |
-| Statistics Task | 维护路由、丢弃、Ring、Doorbell、端心跳等统计 |
-| Error Monitor Task | 监控 Ring 满、Frame Pool 耗尽、TTL 过期、epoch 错误、端心跳超时等异常 |
+| 任务                  | 作用                                                                  |
+| --------------------- | --------------------------------------------------------------------- |
+| Mailbox ISR           | 接收 Mailbox 中断，只清中断并唤醒 IPC Event Task                      |
+| IPC Event Task        | 读取 RX Pending Bitmap，Drain 各物理层 RX Ring，识别端到网关心跳      |
+| Router Scheduler Task | 根据 priority 和目的通信地址进行排序与路由决策                        |
+| TX Ring Writer Task   | 将排序后的统一帧写入目标 TX Ring                                      |
+| Heartbeat Task        | 更新 RTOS 心跳，检测 Linux 心跳，维护端到网关心跳表                   |
+| Recovery Task         | 处理共享内存重建、epoch 更新、Ring 重映射                             |
+| Statistics Task       | 维护路由、丢弃、Ring、Doorbell、端心跳等统计                          |
+| Error Monitor Task    | 监控 Ring 满、Frame Pool 耗尽、TTL 过期、epoch 错误、端心跳超时等异常 |
 
 不再设置以下任务：
 
@@ -544,12 +544,12 @@ prio_3_queue
 
 priority 定义：
 
-| priority | 含义 | 策略 |
-|---:|---|---|
-| 0 | 紧急帧 | 最高优先级，优先写 TX Ring |
-| 1 | 高优先级控制帧 | 优先于普通业务 |
-| 2 | 普通业务帧 | 默认优先级 |
-| 3 | 低优先级日志/状态帧 | 拥塞时优先丢弃 |
+| priority | 含义                | 策略                       |
+| -------: | ------------------- | -------------------------- |
+|        0 | 紧急帧              | 最高优先级，优先写 TX Ring |
+|        1 | 高优先级控制帧      | 优先于普通业务             |
+|        2 | 普通业务帧          | 默认优先级                 |
+|        3 | 低优先级日志/状态帧 | 拥塞时优先丢弃             |
 
 注意：
 
@@ -594,14 +594,14 @@ priority 3 : 每轮最多处理 4 帧
 
 示例路由表：
 
-| 目的通信地址范围 | 目标 TX Ring |
-|---|---|
-| `0x1000 ~ 0x10FF` | `CAN0_TX_RING` |
+| 目的通信地址范围  | 目标 TX Ring      |
+| ----------------- | ----------------- |
+| `0x1000 ~ 0x10FF` | `CAN0_TX_RING`    |
 | `0x2000 ~ 0x20FF` | `RS485_0_TX_RING` |
-| `0x3000 ~ 0x30FF` | `ETH0_TX_RING` |
-| `0x4000 ~ 0x40FF` | `WIFI_TX_RING` |
-| `0x5000 ~ 0x50FF` | `BT_TX_RING` |
-| `0x6000 ~ 0x60FF` | `LTE_TX_RING` |
+| `0x3000 ~ 0x30FF` | `ETH0_TX_RING`    |
+| `0x4000 ~ 0x40FF` | `WIFI_TX_RING`    |
+| `0x5000 ~ 0x50FF` | `BT_TX_RING`      |
+| `0x6000 ~ 0x60FF` | `LTE_TX_RING`     |
 
 路由表可以来自：
 
@@ -682,12 +682,12 @@ TX Ring Writer Task 负责将 Router Scheduler 输出的帧写入目标 TX Ring�
 
 当目标 TX Ring 满时，根据 priority 处理：
 
-| priority | 处理策略 |
-|---:|---|
-| 0 | 尽量保留，可尝试抢占低优先级缓存 |
-| 1 | 保留，短暂等待或重试 |
-| 2 | 可重试，超过阈值后丢弃 |
-| 3 | 直接丢弃或优先丢弃 |
+| priority | 处理策略                         |
+| -------: | -------------------------------- |
+|        0 | 尽量保留，可尝试抢占低优先级缓存 |
+|        1 | 保留，短暂等待或重试             |
+|        2 | 可重试，超过阈值后丢弃           |
+|        3 | 直接丢弃或优先丢弃               |
 
 建议策略：
 
@@ -861,12 +861,12 @@ Heartbeat Task 负责三类心跳状态：
 
 端到网关心跳来自统一数据帧定义：
 
-| type | 定义 | 小核处理 |
-|---:|---|---|
-| `0x00` | 端到网关心跳 | 小核消费并维护端心跳表 |
-| `0x01` | 网关到端心跳 | 本设计不由小核生成 |
+|   type | 定义           | 小核处理               |
+| -----: | -------------- | ---------------------- |
+| `0x00` | 端到网关心跳   | 小核消费并维护端心跳表 |
+| `0x01` | 网关到端心跳   | 本设计不由小核生成     |
 | `0x02` | 端到网关健康度 | 本设计暂不解析 payload |
-| `0x03` | 网关到端健康度 | 本设计暂不由小核生成 |
+| `0x03` | 网关到端健康度 | 本设计暂不由小核生成   |
 
 主要职责：
 
@@ -883,11 +883,11 @@ Heartbeat Task 负责三类心跳状态：
 
 ### 23.1 Linux 心跳状态判断
 
-| 时间 | 状态 |
-|---:|---|
-| 300 ms 未变化 | Linux 心跳警告 |
-| 500 ms 未变化 | Linux 疑似异常 |
-| 1000 ms 未变化 | 进入全局降级 |
+|           时间 | 状态           |
+| -------------: | -------------- |
+|  300 ms 未变化 | Linux 心跳警告 |
+|  500 ms 未变化 | Linux 疑似异常 |
+| 1000 ms 未变化 | 进入全局降级   |
 
 处理原则：
 
@@ -908,24 +908,24 @@ endpoint_heartbeat_table[ENDPOINT_HEARTBEAT_MAX]
 
 每个 entry 至少包含：
 
-| 字段 | 含义 |
-|---|---|
-| `source_cid` | 端设备通信地址，来自统一帧 `source_cid` |
-| `last_rx_ring_id` | 最近一次心跳来源 RX Ring |
-| `last_rtos_time_ms` | 小核收到心跳时的本地时间 |
-| `last_frame_local_time` | 心跳帧中的 `local_time` 字段 |
-| `state` | `ONLINE` / `WARN` / `OFFLINE` |
-| `rx_count` | 收到该端心跳次数 |
-| `timeout_count` | 该端心跳超时次数 |
+| 字段                    | 含义                                    |
+| ----------------------- | --------------------------------------- |
+| `source_cid`            | 端设备通信地址，来自统一帧 `source_cid` |
+| `last_rx_ring_id`       | 最近一次心跳来源 RX Ring                |
+| `last_rtos_time_ms`     | 小核收到心跳时的本地时间                |
+| `last_frame_local_time` | 心跳帧中的 `local_time` 字段            |
+| `state`                 | `ONLINE` / `WARN` / `OFFLINE`           |
+| `rx_count`              | 收到该端心跳次数                        |
+| `timeout_count`         | 该端心跳超时次数                        |
 
 默认参数建议：
 
-| 参数 | 建议值 | 含义 |
-|---|---:|---|
-| `ENDPOINT_HEARTBEAT_EXPECT_MS` | 1000 ms | 端心跳期望周期 |
-| `ENDPOINT_HEARTBEAT_WARN_MS` | 3000 ms | 超过该时间未更新进入 WARN |
-| `ENDPOINT_HEARTBEAT_OFFLINE_MS` | 5000 ms | 超过该时间未更新进入 OFFLINE |
-| `ENDPOINT_HEARTBEAT_MAX` | 64 | 小核维护的最大端数量，后续可配置 |
+| 参数                            |  建议值 | 含义                             |
+| ------------------------------- | ------: | -------------------------------- |
+| `ENDPOINT_HEARTBEAT_EXPECT_MS`  | 1000 ms | 端心跳期望周期                   |
+| `ENDPOINT_HEARTBEAT_WARN_MS`    | 3000 ms | 超过该时间未更新进入 WARN        |
+| `ENDPOINT_HEARTBEAT_OFFLINE_MS` | 5000 ms | 超过该时间未更新进入 OFFLINE     |
+| `ENDPOINT_HEARTBEAT_MAX`        |      64 | 小核维护的最大端数量，后续可配置 |
 
 处理原则：
 
@@ -1093,18 +1093,18 @@ NORMAL
 
 状态说明：
 
-| 状态 | 说明 |
-|---|---|
-| BOOT | 小核启动 |
-| INIT_BOARD | 初始化 FreeRTOS 基础资源 |
-| INIT_MAILBOX | 初始化 Mailbox 中断和 Doorbell |
-| WAIT_SHM_READY | 等待 Linux 初始化共享内存 |
-| INIT_RING_MAP | 建立 RX/TX Ring 映射 |
-| INIT_ROUTER_TABLE | 加载目的地址到 TX Ring 的映射 |
-| NORMAL | 正常路由调度 |
-| DEGRADED | Linux 或共享内存异常时降级 |
-| RECOVERY | 重新同步 epoch、Ring、bitmap、路由表 |
-| NORMAL | 恢复正常运行 |
+| 状态              | 说明                                 |
+| ----------------- | ------------------------------------ |
+| BOOT              | 小核启动                             |
+| INIT_BOARD        | 初始化 FreeRTOS 基础资源             |
+| INIT_MAILBOX      | 初始化 Mailbox 中断和 Doorbell       |
+| WAIT_SHM_READY    | 等待 Linux 初始化共享内存            |
+| INIT_RING_MAP     | 建立 RX/TX Ring 映射                 |
+| INIT_ROUTER_TABLE | 加载目的地址到 TX Ring 的映射        |
+| NORMAL            | 正常路由调度                         |
+| DEGRADED          | Linux 或共享内存异常时降级           |
+| RECOVERY          | 重新同步 epoch、Ring、bitmap、路由表 |
+| NORMAL            | 恢复正常运行                         |
 
 ---
 
@@ -1162,31 +1162,31 @@ NORMAL
 
 建议小核维护以下统计：
 
-| 统计项 | 含义 |
-|---|---|
-| `doorbell_rx_count` | 小核收到 Linux Doorbell 次数 |
-| `doorbell_tx_count` | 小核通知 Linux 次数 |
-| `rx_ring_drain_count` | 从 RX Ring 取帧次数 |
-| `tx_ring_write_count` | 写 TX Ring 次数 |
-| `route_success_count` | 路由成功次数 |
-| `route_miss_count` | 目的地址无路由次数 |
-| `prio_0_count` | priority 0 处理次数 |
-| `prio_1_count` | priority 1 处理次数 |
-| `prio_2_count` | priority 2 处理次数 |
-| `prio_3_count` | priority 3 处理次数 |
-| `ttl_drop_count` | TTL 过期丢弃次数 |
-| `epoch_drop_count` | epoch 不匹配丢弃次数 |
-| `tx_ring_full_count` | TX Ring 满次数 |
-| `rx_ring_empty_count` | RX Ring 空读次数 |
-| `frame_pool_error_count` | Frame Pool 异常次数 |
-| `mailbox_fail_count` | Mailbox 通知失败次数 |
-| `linux_heartbeat_timeout_count` | Linux 心跳超时次数 |
-| `endpoint_hb_rx_count` | 收到合法端到网关心跳次数 |
-| `endpoint_hb_invalid_count` | 非法端心跳帧次数 |
-| `endpoint_hb_timeout_count` | 端心跳超时次数 |
-| `endpoint_hb_recover_count` | 端设备从 WARN / OFFLINE 恢复次数 |
-| `endpoint_hb_table_full_count` | 端心跳表满次数 |
-| `recovery_count` | Recovery 次数 |
+| 统计项                          | 含义                             |
+| ------------------------------- | -------------------------------- |
+| `doorbell_rx_count`             | 小核收到 Linux Doorbell 次数     |
+| `doorbell_tx_count`             | 小核通知 Linux 次数              |
+| `rx_ring_drain_count`           | 从 RX Ring 取帧次数              |
+| `tx_ring_write_count`           | 写 TX Ring 次数                  |
+| `route_success_count`           | 路由成功次数                     |
+| `route_miss_count`              | 目的地址无路由次数               |
+| `prio_0_count`                  | priority 0 处理次数              |
+| `prio_1_count`                  | priority 1 处理次数              |
+| `prio_2_count`                  | priority 2 处理次数              |
+| `prio_3_count`                  | priority 3 处理次数              |
+| `ttl_drop_count`                | TTL 过期丢弃次数                 |
+| `epoch_drop_count`              | epoch 不匹配丢弃次数             |
+| `tx_ring_full_count`            | TX Ring 满次数                   |
+| `rx_ring_empty_count`           | RX Ring 空读次数                 |
+| `frame_pool_error_count`        | Frame Pool 异常次数              |
+| `mailbox_fail_count`            | Mailbox 通知失败次数             |
+| `linux_heartbeat_timeout_count` | Linux 心跳超时次数               |
+| `endpoint_hb_rx_count`          | 收到合法端到网关心跳次数         |
+| `endpoint_hb_invalid_count`     | 非法端心跳帧次数                 |
+| `endpoint_hb_timeout_count`     | 端心跳超时次数                   |
+| `endpoint_hb_recover_count`     | 端设备从 WARN / OFFLINE 恢复次数 |
+| `endpoint_hb_table_full_count`  | 端心跳表满次数                   |
+| `recovery_count`                | Recovery 次数                    |
 
 统计原则：
 
