@@ -214,7 +214,34 @@ IPC 层只校验共享内存 ABI、descriptor CRC、Frame Pool 边界和接口 I
 
 ---
 
-## 7. 错误码
+## 7. Linux IPC API
+
+`linux_app/ipc/linux_shm_ipc.h` 提供 Linux 侧 v2 descriptor API：
+
+| API | 说明 |
+| ---- | ---- |
+| `linux_shm_ipc_map()` | 通过平台后端映射 reserved-memory，host/mock 后端使用对齐内存，板端后端使用 `/dev/mem` + `mmap()` |
+| `linux_shm_ipc_unmap()` | 解除 `linux_shm_ipc_map()` 创建的映射 |
+| `linux_shm_ipc_format_region()` | 初始化 v2 region、12 个 RX/TX ring、pending bitmap、reclaim ring，并重置 Linux 本地 Frame Pool 管理状态 |
+| `linux_shm_ipc_attach()` | 校验并绑定已有 v2 region |
+| `linux_shm_frame_alloc()` | 从 Frame Pool 分配 block，记录来源接口、配额和分配序号 |
+| `linux_shm_frame_commit_rx()` | 将已写入完整 anyMSG 的 frame 发布到来源接口 RX ring |
+| `linux_shm_frame_release()` | 由 Linux 最终释放 Frame Pool block |
+| `linux_shm_dequeue_tx_descriptor()` | Linux 出口层读取目标接口 TX descriptor 和只读 frame 指针 |
+| `linux_shm_dequeue_reclaim_descriptor()` | Linux 读取 reclaim descriptor、释放对应 frame 并累计 reclaim ack |
+| `linux_shm_ipc_get_stats()` | 获取 Frame Pool、ring、pending、doorbell、reclaim 和完整性统计快照 |
+
+Linux 平台抽象由 `linux_app/ipc/linux_shm_platform.h` 提供。当前 `/dev/mem` 后端只负责最小可用映射，cache flush/invalidate 暂为 no-op；真实板端 cache maintenance、Mailbox/CMDQU doorbell 应在内核驱动或 ioctl 接口明确后替换平台 ops。
+
+`linux_shm_ipc_t` 是 Linux 本地运行态对象。调用方应先执行 `linux_shm_ipc_init()`，或通过 `linux_shm_ipc_map()` 获取已初始化上下文；直接复用未初始化栈对象不属于 API 契约。
+
+Frame Pool 释放遵循状态机约束：公开 `linux_shm_frame_release()` 只允许释放尚未发布的 `ALLOCATED` frame、Linux 已读出的 `TX_READY` frame，或 reclaim 标记后的 `PENDING_RECLAIM` frame。`RX_QUEUED` frame 在 RTOS 写 reclaim descriptor 前不得直接释放，避免 RX ring 中 descriptor 指向已回收 block。
+
+RTOS 回写的 TX descriptor 和 reclaim descriptor 只能引用 Linux 已发布给 RTOS 的 `RX_QUEUED` frame。Linux 出队 TX descriptor 时必须校验本地 frame 状态和 `source_interface` 元数据；Linux 处理 reclaim descriptor 时必须校验本地 frame 状态、`source_interface` 和 `target_interface` 元数据。未发布、已释放或接口元数据错配的 descriptor 必须被消费并计入格式错误，不得接管或释放对应 frame。
+
+---
+
+## 8. 错误码
 
 IPC 专用错误码：
 
@@ -225,11 +252,13 @@ IPC 专用错误码：
 | `UNIFIED_ERR_IPC_NOT_READY` | IPC 未初始化或平台操作未就绪 |
 | `UNIFIED_ERR_IPC_NOTIFY_FAILED` | 底层 Doorbell 通知动作失败 |
 | `UNIFIED_ERR_IPC_OFFLINE` | 对端离线或 fail-safe 状态下拒绝业务 |
+| `UNIFIED_ERR_IPC_FRAME_POOL_FULL` | Linux Frame Pool 或单接口配额已满 |
+| `UNIFIED_ERR_IPC_RECLAIM_FULL` | reclaim ring 已满 |
 
 `UNIFIED_ERR_IPC_NOTIFY_FAILED` 不作为 descriptor 已发布后的可重试发送失败返回；发送方记录 `notify_fail_count`，接收方依赖 pending bitmap 和周期 drain 兜底。
 
 ---
 
-## 8. v1 历史原型
+## 9. v1 历史原型
 
 旧 v1 `unified_frame_t + 128B slot + CAN direct` 路径仅作为历史原型。后续主开发不得继续以 `PUT_SHM_MESSAGE_TYPE_*`、固定 128B payload 或小核 CAN direct 作为主链路设计依据。

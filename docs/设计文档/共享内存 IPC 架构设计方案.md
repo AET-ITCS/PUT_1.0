@@ -86,6 +86,17 @@ Linux 回收 Frame Pool block
 - IPC 层只校验共享内存 ABI、descriptor CRC、Frame Pool 边界和接口一致性，不解析 anyMSG payload。
 - 小核后续路由任务在 IPC 层之上实现：RX drain、heartbeat table、route table、scheduler、TX writer、statistics。
 
+## Linux Implementation
+
+- `linux_app/ipc/linux_shm_ipc.*` 提供 Linux 侧 v2 IPC library，当前阶段先作为独立 static library 和 host 单测目标，不直接接入真实协议入口主流程。
+- Linux 侧是 Frame Pool 唯一分配者和最终释放者，维护 64-bit allocation bitmap、每 frame 元数据、每接口 quota、pending reclaim、泄漏可疑计数和 full/high-watermark 统计。
+- Linux 侧写 RX descriptor、读 TX descriptor、读 reclaim descriptor；ring 满时只返回错误并记录统计，不自动释放 frame，调用方负责决定丢弃、重试或释放。
+- Linux 本地上下文需要通过 `linux_shm_ipc_init()` 或 `linux_shm_ipc_map()` 初始化；`format_region/attach` 只保留带初始化 magic 的映射生命周期字段。
+- Frame Pool release 受状态机约束：`RX_QUEUED` frame 必须等待 RTOS reclaim，不能由公开 release API 直接释放。
+- TX descriptor 和 reclaim descriptor 是 RTOS 回写入口，只能引用 `RX_QUEUED` frame；Linux 必须用本地 frame 状态和接口元数据拒绝未发布、已释放或来源/目标错配的 descriptor。
+- `linux_shm_platform.*` 提供 host/mock 和 `/dev/mem` 两类后端。`/dev/mem` 后端当前只完成 `open("/dev/mem", O_RDWR | O_SYNC)` 与 `mmap()`，cache flush/invalidate 暂为 no-op，后续应由 kernel driver/ioctl 替换真实 cache maintenance 和 Mailbox/CMDQU doorbell。
+- pending bitmap 清除规则与 RTOS 保持一致：atomic clear 后重新读取 `producer.write_seq`，若 ring 又变为非空，必须 atomic OR 置回对应 bit。
+
 ## Test Plan
 
 - ABI 测试：`sizeof`、offset、region 64KiB、descriptor 64B、ring 控制行 64B、anyMSG header 40B。
@@ -93,6 +104,7 @@ Linux 回收 Frame Pool block
 - Frame Pool 测试：合法 descriptor 能返回只读 anyMSG 指针；frame_id、offset、length 越界返回错误。
 - reclaim 测试：心跳消费、无路由、TTL 过期、epoch 不匹配、非法帧等原因能写入 reclaim ring。
 - notify 测试：empty -> non-empty 触发 doorbell；notify 失败后 descriptor 仍可消费并累计 `notify_fail_count`。
+- Linux host 测试：reserved-memory mock 映射、Frame Pool alloc/release/quota/full、RX enqueue、TX dequeue、reclaim ack、pending clear 竞态和 notify partial-success。
 - 集成测试：任一入口 anyMSG 能进入 RX ring，小核路由到目标 TX ring，Linux 出口层读取并释放 Frame Pool。
 
 ## Assumptions

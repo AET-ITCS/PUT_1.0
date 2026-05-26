@@ -37,6 +37,8 @@ typedef enum {
     UNIFIED_ERR_IPC_NOT_READY = -32,      /**< 共享内存 IPC 尚未初始化或未就绪。 */
     UNIFIED_ERR_IPC_NOTIFY_FAILED = -33,  /**< 共享内存 IPC doorbell/mailbox 通知失败。 */
     UNIFIED_ERR_IPC_OFFLINE = -34,        /**< 对端离线或 fail-safe 状态下拒绝业务帧。 */
+    UNIFIED_ERR_IPC_FRAME_POOL_FULL = -35, /**< 共享内存 IPC Frame Pool 已满。 */
+    UNIFIED_ERR_IPC_RECLAIM_FULL = -36,   /**< 共享内存 IPC reclaim ring 已满。 */
 } unified_error_t;
 
 #ifdef __cplusplus
