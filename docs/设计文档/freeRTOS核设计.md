@@ -703,7 +703,9 @@ RX_RING_DRAIN_MAX_TOTAL        = 64
 4. 如果 Ring 仍然非空，保留 pending 状态并在下一轮继续处理。
 5. 如果 Ring 已空，先执行 memory barrier，再二次检查 read_idx / write_idx。
 6. 二次检查仍为空时才清除 pending bit，避免和生产者新写入产生竞态。
-7. Drain 过程中只做 descriptor、anyMSG 头部和可信性状态检查，不做复杂业务解析。
+7. 清除 pending bit 必须使用平台 atomic AND，避免覆盖其他接口同时设置的 pending bit。
+8. 清除 pending bit 后必须再次读取 write_idx；如果 Ring 已经重新非空，立刻 atomic OR 置回 pending bit。
+9. Drain 过程中只做 descriptor、anyMSG 头部和可信性状态检查，不做复杂业务解析。
 
 ---
 
@@ -771,6 +773,7 @@ priority 定义：
 
 ```text
 priority 数值越小，优先级越高。
+priority 来自共享内存 descriptor 元数据，不写入 anyMSG 保留字段。
 ```
 
 本地队列项必须保存：
@@ -1236,7 +1239,8 @@ tx_pending_bitmap
 ```text
 Pending Bitmap 表示 Ring 当前是否存在待处理数据；
 Mailbox Doorbell 只负责在队列从 empty 变为 non-empty 时唤醒对端；
-清 pending bit 前必须二次检查 Ring 为空，避免漏掉并发写入。
+清 pending bit 前必须二次检查 Ring 为空，并使用平台 atomic AND；
+清 pending bit 后必须再次检查 Ring，如果已经重新非空，消费者必须 atomic OR 置回 pending bit。
 ```
 
 ### 22.3 reclaim/free ring

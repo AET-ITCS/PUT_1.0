@@ -190,6 +190,7 @@ PUT_1.0/
 │
 ├── common/
 │   ├── include/
+│   │   ├── anymsg_frame.h
 │   │   ├── shared_memory_ipc.h
 │   │   ├── unified_frame.h
 │   │   ├── protocol_type.h
@@ -237,8 +238,8 @@ PUT_1.0/
 
 说明：
 
-- `common/include/unified_frame.h` 和部分接口文档仍保留 v1 原型定义，用于当前代码和历史行为参考。
-- 目标架构中的 `anymsg_frame.h`、共享内存 v2 结构、完整接口适配器表等仍属于后续迁移方向。
+- `common/include/anymsg_frame.h` 和 `common/include/shared_memory_ipc.h` 已作为目标主线公共 ABI。
+- `common/include/unified_frame.h` 仅保留为 v1 历史原型参考，不再作为共享内存主链路。
 - 根目录当前未落地独立的 `c51_low_power/`、`tools/`、`tests/`、`third_party/` 目录；相关能力在设计文档中作为目标或建议保留。
 
 ---
@@ -295,16 +296,15 @@ Web 模块用于比赛演示、现场调试和后续运维查看。
 
 当前包含：
 
-- `shared_memory_ipc.h`：v1 共享内存 IPC 公共 ABI。
-- `unified_frame.h`：v1 原型业务帧定义。
+- `anymsg_frame.h`：anyMSG 40B 固定帧头、CID 地址段、type 和基础校验 helper。
+- `shared_memory_ipc.h`：v2 共享内存 IPC 公共 ABI，包含 Frame Pool、Descriptor Ring、Pending Bitmap 和 reclaim ring。
+- `unified_frame.h`：v1 原型业务帧定义，仅作历史参考。
 - `protocol_type.h`：协议类型枚举。
 - `error_code.h`：公共错误码。
 - `crc16.h` / `crc16.c`：CRC-16 基础工具。
 
-目标方向：
+边界要求：
 
-- 增加 `anyMSG` 公共定义和基础合法性校验。
-- 将共享内存 v2 的 Frame Pool、Descriptor Ring、Pending Bitmap、统计区等 ABI 固化到公共头文件。
 - 继续避免把具体物理协议业务代码放入 `common/`。
 
 ### C51 低功耗控制
@@ -358,15 +358,12 @@ CID 地址首字节用于区分设备或接口地址段：
 
 ## 共享内存 IPC 目标形态
 
-目标共享内存不再把完整业务帧塞进固定长度 slot，而是采用 `shared_memory_region_v2` 概念：
+目标共享内存不再把完整业务帧塞进固定长度 slot，而是采用 `put_shm_region_t` v2 ABI：
 
 ```text
-shared_memory_region_v2
+put_shm_region_t
 ├── region_header
-├── frame_pool
-│   ├── frame_buffer[0]
-│   ├── frame_buffer[1]
-│   └── ...
+├── frame_pool[64][512]
 ├── rx_rings
 │   ├── CAN_RX_RING
 │   ├── ETH_RX_RING
@@ -383,17 +380,20 @@ shared_memory_region_v2
 │   └── RS485_TX_RING
 ├── rx_pending_bitmap
 ├── tx_pending_bitmap
-└── stats / event area
+├── reclaim_pending
+├── reclaim_ring
+└── reserved
 ```
 
 核心组件：
 
-- **Frame Pool**：保存完整 `anyMSG` 字节。
-- **Descriptor Ring**：保存帧 ID、偏移、长度、来源接口、目标接口、CID、type、priority、TTL、epoch、CRC 和 flags 等元数据。
+- **Frame Pool**：保存完整 `anyMSG` 字节，当前冻结为 `64 * 512B`。
+- **Descriptor Ring**：保存帧 ID、偏移、长度、来源接口、目标接口、CID、type、priority、TTL、epoch、CRC 和 flags 等元数据，单 descriptor 固定 64B。
 - **Pending Bitmap**：表示哪些 RX/TX Ring 非空。
 - **Mailbox Doorbell**：只做跨核唤醒，不传输业务数据。
+- **Reclaim Ring**：小核消费或丢弃但不转发时通知 Linux 回收 Frame Pool。
 
-Frame Pool 资源由 Linux 分配和最终释放；小核只移动描述符、更新消费状态和写入调度结果。Ring 满时不覆盖旧描述符，必须丢弃新帧或按策略丢弃低优先级帧并记录统计。
+Frame Pool 资源由 Linux 分配和最终释放；小核只移动描述符、更新消费状态、写入调度结果或 reclaim descriptor。Ring 满时不覆盖旧描述符，必须丢弃新帧或按策略丢弃低优先级帧并记录统计。
 
 ### 物理接口适配器
 
@@ -420,7 +420,7 @@ typedef struct {
 
 ## v1 原型与目标架构关系
 
-当前代码和部分接口文档中仍保留 v1 原型：
+旧 v1 原型为：
 
 ```text
 Linux 协议适配层
@@ -432,19 +432,18 @@ Linux 协议适配层
 历史小核 CAN direct 输出路径
 ```
 
-该方案适合早期功能验证，但不是当前目标架构。主要限制是：
+该方案适合早期功能验证，但不是当前目标架构。当前主线已经迁移到 v2 共享内存 ABI。v1 主要限制是：
 
 - `unified_frame_t` 固定长度，无法表达完整 `anyMSG` 的可变 payload。
 - 固定 slot payload 无法承载更大的业务帧。
 - CAN direct 路径把小核绑定到具体物理出口，不符合六类接口统一路由边界。
 - 以 CAN 字段为中心的帧结构无法自然支持多接口之间的统一寻址和转发。
 
-迁移方向：
+主线关系：
 
 ```text
-v1: fixed slot payload + unified_frame_t
-  ↓
-v2: Frame Pool + Descriptor Ring + complete anyMSG
+历史原型: fixed slot payload + unified_frame_t
+当前主线: Frame Pool + Descriptor Ring + complete anyMSG
 ```
 
 ---
@@ -456,7 +455,7 @@ v2: Frame Pool + Descriptor Ring + complete anyMSG
 | 第一阶段 | 需求分析与总体设计 | 总体架构、anyMSG 帧定义、职责边界、文档体系 |
 | 第二阶段 | v1 原型和硬件验证 | 基础通信链路、共享内存 v1、CAN direct 原型、外设可用性确认 |
 | 第三阶段 | anyMSG 与接口适配层 | `anyMSG` 公共定义、六类物理接口适配器、分片重组策略 |
-| 第四阶段 | 共享内存 v2 | Frame Pool、Descriptor RX/TX Ring、Pending Bitmap、Mailbox Doorbell |
+| 第四阶段 | 共享内存 v2 | Frame Pool、Descriptor RX/TX Ring、Pending Bitmap、Mailbox Doorbell、reclaim ring |
 | 第五阶段 | 小核路由调度 | CID 路由、心跳消费、优先级队列、防饥饿调度、异常统计 |
 | 第六阶段 | Web 监控与整机集成 | 只读状态接口、前端展示、日志与事件、低功耗配套、样机封装 |
 

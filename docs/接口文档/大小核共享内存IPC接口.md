@@ -1,8 +1,8 @@
-# 大小核共享内存 IPC v1 ABI 冻结说明
+# 大小核共享内存 IPC v2 ABI 冻结说明
 
 ## 1. 文档定位
 
-本文冻结本项目 v1 阶段的大核 Linux 与小核 RTOS 共享内存 IPC 公共 ABI。
+本文冻结本项目目标架构的大核 Linux 与小核 FreeRTOS 共享内存 IPC v2 公共 ABI。
 
 正式小核固件目标目录为：
 
@@ -16,7 +16,7 @@ rtos_firmware/
 freertos/
 ```
 
-只作为历史参考实现和行为参考，不作为后续主开发目录。后续新增的小核固件工程、任务、BSP、共享内存适配和 CAN 驱动都应进入 `rtos_firmware/`。
+只作为历史参考实现和行为参考，不作为后续主开发目录。
 
 公共 ABI 头文件为：
 
@@ -24,46 +24,44 @@ freertos/
 common/include/shared_memory_ipc.h
 ```
 
-该头文件已从“占位接口”升级为 v1 ABI 定义，冻结共享内存区域、双向 SPSC ring、slot、heartbeat、status、event 和最小发送接口。
+v2 主线不再使用 `unified_frame_t + 128B slot + CAN direct`。旧 v1 方案仅作为历史原型参考。
 
 ---
 
 ## 2. 总体边界
 
-v1 主链路固定为：
+v2 主链路固定为：
 
 ```text
-外部协议输入
+Linux 接入层得到完整 anyMSG
     ↓
-linux_app 协议解析
+Linux 分配 Frame Pool block 并写入完整 anyMSG
     ↓
-frame_packer_pack()
+Linux 写对应物理接口 RX Descriptor Ring
     ↓
-unified_frame_t
+Linux 设置 rx_pending_bitmap 并按需 Mailbox Doorbell
     ↓
-ipc_to_rtos_send()
+rtos_firmware drain RX ring
     ↓
-Linux -> RTOS shared memory ring
+小核校验 anyMSG header / heartbeat / CID 路由 / priority / TTL
     ↓
-rtos_firmware IPC RX
+小核写目标物理接口 TX Descriptor Ring 或 reclaim ring
     ↓
-统一帧校验 / CAN message 适配
+Linux 出口层读取 TX descriptor 并真实发送
     ↓
-CAN TX Queue
-    ↓
-XL2515 / XL1050
+Linux 最终释放 Frame Pool block
 ```
 
 职责边界：
 
 | 模块 | 负责 | 不负责 |
 | ---- | ---- | ------ |
-| `linux_app` 协议层 | 外部协议解析、生成 `unified_frame_t` | 共享内存内部索引和 cache 操作 |
-| `ipc_to_rtos_send()` | 调用共享内存发送能力 | CAN 业务解析 |
-| 共享内存 IPC 层 | ring 写入/读取、cache 同步、doorbell 通知、错误返回 | 解释 CAN 业务语义 |
-| `rtos_firmware` IPC 层 | 从 ring 读取 payload、校验公共 ABI | 解析 4G/WiFi/蓝牙/RS485/以太网 |
-| `rtos_firmware` CAN 层 | 经典 CAN v1 转发、状态统计、fail-safe | 共享内存物理地址分配 |
-| Web 模块 | 读取 Linux 生成的 `/run/put/status/` 快照 | 直接访问共享内存或小核寄存器 |
+| Linux 接入层 | 真实物理接收、解包、分片重组、完整 anyMSG 写入 Frame Pool | 小核路由调度 |
+| 共享内存 IPC 层 | Frame Pool、Descriptor Ring、Pending Bitmap、cache 同步、Doorbell | 解释 anyMSG payload 业务语义 |
+| `rtos_firmware` IPC 层 | descriptor 搬运、CRC、Frame Pool 边界检查、pending 状态 | 物理接口收发 |
+| `rtos_firmware` 路由层 | anyMSG header 校验、心跳消费、CID 路由、priority/TTL 调度 | CAN/RS485/网络/蓝牙/4G 驱动 |
+| Linux 出口层 | 读取 TX descriptor、封包、分片、真实发送、释放 Frame Pool | 修改小核路由结果 |
+| Web 模块 | 读取 Linux 状态快照和日志 | 直接访问共享内存 |
 
 ---
 
@@ -71,212 +69,167 @@ XL2515 / XL1050
 
 ### 3.1 基本常量
 
-| 常量 | v1 值 | 说明 |
-| ---- | ----: | ---- |
-| `PUT_SHM_IPC_VERSION` | `1` | IPC ABI 版本 |
-| `PUT_SHM_PAYLOAD_MAX_LEN` | `128` | 单个 slot payload 最大长度 |
-| `PUT_SHM_SLOT_SIZE` | `256` | 单个 slot 固定大小 |
-| `PUT_SHM_L2R_DEPTH` | `32` | Linux -> RTOS ring 深度 |
-| `PUT_SHM_R2L_DEPTH` | `32` | RTOS -> Linux ring 深度 |
+| 常量 | v2 值 | 说明 |
+| ---- | ---: | ---- |
+| `PUT_SHM_IPC_VERSION` | `2` | IPC ABI 版本 |
 | `PUT_SHM_REGION_SIZE` | `64 KiB` | reserved-memory 总大小 |
 | `PUT_SHM_CACHE_LINE_SIZE` | `64` | cache line 对齐粒度 |
+| `PUT_SHM_INTERFACE_COUNT` | `6` | CAN / Ethernet / Wi-Fi / Bluetooth / 4G / RS485 |
+| `PUT_SHM_FRAME_POOL_BLOCK_COUNT` | `64` | Frame Pool block 数量 |
+| `PUT_SHM_FRAME_POOL_BLOCK_SIZE` | `512` | 单个完整 anyMSG 最大承载长度 |
+| `PUT_SHM_DESCRIPTOR_RING_DEPTH` | `8` | 每个 RX/TX descriptor ring 深度 |
+| `PUT_SHM_DESCRIPTOR_SIZE` | `64` | 单个 descriptor 固定长度 |
+| `PUT_SHM_RECLAIM_RING_DEPTH` | `8` | reclaim ring 深度 |
 
 共享内存物理地址不在 C 业务层硬编码，由 Linux DTS `reserved-memory` 与 `rtos_firmware` BSP/linker 配置共同提供。
 
-### 3.2 ring 模型
+### 3.2 共享内存区域
 
-v1 使用双向 SPSC ring：
+v2 region 由以下部分组成：
 
 ```text
-linux_to_rtos：Linux 单生产者，RTOS 单消费者
-rtos_to_linux：RTOS 单生产者，Linux 单消费者
+put_shm_region_t
+├── header
+├── frame_pool[64][512]
+├── rx_rings[6]
+├── tx_rings[6]
+├── rx_pending_bitmap
+├── tx_pending_bitmap
+├── reclaim_pending
+├── reclaim_ring
+└── reserved
+```
+
+接口顺序固定为：
+
+| ID | 接口 |
+| --: | ---- |
+| `0` | CAN |
+| `1` | Ethernet |
+| `2` | Wi-Fi |
+| `3` | Bluetooth |
+| `4` | 4G |
+| `5` | RS485 |
+
+### 3.3 descriptor ring
+
+每个物理接口有独立 RX ring 和 TX ring：
+
+```text
+xxx_RX_RING：Linux 单生产者，RTOS 单消费者
+xxx_TX_RING：RTOS 单生产者，Linux 单消费者
+reclaim_ring：RTOS 单生产者，Linux 单消费者
 ```
 
 索引规则：
-
-| 字段 | 写入方 | 说明 |
-| ---- | ------ | ---- |
-| `write_seq` | 生产者 | 单调递增写入序号 |
-| `read_seq` | 消费者 | 单调递增读取序号 |
-| `notify_count` | 生产者 | 成功触发 doorbell/mailbox 的计数 |
-| `notify_fail_count` | 生产者 | 消息已发布但 doorbell/mailbox 失败的计数 |
-
-状态判断：
 
 ```text
 empty: write_seq == read_seq
 full : write_seq - read_seq >= depth
 ```
 
-队列满时必须丢弃最新消息并递增 drop 计数，不允许覆盖旧 slot。
+ring 满时必须丢弃最新 descriptor 并递增 `drop_count`，不得覆盖旧 descriptor。
 
-### 3.3 slot 载荷
+### 3.4 descriptor 字段
 
-slot header 描述 payload 元数据：
-
-```text
-magic / version / header_size / sequence / epoch
-message_type / payload_length / payload_crc16 / flags
-```
-
-payload CRC 使用 `CRC-16/CCITT-FALSE`，只覆盖实际 payload 字节。`UNIFIED_FRAME` 消息中的 `unified_frame_t` 仍保留自身 CRC，两层 CRC 含义不同：
-
-| CRC | 覆盖范围 | 作用 |
-| --- | -------- | ---- |
-| slot `payload_crc16` | 共享内存 slot payload | 检查跨核搬运过程是否损坏 |
-| `unified_frame_t.crc16` | unified frame 前 94 字节 | 检查业务帧字段是否合法 |
-
----
-
-## 4. 消息类型
-
-| 类型 | 方向 | payload |
-| ---- | ---- | ------- |
-| `PUT_SHM_MESSAGE_TYPE_UNIFIED_FRAME` | Linux -> RTOS | `unified_frame_t` |
-| `PUT_SHM_MESSAGE_TYPE_HEARTBEAT` | Linux -> RTOS | `put_shm_heartbeat_payload_t` |
-| `PUT_SHM_MESSAGE_TYPE_HELLO` | Linux -> RTOS | `put_shm_heartbeat_payload_t` |
-| `PUT_SHM_MESSAGE_TYPE_READY` | RTOS -> Linux | `put_shm_heartbeat_payload_t` |
-| `PUT_SHM_MESSAGE_TYPE_CAN_RX` | RTOS -> Linux | `put_shm_can_rx_payload_t` |
-| `PUT_SHM_MESSAGE_TYPE_STATUS` | RTOS -> Linux | `put_shm_status_payload_t` |
-| `PUT_SHM_MESSAGE_TYPE_EVENT` | RTOS -> Linux | `put_shm_event_payload_t` |
-
-Linux -> RTOS 的业务消息 v1 固定使用 96 字节 `unified_frame_t`。`unified_frame_t` 当前保持不变：
-
-```text
-UNIFIED_FRAME_LENGTH = 96
-UNIFIED_FRAME_VERSION = 0x01
-UNIFIED_FRAME_CRC_INPUT_LENGTH = 94
-```
-
-RTOS -> Linux 的 CAN RX 回传不复用 `PUT_SHM_MESSAGE_TYPE_UNIFIED_FRAME`，而是固定使用 `PUT_SHM_MESSAGE_TYPE_CAN_RX`。该 payload 只描述小核从 CAN 总线收到的经典 CAN 报文：
+`put_shm_descriptor_t` 固定 64B，描述 Frame Pool 中的完整 anyMSG：
 
 | 字段 | 说明 |
 | ---- | ---- |
-| `sequence` | RTOS 侧递增的 CAN RX 回传序号 |
-| `timestamp_ms` | RTOS 接收 CAN 报文的时间戳 |
-| `can_id` | CAN 标准 ID 或扩展 ID |
-| `can_dlc` | CAN 数据字节数，v1 范围为 `0 ~ 8` |
-| `can_flags` | 采用 `unified_can_flag_t` 语义，v1 只允许 `UNIFIED_CAN_FLAG_NONE` 或 `UNIFIED_CAN_FLAG_EXTENDED_ID` |
-| `can_data` | 经典 CAN 数据区，长度为 8 字节 |
+| `frame_id` | Frame Pool block ID |
+| `frame_offset` | 完整 anyMSG 相对 Frame Pool 起点的偏移 |
+| `frame_length` | 完整 anyMSG 字节数，包含 40B header |
+| `source_interface` | 来源物理接口 |
+| `target_interface` | 目标物理接口 |
+| `source_cid` | anyMSG `source_cid` raw bytes |
+| `destination_cid` | anyMSG `destination_cid` raw bytes |
+| `type` | anyMSG payload type |
+| `priority` | 内部调度优先级，不写入 anyMSG 保留字段 |
+| `ttl` | 内部转发 TTL |
+| `epoch` | Linux 启动纪元 |
+| `flags` | descriptor 内部标志 |
+| `descriptor_crc16` | CRC-16/CCITT-FALSE，覆盖本字段之前的 descriptor 字节 |
 
-这样区分后，`PUT_SHM_MESSAGE_TYPE_UNIFIED_FRAME` 只表示 Linux -> RTOS 的业务下发帧，`PUT_SHM_MESSAGE_TYPE_CAN_RX` 只表示 RTOS -> Linux 的 CAN 总线接收回传。
+Frame Pool 当前采用固定 block 模型：`frame_offset` 必须等于 `frame_id * 512`，`frame_length` 必须在 `40 ~ 512` 范围内。
 
----
-
-## 5. cache / barrier / doorbell 顺序
-
-写入方顺序：
-
-```text
-写 slot header 和 payload
-    ↓
-flush slot cache
-    ↓
-memory barrier
-    ↓
-更新 write_seq
-    ↓
-flush producer cache line
-    ↓
-发送 doorbell / mailbox / cmdqu 通知
-```
-
-读取方顺序：
-
-```text
-invalidate producer cache line
-    ↓
-判断 write_seq != read_seq
-    ↓
-invalidate slot cache
-    ↓
-校验 magic/version/length/payload_crc16
-    ↓
-处理 payload
-    ↓
-更新 read_seq
-    ↓
-flush consumer cache line
-```
-
-doorbell 只表示“对应 ring 可能有新消息”，不承载业务 payload。通知丢失时，接收端必须可通过周期 drain 兜底；共享内存 ring 是唯一数据源。
-
-发送接口的成功判定以 `write_seq` 是否发布为准。若 slot 已写入并且 `write_seq` 已发布，后续 doorbell/mailbox/cmdqu 通知失败只递增 `notify_fail_count`，发送函数仍返回成功，避免调用方把“已入队消息”当作“未发送消息”重试并造成重复帧。
+接口一致性是 descriptor 格式校验的一部分：RX ring 出队时要求 `source_interface == ring.interface_id`，TX ring 出队时要求 `target_interface == ring.interface_id`。校验失败时消费坏 descriptor、递增 `format_error_count`，避免 ring 被坏元素永久卡住。
 
 ---
 
-## 6. heartbeat / rehandshake / fail-safe
+## 4. Pending Bitmap 与 Doorbell
 
-Linux 启动或重启时：
+`rx_pending_bitmap`、`tx_pending_bitmap` 和 `reclaim_pending` 分别独占一个 64B cache line。
 
-1. 递增 `linux_epoch`。
-2. 初始化共享内存 region 和两个 ring。
-3. 发送 `PUT_SHM_MESSAGE_TYPE_HELLO`。
-4. 等待 RTOS 回传 `PUT_SHM_MESSAGE_TYPE_READY`。
-5. 握手完成后才发送普通业务 `UNIFIED_FRAME`。
+规则：
 
-RTOS 发现新的 `linux_epoch` 或收到 `HELLO` 后：
+1. 生产者写 descriptor 前判断 ring 是否为空。
+2. 生产者写 descriptor，flush descriptor。
+3. 执行 memory barrier。
+4. 更新 `write_seq`，flush producer line。
+5. 通过平台原子 OR 设置对应 pending bit。
+6. 只有 ring 从 empty 变为 non-empty 时发送 Doorbell。
+7. Doorbell 失败发生在 `write_seq` 发布后时，发送函数仍返回成功，只递增 `notify_fail_count`。
 
-1. 丢弃旧 Linux epoch 下的未发送业务帧。
-2. 清空 CAN TX Queue。
-3. 重新进入握手流程。
-4. READY 前拒绝普通业务帧。
+pending bitmap 的 `bits` 是多个接口共享的 RMW 字段，设置和清除必须通过平台 atomic bit operation 完成，不能通过整条 cache line 的普通读改写再 flush 发布。`set_count`、`clear_count` 等诊断计数也必须使用平台原子 ADD 更新，避免和 `bits` 处于同一 cache line 时覆盖并发写入。
 
-Linux heartbeat 超过 `RTOS_LINUX_HEARTBEAT_TIMEOUT_MS` 后，RTOS 必须进入 fail-safe offline：
+消费者准备清 pending bit 时必须先确认当前 ring 为空；执行 atomic clear 后还必须重新读取 `producer.write_seq`。如果发现 `read_seq != latest_write_seq`，说明同接口生产者在清除窗口内发布了新 descriptor，消费者必须立刻通过 atomic OR 把对应 pending bit 置回。
 
-```text
-禁止 CAN TX
-清空 CAN TX Queue
-abort XL2515 TX buffer
-切换 Listen-Only
-保留 CAN RX、STATUS、EVENT 回传能力
-```
+Doorbell 只表示“对应 ring 可能有新 descriptor”，不承载业务 payload。Doorbell 丢失时，接收方必须通过周期 drain 兜底；ring 与 pending bitmap 是唯一可信数据状态。
 
 ---
 
-## 7. CAN 层边界
+## 5. Frame Pool 回收
 
-v1 冻结为经典 CAN：
+Linux 负责 Frame Pool 分配和最终释放。RTOS 不清零 payload、不释放 block，只通过 reclaim ring 通知 Linux 某个 block 可回收。
 
-| 项目 | v1 规则 |
-| ---- | ------- |
-| 标准帧 ID | `0x000 ~ 0x7FF` |
-| 扩展帧 ID | `0x00000000 ~ 0x1FFFFFFF` |
-| DLC | `0 ~ 8` |
-| 支持 flag | 标准帧、扩展帧 |
-| 暂不支持 | CAN FD、BRS、RTR |
+RTOS 必须写 reclaim descriptor 的典型场景：
 
-如果 `unified_frame_t` 中带有 CAN FD、BRS 或 RTR 等 v1 不支持 flag，`rtos_firmware` parser/adapter 必须拒绝该帧并上报统计，不得发送到 CAN 总线。
+| 场景 | 回收原因 |
+| ---- | -------- |
+| 端到网关心跳被小核消费 | `PUT_SHM_RECLAIM_REASON_HEARTBEAT_CONSUMED` |
+| 无路由 | `PUT_SHM_RECLAIM_REASON_NO_ROUTE` |
+| TTL 过期 | `PUT_SHM_RECLAIM_REASON_TTL_EXPIRED` |
+| epoch 不匹配 | `PUT_SHM_RECLAIM_REASON_EPOCH_MISMATCH` |
+| anyMSG 基础校验失败 | `PUT_SHM_RECLAIM_REASON_INVALID_FRAME` |
+| 本地队列或目标 ring 满 | `PUT_SHM_RECLAIM_REASON_QUEUE_FULL` |
 
 ---
 
-## 8. 错误码
+## 6. RTOS IPC API
 
-IPC 专用错误码已经加入：
+`rtos_firmware/ipc/rtos_shm_ipc.h` 提供 v2 descriptor API：
+
+| API | 说明 |
+| ---- | ---- |
+| `rtos_shm_ipc_format_region()` | 初始化 v2 region、Frame Pool、12 个 RX/TX ring、pending bitmap 和 reclaim ring |
+| `rtos_shm_ipc_attach()` | 校验并绑定 v2 region |
+| `rtos_shm_ipc_dequeue_rx_descriptor()` | 小核从指定接口 RX ring 取 descriptor |
+| `rtos_shm_ipc_enqueue_tx_descriptor()` | 小核向指定接口 TX ring 写 descriptor |
+| `rtos_shm_ipc_reclaim_frame()` | 小核写 reclaim descriptor |
+| `rtos_shm_ipc_get_frame_const()` | 小核根据 descriptor 获取只读完整 anyMSG 指针 |
+| `rtos_shm_descriptor_ring_enqueue()` | descriptor ring 通用入队 helper |
+| `rtos_shm_descriptor_ring_dequeue()` | descriptor ring 通用出队 helper |
+
+IPC 层只校验共享内存 ABI、descriptor CRC、Frame Pool 边界和接口 ID，不解析 Modbus、CANopen、UDS、J1939 等 payload 语义。
+
+---
+
+## 7. 错误码
+
+IPC 专用错误码：
 
 | 错误码 | 含义 |
 | ------ | ---- |
 | `UNIFIED_ERR_IPC_QUEUE_EMPTY` | ring 为空 |
 | `UNIFIED_ERR_IPC_QUEUE_FULL` | ring 已满 |
-| `UNIFIED_ERR_IPC_NOT_READY` | IPC 未初始化或未就绪 |
-| `UNIFIED_ERR_IPC_NOTIFY_FAILED` | doorbell/mailbox/cmdqu 通知失败 |
-| `UNIFIED_ERR_IPC_OFFLINE` | 对端离线或 fail-safe 状态下拒绝业务帧 |
+| `UNIFIED_ERR_IPC_NOT_READY` | IPC 未初始化或平台操作未就绪 |
+| `UNIFIED_ERR_IPC_NOTIFY_FAILED` | 底层 Doorbell 通知动作失败 |
+| `UNIFIED_ERR_IPC_OFFLINE` | 对端离线或 fail-safe 状态下拒绝业务 |
 
-现有错误码数值保持不变，IPC 错误码独立放在 `-30` 区间。
-
-`UNIFIED_ERR_IPC_NOTIFY_FAILED` 表示底层通知动作失败；对 ring 发送 API 而言，如果失败发生在 `write_seq` 发布之后，该消息已经成为可见数据，API 不应返回该错误给可重试发送调用方，只应记录 `notify_fail_count` 并依赖接收端周期 drain 兜底。
+`UNIFIED_ERR_IPC_NOTIFY_FAILED` 不作为 descriptor 已发布后的可重试发送失败返回；发送方记录 `notify_fail_count`，接收方依赖 pending bitmap 和周期 drain 兜底。
 
 ---
 
-## 9. 本阶段不实现的内容
+## 8. v1 历史原型
 
-第一步只冻结架构与接口，不实现以下内容：
-
-- 不创建完整 `rtos_firmware/` 工程骨架。
-- 不替换 `linux_app/ipc/ipc_to_rtos.c` 的 stdout stub。
-- 不实现共享内存 ring enqueue/dequeue。
-- 不接入 `/dev/cvi-rtos-cmdqu`、mailbox 或硬件 doorbell。
-- 不实现 cache flush / invalidate 平台函数。
-- 不修改 `freertos/` 目录下的参考实现。
-
-这些内容进入后续步骤完成。
+旧 v1 `unified_frame_t + 128B slot + CAN direct` 路径仅作为历史原型。后续主开发不得继续以 `PUT_SHM_MESSAGE_TYPE_*`、固定 128B payload 或小核 CAN direct 作为主链路设计依据。

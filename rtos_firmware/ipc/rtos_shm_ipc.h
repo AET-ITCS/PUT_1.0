@@ -1,6 +1,6 @@
 /**
  * @file rtos_shm_ipc.h
- * @brief rtos_firmware 共享内存 IPC ring 搬运接口。
+ * @brief rtos_firmware 共享内存 IPC v2 descriptor 搬运接口。
  * @author Yukikaze
  */
 #ifndef RTOS_SHM_IPC_H
@@ -18,27 +18,16 @@ extern "C" {
 #endif
 
 /**
- * @brief 从共享内存 slot 取出的 opaque 消息。
- */
-typedef struct {
-    uint16_t message_type;                     /**< 消息类型，取值见 put_shm_message_type_t。 */
-    uint32_t sequence;                         /**< slot 序号。 */
-    uint32_t epoch;                            /**< 发送方启动纪元。 */
-    uint16_t payload_length;                   /**< payload 实际长度。 */
-    uint8_t payload[PUT_SHM_PAYLOAD_MAX_LEN];  /**< opaque payload，IPC 层不解释内容。 */
-} rtos_shm_message_t;
-
-/**
  * @brief rtos_firmware 共享内存 IPC 上下文。
  */
 typedef struct {
-    put_shm_region_t *region;             /**< 绑定的共享内存区域。 */
+    put_shm_region_t *region;             /**< 绑定的共享内存 v2 region。 */
     rtos_shm_platform_ops_t platform_ops; /**< 当前使用的平台操作集合。 */
     bool initialized;                     /**< 是否已成功 attach。 */
 } rtos_shm_ipc_t;
 
 /**
- * @brief 初始化共享内存 region 和两个 ring。
+ * @brief 初始化共享内存 v2 region。
  *
  * @param region 共享内存区域指针。
  * @param linux_epoch Linux 启动纪元。
@@ -50,7 +39,7 @@ unified_error_t rtos_shm_ipc_format_region(put_shm_region_t *region,
                                            uint32_t rtos_epoch);
 
 /**
- * @brief 绑定并校验共享内存 IPC region。
+ * @brief 绑定并校验共享内存 IPC v2 region。
  *
  * @param ipc IPC 上下文。
  * @param region 共享内存区域指针。
@@ -62,60 +51,92 @@ unified_error_t rtos_shm_ipc_attach(rtos_shm_ipc_t *ipc,
                                     const rtos_shm_platform_ops_t *ops);
 
 /**
- * @brief 从 Linux -> RTOS ring 接收一个 opaque payload。
+ * @brief 从指定物理接口 RX ring 读取一个 descriptor。
  *
  * @param ipc IPC 上下文。
- * @param out_message 输出消息。
+ * @param interface_id 物理接口 ID，取值见 put_shm_interface_t。
+ * @param out_descriptor 输出 descriptor。
  * @return UNIFIED_OK 表示成功，否则返回公共错误码。
  */
-unified_error_t rtos_shm_ipc_receive_from_linux(rtos_shm_ipc_t *ipc,
-                                                rtos_shm_message_t *out_message);
+unified_error_t rtos_shm_ipc_dequeue_rx_descriptor(rtos_shm_ipc_t *ipc,
+                                                   put_shm_interface_t interface_id,
+                                                   put_shm_descriptor_t *out_descriptor);
 
 /**
- * @brief 向 RTOS -> Linux ring 发送一个 opaque payload。
+ * @brief 向指定物理接口 TX ring 写入一个 descriptor。
  *
  * @param ipc IPC 上下文。
- * @param message_type 消息类型。
- * @param payload payload 字节指针；payload_length 为 0 时可为 NULL。
- * @param payload_length payload 长度。
- * @param epoch 发送方启动纪元。
+ * @param interface_id 目标物理接口 ID，取值见 put_shm_interface_t。
+ * @param descriptor 待写入 descriptor。
  * @return UNIFIED_OK 表示成功，否则返回公共错误码。
  */
-unified_error_t rtos_shm_ipc_send_to_linux(rtos_shm_ipc_t *ipc,
-                                           uint16_t message_type,
-                                           const uint8_t *payload,
-                                           uint16_t payload_length,
-                                           uint32_t epoch);
+unified_error_t rtos_shm_ipc_enqueue_tx_descriptor(rtos_shm_ipc_t *ipc,
+                                                   put_shm_interface_t interface_id,
+                                                   const put_shm_descriptor_t *descriptor);
 
 /**
- * @brief 向指定 SPSC ring 写入一个 opaque payload。
+ * @brief 写入 Frame Pool 回收 descriptor。
  *
- * @param ring ring 指针。
- * @param message_type 消息类型。
- * @param payload payload 字节指针；payload_length 为 0 时可为 NULL。
- * @param payload_length payload 长度。
- * @param epoch 发送方启动纪元。
+ * @param ipc IPC 上下文。
+ * @param frame_id 需要 Linux 回收的 Frame Pool block ID。
+ * @param reason 回收原因。
+ * @param source_interface 原始来源物理接口。
+ * @param target_interface 原始目标物理接口。
+ * @param epoch Linux 启动纪元。
+ * @param flags 附加标志。
+ * @return UNIFIED_OK 表示成功，否则返回公共错误码。
+ */
+unified_error_t rtos_shm_ipc_reclaim_frame(rtos_shm_ipc_t *ipc,
+                                           uint32_t frame_id,
+                                           put_shm_reclaim_reason_t reason,
+                                           put_shm_interface_t source_interface,
+                                           put_shm_interface_t target_interface,
+                                           uint32_t epoch,
+                                           uint32_t flags);
+
+/**
+ * @brief 根据 descriptor 获取 Frame Pool 中的只读完整 anyMSG。
+ *
+ * @param ipc IPC 上下文。
+ * @param descriptor descriptor 指针。
+ * @param out_frame 输出完整 anyMSG 起始地址。
+ * @param out_frame_length 输出完整 anyMSG 字节数。
+ * @return UNIFIED_OK 表示成功，否则返回公共错误码。
+ */
+unified_error_t rtos_shm_ipc_get_frame_const(const rtos_shm_ipc_t *ipc,
+                                             const put_shm_descriptor_t *descriptor,
+                                             const uint8_t **out_frame,
+                                             uint16_t *out_frame_length);
+
+/**
+ * @brief 向 descriptor ring 写入一个 descriptor。
+ *
+ * @param ring descriptor ring 指针。
+ * @param pending_line pending bitmap 控制行。
+ * @param descriptor 待写入 descriptor。
+ * @param notify_direction doorbell 通知方向。
  * @param ops 平台操作集合；NULL 时使用默认 no-op 平台操作。
  * @return UNIFIED_OK 表示成功，否则返回公共错误码。
  */
-unified_error_t rtos_shm_ring_enqueue(put_shm_ring_t *ring,
-                                      uint16_t message_type,
-                                      const uint8_t *payload,
-                                      uint16_t payload_length,
-                                      uint32_t epoch,
-                                      const rtos_shm_platform_ops_t *ops);
+unified_error_t rtos_shm_descriptor_ring_enqueue(put_shm_descriptor_ring_t *ring,
+                                                 put_shm_pending_line_t *pending_line,
+                                                 const put_shm_descriptor_t *descriptor,
+                                                 put_shm_direction_t notify_direction,
+                                                 const rtos_shm_platform_ops_t *ops);
 
 /**
- * @brief 从指定 SPSC ring 读取一个 opaque payload。
+ * @brief 从 descriptor ring 读取一个 descriptor。
  *
- * @param ring ring 指针。
- * @param out_message 输出消息。
+ * @param ring descriptor ring 指针。
+ * @param pending_line pending bitmap 控制行。
+ * @param out_descriptor 输出 descriptor。
  * @param ops 平台操作集合；NULL 时使用默认 no-op 平台操作。
  * @return UNIFIED_OK 表示成功，否则返回公共错误码。
  */
-unified_error_t rtos_shm_ring_dequeue(put_shm_ring_t *ring,
-                                      rtos_shm_message_t *out_message,
-                                      const rtos_shm_platform_ops_t *ops);
+unified_error_t rtos_shm_descriptor_ring_dequeue(put_shm_descriptor_ring_t *ring,
+                                                 put_shm_pending_line_t *pending_line,
+                                                 put_shm_descriptor_t *out_descriptor,
+                                                 const rtos_shm_platform_ops_t *ops);
 
 #ifdef __cplusplus
 }
