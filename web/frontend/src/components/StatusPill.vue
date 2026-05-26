@@ -20,10 +20,9 @@ const normalized = computed(() => {
 const label = computed(() => normalized.value)
 
 const toneClass = computed(() => {
-  if (['ok', 'online', 'normal', 'up', 'true'].includes(normalized.value)) return 'good'
+  if (['ok', 'online', 'normal', 'up', 'true', 'present'].includes(normalized.value)) return 'good'
   if (['warn', 'warning', 'stale'].includes(normalized.value)) return 'warn'
-  if (['error', 'offline', 'down', 'bus-off', 'false'].includes(normalized.value)) return 'bad'
+  if (['error', 'offline', 'down', 'bus-off', 'false', 'missing', 'absent'].includes(normalized.value)) return 'bad'
   return 'muted'
 })
 </script>
-

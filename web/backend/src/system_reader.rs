@@ -2,6 +2,7 @@ use std::{
     collections::HashMap,
     ffi::CString,
     fs,
+    io::ErrorKind,
     os::unix::ffi::OsStrExt,
     path::{Path, PathBuf},
 };
@@ -15,6 +16,7 @@ pub struct ResourcesResponse {
     pub uptime: UptimeInfo,
     pub disks: Vec<DiskInfo>,
     pub networks: Vec<NetworkInfo>,
+    pub devices: Vec<DeviceNodeInfo>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -56,6 +58,16 @@ pub struct NetworkInfo {
     pub tx_bytes: u64,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct DeviceNodeInfo {
+    pub key: String,
+    pub label: String,
+    pub state: String,
+    pub present: Option<bool>,
+    pub checked_paths: Vec<String>,
+    pub matched_paths: Vec<String>,
+}
+
 pub fn read_resources() -> ResourcesResponse {
     ResourcesResponse {
         cpu: read_cpu(),
@@ -63,6 +75,7 @@ pub fn read_resources() -> ResourcesResponse {
         uptime: read_uptime(),
         disks: read_disks(),
         networks: read_networks(),
+        devices: read_device_nodes(),
     }
 }
 
@@ -135,6 +148,244 @@ fn read_networks() -> Vec<NetworkInfo> {
         .ok()
         .map(|text| parse_networks(&text, &states))
         .unwrap_or_default()
+}
+
+fn read_device_nodes() -> Vec<DeviceNodeInfo> {
+    read_device_nodes_from_roots(Path::new("/dev"), Path::new("/sys"), "/dev", "/sys")
+}
+
+fn read_device_nodes_from_roots(
+    dev_root: &Path,
+    sys_root: &Path,
+    dev_label: &str,
+    sys_label: &str,
+) -> Vec<DeviceNodeInfo> {
+    vec![
+        probe_can_device(dev_root, sys_root, dev_label, sys_label),
+        probe_ethernet_device(sys_root, sys_label),
+        probe_wifi_device(sys_root, sys_label),
+        probe_bluetooth_device(dev_root, sys_root, dev_label, sys_label),
+        probe_cellular_device(dev_root, sys_root, dev_label, sys_label),
+        probe_rs485_device(dev_root, dev_label),
+        probe_usb_device(dev_root, sys_root, dev_label, sys_label),
+    ]
+}
+
+fn probe_can_device(
+    dev_root: &Path,
+    sys_root: &Path,
+    dev_label: &str,
+    sys_label: &str,
+) -> DeviceNodeInfo {
+    let mut probe = DeviceProbe::new("can", "CAN");
+    probe.check_dir_prefix(sys_root, sys_label, "class/net", &["can"]);
+    probe.check_exact(dev_root, dev_label, "can0");
+    probe.finish()
+}
+
+fn probe_ethernet_device(sys_root: &Path, sys_label: &str) -> DeviceNodeInfo {
+    let mut probe = DeviceProbe::new("ethernet", "Ethernet");
+    probe.check_dir_prefix(sys_root, sys_label, "class/net", &["eth", "en"]);
+    probe.finish()
+}
+
+fn probe_wifi_device(sys_root: &Path, sys_label: &str) -> DeviceNodeInfo {
+    let mut probe = DeviceProbe::new("wifi", "Wi-Fi");
+    probe.check_dir_prefix(sys_root, sys_label, "class/net", &["wlan", "wl"]);
+    probe.check_wifi_metadata(sys_root, sys_label, "class/net");
+    probe.finish()
+}
+
+fn probe_bluetooth_device(
+    dev_root: &Path,
+    sys_root: &Path,
+    dev_label: &str,
+    sys_label: &str,
+) -> DeviceNodeInfo {
+    let mut probe = DeviceProbe::new("bluetooth", "Bluetooth");
+    probe.check_dir_any(sys_root, sys_label, "class/bluetooth");
+    probe.check_exact(dev_root, dev_label, "rfkill");
+    probe.finish()
+}
+
+fn probe_cellular_device(
+    dev_root: &Path,
+    sys_root: &Path,
+    dev_label: &str,
+    sys_label: &str,
+) -> DeviceNodeInfo {
+    let mut probe = DeviceProbe::new("4g", "4G / Cellular");
+    probe.check_dir_prefix(sys_root, sys_label, "class/net", &["wwan", "usb", "ppp"]);
+    probe.check_dir_prefix(dev_root, dev_label, "", &["cdc-wdm", "ttyUSB", "ttyACM"]);
+    probe.finish()
+}
+
+fn probe_rs485_device(dev_root: &Path, dev_label: &str) -> DeviceNodeInfo {
+    let mut probe = DeviceProbe::new("rs485", "RS485 / Serial");
+    probe.check_dir_prefix(
+        dev_root,
+        dev_label,
+        "",
+        &["ttyRS485", "ttyS", "ttyAMA", "ttyUSB", "ttyACM"],
+    );
+    probe.finish()
+}
+
+fn probe_usb_device(
+    dev_root: &Path,
+    sys_root: &Path,
+    dev_label: &str,
+    sys_label: &str,
+) -> DeviceNodeInfo {
+    let mut probe = DeviceProbe::new("usb", "USB");
+    probe.check_exact(dev_root, dev_label, "bus/usb");
+    probe.check_dir_any(sys_root, sys_label, "bus/usb/devices");
+    probe.finish()
+}
+
+struct DeviceProbe {
+    key: &'static str,
+    label: &'static str,
+    checked_paths: Vec<String>,
+    matched_paths: Vec<String>,
+    read_failed: bool,
+}
+
+impl DeviceProbe {
+    fn new(key: &'static str, label: &'static str) -> Self {
+        Self {
+            key,
+            label,
+            checked_paths: Vec::new(),
+            matched_paths: Vec::new(),
+            read_failed: false,
+        }
+    }
+
+    fn check_exact(&mut self, root: &Path, root_label: &str, relative: &str) {
+        let path = path_join(root, relative);
+        let display = display_path(root_label, relative);
+        self.checked_paths.push(display.clone());
+        match path.try_exists() {
+            Ok(true) => self.matched_paths.push(display),
+            Ok(false) => {}
+            Err(_) => self.read_failed = true,
+        }
+    }
+
+    fn check_dir_prefix(
+        &mut self,
+        root: &Path,
+        root_label: &str,
+        relative: &str,
+        prefixes: &[&str],
+    ) {
+        let base = display_path(root_label, relative);
+        self.checked_paths.extend(
+            prefixes
+                .iter()
+                .map(|prefix| format!("{base}/{}*", prefix.trim_start_matches('/'))),
+        );
+        self.read_dir_entries(root, root_label, relative, |entry_name, _entry_path| {
+            prefixes.iter().any(|prefix| entry_name.starts_with(prefix))
+        });
+    }
+
+    fn check_dir_any(&mut self, root: &Path, root_label: &str, relative: &str) {
+        self.checked_paths.push(display_path(root_label, relative));
+        self.read_dir_entries(root, root_label, relative, |_entry_name, _entry_path| true);
+    }
+
+    fn check_wifi_metadata(&mut self, root: &Path, root_label: &str, relative: &str) {
+        self.checked_paths
+            .push(format!("{}/{}/*/wireless", root_label, relative));
+        self.read_dir_entries(root, root_label, relative, |_entry_name, entry_path| {
+            entry_path.join("wireless").exists()
+        });
+    }
+
+    fn read_dir_entries<F>(
+        &mut self,
+        root: &Path,
+        root_label: &str,
+        relative: &str,
+        mut matches_entry: F,
+    ) where
+        F: FnMut(&str, &Path) -> bool,
+    {
+        let dir = path_join(root, relative);
+        let entries = match fs::read_dir(&dir) {
+            Ok(entries) => entries,
+            Err(err) if err.kind() == ErrorKind::NotFound => return,
+            Err(_) => {
+                self.read_failed = true;
+                return;
+            }
+        };
+
+        for entry in entries {
+            let Ok(entry) = entry else {
+                self.read_failed = true;
+                continue;
+            };
+            let entry_name = entry.file_name().to_string_lossy().to_string();
+            let entry_path = entry.path();
+            if matches_entry(&entry_name, &entry_path) {
+                let relative_path = entry_path
+                    .strip_prefix(root)
+                    .unwrap_or(entry_path.as_path())
+                    .to_string_lossy();
+                self.matched_paths
+                    .push(display_path(root_label, relative_path.as_ref()));
+            }
+        }
+    }
+
+    fn finish(self) -> DeviceNodeInfo {
+        let present = if self.matched_paths.is_empty() {
+            if self.read_failed {
+                None
+            } else {
+                Some(false)
+            }
+        } else {
+            Some(true)
+        };
+        let state = match present {
+            Some(true) => "present",
+            Some(false) => "missing",
+            None => "unknown",
+        };
+
+        DeviceNodeInfo {
+            key: self.key.to_string(),
+            label: self.label.to_string(),
+            state: state.to_string(),
+            present,
+            checked_paths: self.checked_paths,
+            matched_paths: self.matched_paths,
+        }
+    }
+}
+
+fn path_join(root: &Path, relative: &str) -> PathBuf {
+    if relative.is_empty() {
+        root.to_path_buf()
+    } else {
+        root.join(relative)
+    }
+}
+
+fn display_path(root_label: &str, relative: &str) -> String {
+    if relative.is_empty() {
+        root_label.to_string()
+    } else {
+        format!(
+            "{}/{}",
+            root_label.trim_end_matches('/'),
+            relative.trim_start_matches('/')
+        )
+    }
 }
 
 fn parse_cpu_usage(text: &str) -> Option<f64> {
@@ -295,7 +546,7 @@ fn round2(value: f64) -> f64 {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    use std::{collections::HashMap, fs};
 
     use super::*;
 
@@ -327,5 +578,48 @@ mod tests {
         assert_eq!(networks[0].rx_bytes, 123);
         assert_eq!(networks[0].tx_bytes, 456);
         assert_eq!(networks[0].state, "up");
+    }
+
+    #[test]
+    fn probes_key_device_nodes_from_dev_and_sys() {
+        let dir = tempfile::tempdir().unwrap();
+        let dev = dir.path().join("dev");
+        let sys = dir.path().join("sys");
+        fs::create_dir_all(sys.join("class/net/can0")).unwrap();
+        fs::create_dir_all(sys.join("class/net/eth0")).unwrap();
+        fs::create_dir_all(sys.join("class/net/wlan0/wireless")).unwrap();
+        fs::create_dir_all(sys.join("class/bluetooth/hci0")).unwrap();
+        fs::create_dir_all(sys.join("bus/usb/devices/1-1")).unwrap();
+        fs::create_dir_all(dev.join("bus/usb")).unwrap();
+        fs::write(dev.join("ttyS1"), "").unwrap();
+        fs::write(dev.join("cdc-wdm0"), "").unwrap();
+
+        let devices = read_device_nodes_from_roots(&dev, &sys, "/dev", "/sys");
+
+        for key in ["can", "ethernet", "wifi", "bluetooth", "4g", "rs485", "usb"] {
+            let device = devices.iter().find(|device| device.key == key).unwrap();
+            assert_eq!(device.state, "present");
+            assert_eq!(device.present, Some(true));
+            assert!(!device.matched_paths.is_empty());
+        }
+    }
+
+    #[test]
+    fn device_probe_marks_read_failures_unknown() {
+        let dir = tempfile::tempdir().unwrap();
+        let dev = dir.path().join("dev");
+        let sys = dir.path().join("sys");
+        fs::create_dir_all(&dev).unwrap();
+        fs::create_dir_all(sys.join("class")).unwrap();
+        fs::write(sys.join("class/net"), "not a directory").unwrap();
+
+        let devices = read_device_nodes_from_roots(&dev, &sys, "/dev", "/sys");
+        let ethernet = devices
+            .iter()
+            .find(|device| device.key == "ethernet")
+            .unwrap();
+
+        assert_eq!(ethernet.state, "unknown");
+        assert_eq!(ethernet.present, None);
     }
 }

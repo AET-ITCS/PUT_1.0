@@ -151,7 +151,7 @@
         </div>
         <div v-if="modules?.modules.length" class="data-table module-table">
           <div class="table-row table-head">
-            <span>接口</span><span>状态</span><span>RX 字节</span><span>TX 字节</span><span>RX 帧</span><span>TX 帧</span><span>分片/重组</span><span>CRC/发送</span><span>最近收发</span><span>最近错误</span>
+            <span>接口</span><span>状态</span><span>RX 字节</span><span>TX 字节</span><span>RX 帧</span><span>TX 帧</span><span>解包错误</span><span>接口离线</span><span>分片/重组</span><span>CRC/发送</span><span>最近收发</span><span>最近错误</span>
           </div>
           <div v-for="module in modules.modules" :key="module.name" class="table-row">
             <strong>{{ moduleLabel(module.name) }}</strong>
@@ -160,6 +160,8 @@
             <span>{{ bytes(module.tx_bytes) }}</span>
             <span>{{ number(module.rx_frames) }}</span>
             <span>{{ number(module.tx_frames) }}</span>
+            <span>{{ number(module.decode_error_count) }}</span>
+            <span>{{ number(module.interface_offline_count) }}</span>
             <span>{{ number(module.fragment_drop_count) }} / {{ number(module.reassemble_timeout_count) }}</span>
             <span>{{ number(module.crc_error_count) }} / {{ number(module.send_fail_count) }}</span>
             <span>{{ lastIoText(module) }}</span>
@@ -208,6 +210,18 @@
             <StatusPill :value="net.state" />
             <span>{{ bytes(net.rx_bytes) }}</span>
             <span>{{ bytes(net.tx_bytes) }}</span>
+          </div>
+        </div>
+        <p v-else class="empty-text">unknown</p>
+
+        <div class="section-heading"><h2>设备节点</h2></div>
+        <div v-if="resources?.devices?.length" class="data-table device-table">
+          <div class="table-row table-head"><span>设备</span><span>状态</span><span>匹配路径</span><span>探测路径</span></div>
+          <div v-for="device in resources?.devices || []" :key="device.key" class="table-row">
+            <strong>{{ device.label }}</strong>
+            <StatusPill :value="device.state" />
+            <code>{{ pathList(device.matched_paths) }}</code>
+            <code>{{ pathList(device.checked_paths) }}</code>
           </div>
         </div>
         <p v-else class="empty-text">unknown</p>
@@ -706,6 +720,10 @@ function moduleLabel(name: string) {
 
 function lastIoText(module: ModuleStatus) {
   return `rx ${ms(module.last_rx_ms)} / tx ${ms(module.last_tx_ms)}`
+}
+
+function pathList(paths?: string[]) {
+  return paths?.length ? paths.join(', ') : 'none'
 }
 
 function number(value?: number | null) {

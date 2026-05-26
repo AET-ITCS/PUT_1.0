@@ -289,8 +289,19 @@ button {
 }
 
 .module-table .table-row {
-  grid-template-columns: 1fr 0.9fr 1fr 1fr 0.8fr 0.8fr 1fr 1fr 1.5fr 1.3fr;
-  min-width: 1180px;
+  grid-template-columns: 1fr 0.9fr 1fr 1fr 0.8fr 0.8fr 0.9fr 0.9fr 1fr 1fr 1.5fr 1.3fr;
+  min-width: 1380px;
+}
+
+.device-table .table-row {
+  grid-template-columns: 1fr 0.9fr minmax(220px, 1.5fr) minmax(280px, 2fr);
+  min-width: 880px;
+}
+
+.device-table code {
+  color: #263329;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .ring-table .table-row,

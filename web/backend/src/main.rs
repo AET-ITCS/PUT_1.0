@@ -5,7 +5,13 @@ mod log_reader;
 mod status_snapshot;
 mod system_reader;
 
-use std::{net::SocketAddr, path::PathBuf, sync::Arc};
+use std::{
+    fs::{self, OpenOptions},
+    io::{self, Write},
+    net::SocketAddr,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use axum::{
     http::StatusCode,
@@ -19,7 +25,7 @@ use tower_http::{
     trace::TraceLayer,
 };
 use tracing::{info, warn};
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use tracing_subscriber::{fmt::MakeWriter, layer::SubscriberExt, util::SubscriberInitExt};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -28,8 +34,6 @@ pub struct AppState {
 
 #[tokio::main]
 async fn main() {
-    init_tracing();
-
     let config_path = parse_config_arg();
     let config = match AppConfig::load_optional(config_path.as_deref()) {
         Ok(config) => config,
@@ -38,6 +42,8 @@ async fn main() {
             std::process::exit(2);
         }
     };
+
+    init_tracing(&config.log_dir);
 
     let bind_addr: SocketAddr = match config.bind_addr.parse() {
         Ok(addr) => addr,
@@ -84,13 +90,78 @@ async fn static_missing() -> Response {
         .into_response()
 }
 
-fn init_tracing() {
+fn init_tracing(log_dir: &Path) {
+    let log_path = log_dir.join("web.log");
+    if let Some(parent) = log_path.parent() {
+        if let Err(err) = fs::create_dir_all(parent) {
+            eprintln!(
+                "failed to create log directory '{}': {err}",
+                parent.display()
+            );
+        }
+    }
+
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| "put_webd=info,tower_http=info".into());
+    let stdout_layer = tracing_subscriber::fmt::layer();
+    let file_layer = tracing_subscriber::fmt::layer()
+        .with_ansi(false)
+        .with_writer(FileLogWriter::new(log_path));
+
     tracing_subscriber::registry()
         .with(filter)
-        .with(tracing_subscriber::fmt::layer())
+        .with(stdout_layer)
+        .with(file_layer)
         .init();
+}
+
+#[derive(Clone)]
+struct FileLogWriter {
+    path: Arc<PathBuf>,
+}
+
+impl FileLogWriter {
+    fn new(path: PathBuf) -> Self {
+        Self {
+            path: Arc::new(path),
+        }
+    }
+}
+
+impl<'a> MakeWriter<'a> for FileLogWriter {
+    type Writer = FileLogGuard;
+
+    fn make_writer(&'a self) -> Self::Writer {
+        FileLogGuard::new(&self.path)
+    }
+}
+
+struct FileLogGuard {
+    file: Option<fs::File>,
+}
+
+impl FileLogGuard {
+    fn new(path: &Path) -> Self {
+        Self {
+            file: OpenOptions::new().create(true).append(true).open(path).ok(),
+        }
+    }
+}
+
+impl Write for FileLogGuard {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        match self.file.as_mut() {
+            Some(file) => file.write(buf),
+            None => Ok(buf.len()),
+        }
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        match self.file.as_mut() {
+            Some(file) => file.flush(),
+            None => Ok(()),
+        }
+    }
 }
 
 fn parse_config_arg() -> Option<PathBuf> {
@@ -105,10 +176,27 @@ fn parse_config_arg() -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_config_arg;
+    use std::io::Write;
+
+    use tracing_subscriber::fmt::MakeWriter;
+
+    use super::{parse_config_arg, FileLogWriter};
 
     #[test]
     fn parse_config_default_is_some() {
         assert!(parse_config_arg().is_some());
+    }
+
+    #[test]
+    fn file_log_writer_appends_web_log() {
+        let dir = tempfile::tempdir().unwrap();
+        let writer = FileLogWriter::new(dir.path().join("web.log"));
+        {
+            let mut log = writer.make_writer();
+            writeln!(log, "snapshot parse failed").unwrap();
+        }
+
+        let text = std::fs::read_to_string(dir.path().join("web.log")).unwrap();
+        assert!(text.contains("snapshot parse failed"));
     }
 }

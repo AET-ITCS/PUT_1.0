@@ -65,12 +65,22 @@ export interface NetworkInfo {
   tx_bytes: number
 }
 
+export interface DeviceNodeInfo {
+  key: string
+  label: string
+  state: string
+  present: boolean | null
+  checked_paths: string[]
+  matched_paths: string[]
+}
+
 export interface ResourcesResponse {
   cpu: CpuInfo
   memory: MemoryInfo
   uptime: UptimeInfo
   disks: DiskInfo[]
   networks: NetworkInfo[]
+  devices: DeviceNodeInfo[]
 }
 
 export interface FramePoolStatus {
