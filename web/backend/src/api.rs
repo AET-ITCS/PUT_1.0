@@ -17,6 +17,7 @@ struct HealthResponse {
     status: &'static str,
     readonly: bool,
     version: &'static str,
+    architecture: &'static str,
 }
 
 #[derive(Debug, Deserialize)]
@@ -29,19 +30,20 @@ pub fn router(state: AppState) -> Router {
         .route("/api/health", get(health))
         .route("/api/modules", get(modules))
         .route("/api/resources", get(resources))
-        .route("/api/can-status", get(can_status))
         .route("/api/ipc-status", get(ipc_status))
+        .route("/api/route-status", get(route_status))
         .route("/api/events", get(events))
         .route("/api/logs", get(logs))
         .with_state(state)
 }
 
-async fn health(State(state): State<AppState>) -> Json<HealthResponse> {
+async fn health() -> Json<HealthResponse> {
     Json(HealthResponse {
         service: "put-webd",
         status: "ok",
-        readonly: state.config.readonly,
+        readonly: true,
         version: env!("CARGO_PKG_VERSION"),
+        architecture: "anymsg-v2",
     })
 }
 
@@ -56,15 +58,15 @@ async fn resources() -> Json<system_reader::ResourcesResponse> {
     Json(system_reader::read_resources())
 }
 
-async fn can_status(State(state): State<AppState>) -> Json<status_snapshot::CanStatusResponse> {
-    Json(status_snapshot::read_can_status(
+async fn ipc_status(State(state): State<AppState>) -> Json<status_snapshot::IpcStatusResponse> {
+    Json(status_snapshot::read_ipc_status(
         &state.config.status_dir,
         state.config.snapshot_stale_ms,
     ))
 }
 
-async fn ipc_status(State(state): State<AppState>) -> Json<status_snapshot::IpcStatusResponse> {
-    Json(status_snapshot::read_ipc_status(
+async fn route_status(State(state): State<AppState>) -> Json<status_snapshot::RouteStatusResponse> {
+    Json(status_snapshot::read_route_status(
         &state.config.status_dir,
         state.config.snapshot_stale_ms,
     ))

@@ -4,7 +4,7 @@
 
 其后端服务是 `put-webd`，这是一个基于 Rust Axum/Tokio 框架构建的服务。它对外暴露只读的 REST API，负责从 `status_dir` 读取业务状态快照，从 `log_dir` 读取日志，从 `/proc` 和 `/sys` 读取系统资源信息，并从外部的 `dist/` 目录提供 Vue3 前端静态资源服务。
 
-前端界面是一个基于 Vue3/Vite/TypeScript 构建的单页应用（SPA），用于监控模块状态、系统资源、CAN/IPC 状态、各类事件以及系统日志。
+前端界面是一个基于 Vue3/Vite/TypeScript 构建的单页应用（SPA），用于监控六类物理接口、系统资源、IPC/路由状态、各类事件以及系统日志。
 
 ## 本地开发
 
@@ -37,12 +37,14 @@ http://127.0.0.1:8080/
 - `GET /api/health`
 - `GET /api/modules`
 - `GET /api/resources`
-- `GET /api/can-status`
 - `GET /api/ipc-status`
+- `GET /api/route-status`
 - `GET /api/events?limit=50`
-- `GET /api/logs?source=linux_app&level=&keyword=&cursor=&limit=200`
+- `GET /api/logs?source=router&level=&keyword=&cursor=&limit=200`
 
 所有的 API 均为只读接口。如果对应的状态快照或日志文件缺失，接口将返回稳定的 `unknown`（未知）、`stale`（过期）或空响应，而不会执行任何对设备的控制操作。
+
+`/api/modules` 使用目标 v2 字段模型展示 `can`、`ethernet`、`wifi`、`bluetooth`、`4g`、`rs485` 六类接口；CAN 不再提供独立状态快照。日志来源白名单为 `linux_app`、`web`、`system`、`ipc`、`router`、`adapter`。
 
 ## 目标构建
 

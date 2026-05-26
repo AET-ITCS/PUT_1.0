@@ -1,0 +1,70 @@
+{
+  "updated_at_ms": 12345678,
+  "state": "warn",
+  "route_table": {
+    "version": 3,
+    "epoch": 12,
+    "source": "compiled_config",
+    "active_entries": 6
+  },
+  "priority_queues": [
+    {
+      "priority": 0,
+      "queued": 0,
+      "capacity": 16,
+      "routed_frames": 102,
+      "dropped_frames": 0,
+      "max_latency_ms": 8
+    },
+    {
+      "priority": 1,
+      "queued": 2,
+      "capacity": 32,
+      "routed_frames": 840,
+      "dropped_frames": 1,
+      "max_latency_ms": 12
+    },
+    {
+      "priority": 2,
+      "queued": 4,
+      "capacity": 64,
+      "routed_frames": 1004,
+      "dropped_frames": 2,
+      "max_latency_ms": 18
+    },
+    {
+      "priority": 3,
+      "queued": 0,
+      "capacity": 64,
+      "routed_frames": 102,
+      "dropped_frames": 0,
+      "max_latency_ms": 20
+    }
+  ],
+  "cid_stats": {
+    "routed_frames": 2048,
+    "heartbeat_consumed": 80,
+    "no_route": 1,
+    "invalid_cid": 2,
+    "reserved_cid": 0,
+    "broadcast_frames": 0
+  },
+  "drop_reasons": {
+    "invalid_length": 1,
+    "invalid_type": 0,
+    "ttl_expired": 0,
+    "frame_pool_full": 0,
+    "rx_ring_full": 0,
+    "tx_ring_full": 1,
+    "target_interface_offline": 1,
+    "auth_failed": 1,
+    "integrity_failed": 0,
+    "replay_dropped": 0
+  },
+  "latency": {
+    "rx_ring_to_tx_ring_max_ms": 12,
+    "rx_ring_to_tx_ring_avg_ms": 2,
+    "linux_egress_max_ms": 18,
+    "end_to_end_max_ms": 30
+  }
+}

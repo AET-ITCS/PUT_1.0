@@ -1,5 +1,4 @@
 {"timestamp_ms":12345670,"level":"info","source":"web","message":"monitor started","detail":"put-webd serving Vue dist and read-only API"}
-{"timestamp_ms":12345678,"level":"warn","source":"ipc","message":"rtos heartbeat delayed","detail":"last heartbeat arrived after 1500ms"}
-{"timestamp_ms":12345999,"level":"error","source":"rs485","message":"modbus crc mismatch","detail":"frame dropped before unified_frame packing"}
-{"timestamp_ms":12346210,"level":"warn","source":"can","message":"drop count increased","detail":"tx ring was full during stress test"}
-
+{"timestamp_ms":12345678,"level":"warn","source":"ipc","message":"frame pool high watermark","detail":"used=220 capacity=256"}
+{"timestamp_ms":12345999,"level":"error","source":"router","message":"route drop","detail":"reason=no_route destination_cid=0x61000001"}
+{"timestamp_ms":12346010,"level":"error","source":"adapter","message":"integrity failed","detail":"source=wifi reason=auth_failed"}

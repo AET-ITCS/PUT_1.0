@@ -4,5 +4,4 @@ status_dir = "web/mock_status"
 log_dir = "web/mock_logs"
 readonly = true
 snapshot_stale_ms = 315360000000
-log_sources = ["linux_app", "web", "system", "can"]
-
+log_sources = ["linux_app", "web", "system", "ipc", "router", "adapter"]

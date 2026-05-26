@@ -184,6 +184,39 @@ mod tests {
     }
 
     #[test]
+    fn accepts_router_source_from_v2_whitelist() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(
+            dir.path().join("router.log"),
+            "[warn] no_route destination_cid=0x61000001\n",
+        )
+        .unwrap();
+
+        let response = read_logs(
+            dir.path(),
+            &[
+                "linux_app".to_string(),
+                "web".to_string(),
+                "system".to_string(),
+                "ipc".to_string(),
+                "router".to_string(),
+                "adapter".to_string(),
+            ],
+            LogQuery {
+                source: "router".to_string(),
+                level: String::new(),
+                keyword: "no_route".to_string(),
+                cursor: String::new(),
+                limit: 10,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(response.source, "router");
+        assert_eq!(response.lines.len(), 1);
+    }
+
+    #[test]
     fn rejects_path_like_source() {
         let dir = tempfile::tempdir().unwrap();
         assert!(read_logs(

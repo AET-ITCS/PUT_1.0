@@ -1,9 +1,72 @@
 {
   "updated_at_ms": 12345678,
-  "online": true,
+  "state": "ok",
+  "rtos_online": true,
   "heartbeat_ms": 1000,
-  "tx_ring_used": 4,
-  "rx_ring_used": 1,
-  "timeout_count": 0
+  "frame_pool": {
+    "capacity": 256,
+    "used": 12,
+    "high_watermark": 40,
+    "full_count": 0,
+    "allocated": 2048,
+    "released": 2036,
+    "pending_reclaim": 0,
+    "leaked_suspect": 0
+  },
+  "rx_rings": [
+    {
+      "interface": "can",
+      "capacity": 64,
+      "used": 2,
+      "high_watermark": 16,
+      "full_count": 0
+    },
+    {
+      "interface": "wifi",
+      "capacity": 64,
+      "used": 4,
+      "high_watermark": 22,
+      "full_count": 0
+    }
+  ],
+  "tx_rings": [
+    {
+      "interface": "rs485",
+      "capacity": 64,
+      "used": 1,
+      "high_watermark": 12,
+      "full_count": 0
+    },
+    {
+      "interface": "ethernet",
+      "capacity": 64,
+      "used": 3,
+      "high_watermark": 18,
+      "full_count": 0
+    }
+  ],
+  "pending_bitmap": {
+    "rx": "0x03",
+    "tx": "0x21"
+  },
+  "mailbox": {
+    "rx_doorbell_count": 2048,
+    "tx_doorbell_count": 2030,
+    "notify_fail_count": 0,
+    "periodic_drain_count": 4
+  },
+  "integrity": {
+    "descriptor_crc_error_count": 0,
+    "epoch_mismatch_count": 0,
+    "cache_sync_error_count": 0
+  },
+  "reclaim": {
+    "heartbeat_consumed": 80,
+    "invalid_frame_reclaimed": 2,
+    "no_route_reclaimed": 1,
+    "ttl_expired_reclaimed": 0,
+    "epoch_mismatch_reclaimed": 0,
+    "reclaim_ring_used": 0,
+    "reclaim_ack_count": 83
+  }
 }
-

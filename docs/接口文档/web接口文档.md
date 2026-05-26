@@ -1,100 +1,135 @@
 # Web 模块对外接口文档
 
-> 本文档定义 Web 模块（`put-webd` + Vue3 前端）需要其余模块（主要是 `linux_app`）提供的接口与数据契约。
+适用架构：anyMSG v0.2.1 / 目标 v2 架构
+
+修改时间：2026-05-26
+
+文档定位：定义 Web 模块（`put-webd` + Vue3 前端）需要 `linux_app` 和部署环境提供的只读数据契约。
+
+---
 
 ## 1. 文档定位
 
-Web 模块是旁路监控链路，不参与主通信链路：
+Web 模块是目标 v2 架构中的旁路监控链路，不参与主通信链路，不改变任何路由、队列或物理接口状态。
+
+主通信链路如下：
 
 ```text
-外部协议输入 → linux_app 协议解析 / unified_frame_t 封装 → 大小核通信 → FreeRTOS 小核实时 CAN 转发
-                                                                 ↓
-                                                          Web 只读监控展示
+外部设备
+  ↓ 完整 anyMSG 放入物理协议载荷，必要时由物理适配层分片
+Linux 大核接入层
+  ↓ 解包 / 重组 / 校验出完整 anyMSG
+共享内存 RX Ring + Frame Pool
+  ↓ Mailbox Doorbell 唤醒
+FreeRTOS 小核路由调度
+  ↓ anyMSG 头部校验 / 心跳消费 / CID 路由 / 优先级调度
+共享内存 TX Ring + Frame Pool
+  ↓ Mailbox Doorbell 通知
+Linux 大核出口层
+  ↓ 按目标物理接口封包 / 分片 / 发送
+目标设备
 ```
 
-Web 模块本身**不解析外部协议、不读取共享内存 ring、不直接访问 FreeRTOS 小核**。它依赖两类数据来源：
+Web 模块只读取三类数据：
 
-| 数据类别     | 提供方                              | 说明                                             |
-| ------------ | ----------------------------------- | ------------------------------------------------ |
-| 业务状态快照 | `linux_app` 写入 `/run/put/status/` | 协议模块连通性、收发统计、CAN/IPC 状态、异常事件 |
-| 应用日志     | `linux_app` 写入 `/var/log/put/`    | 大核应用日志、协议日志等                         |
-| 系统资源     | 内核 `/proc` `/sys` `/dev`          | Web 后端直接读取，**不需要其余模块提供**         |
+| 数据类别 | 提供方                                                     | 说明                                          |
+| -------- | ---------------------------------------------------------- | --------------------------------------------- |
+| 状态快照 | `linux_app` 写入 `/run/put/status/`                        | 六类物理接口、共享内存 v2、小核路由、异常事件 |
+| 应用日志 | `linux_app`、`put-webd` 或系统日志组件写入 `/var/log/put/` | 大核应用、Web、IPC、路由、适配器和系统日志    |
+| 系统资源 | 内核 `/proc`、`/sys`、`/dev`                               | Web 后端直接读取，不需要其余模块提供          |
 
-本文档只定义前两类数据（即需要其余模块配合提供的接口），系统资源读取属于 Web 模块内部实现，不在本文档范围。
+Web 模块必须满足：
+
+- 不解析外部业务协议，不构造或修改 anyMSG。
+- 不直接读取或写入共享内存、Descriptor Ring、Frame Pool、Mailbox 寄存器。
+- 不向 FreeRTOS 小核发送控制命令。
+- 不控制 CAN、Ethernet、Wi-Fi、Bluetooth、4G、RS485 任一物理接口。
+- 所有共享内存和小核状态均由 `linux_app` 汇总后以快照形式提供。
 
 ---
 
 ## 2. 总体数据流
 
 ```text
-┌──────────────────────────────────────────────────────────────┐
-│                    linux_app 大核程序                        │
-│                                                              │
-│  status_collector.c          log_manager.c                   │
-│  ├── 采集各协议模块状态       ├── 统一日志写入               │
-│  ├── 采集 CAN 总线状态        ├── 按 source 分文件           │
-│  ├── 采集 IPC 通信状态        └── 包含时间戳和等级           │
-│  ├── 记录异常事件                                            │
-│  └── 原子写入快照文件                                        │
-└────────────┬────────────────────┬────────────────────────────┘
-             │ 写入               │ 写入
-             v                    v
-┌────────────────────────┐  ┌────────────────────┐
-│ /run/put/status/       │  │ /var/log/put/       │
-│ ├── modules.json       │  │ ├── linux_app.log   │
-│ ├── can_status.json    │  │ ├── web.log         │
-│ ├── ipc_status.json    │  │ ├── system.log      │
-│ └── events.jsonl       │  │ └── can.log         │
-└───────────┬────────────┘  └──────────┬─────────┘
-            │ 只读                      │ 只读
-            v                           v
-┌─────────────────────────────────────────────────────────────┐
-│                     Rust Web 后端 put-webd                  │
-│                                                             │
-│  status_snapshot.rs         log_reader.rs                   │
-│  ├── read_modules()         ├── read_logs()                 │
-│  ├── read_can_status()      ├── 按 source 路由              │
-│  ├── read_ipc_status()      ├── 按 level 过滤               │
-│  └── read_events()          ├── 按 keyword 搜索             │
-│                              └── 分页游标                   │
-│                                                             │
-│  REST API (只读 GET)                                        │
-│  ├── /api/health                                            │
-│  ├── /api/modules                                           │
-│  ├── /api/resources                                         │
-│  ├── /api/can-status                                        │
-│  ├── /api/ipc-status                                        │
-│  ├── /api/events                                            │
-│  └── /api/logs                                              │
-└─────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│                       linux_app 大核程序                         │
+│                                                                  │
+│  status_collector.c                 log_manager.c                │
+│  ├── 汇总六类接口状态             ├── 按 source 分文件           │
+│  ├── 汇总共享内存 v2 状态          ├── 对敏感字段脱敏            │
+│  ├── 汇总小核路由调度统计          └── 写入 /var/log/put/        │
+│  ├── 记录异常事件                                                │
+│  └── 原子写入 /run/put/status/ 快照                              │
+└───────────────┬───────────────────────────┬──────────────────────┘
+                │ 写入                      │ 写入
+                v                           v
+┌────────────────────────────┐  ┌───────────────────────────────┐
+│ /run/put/status/           │  │ /var/log/put/                 │
+│ ├── modules.json           │  │ ├── linux_app.log             │
+│ ├── ipc_status.json        │  │ ├── web.log                   │
+│ ├── route_status.json      │  │ ├── ipc.log                   │
+│ └── events.jsonl           │  │ ├── router.log                │
+└──────────────┬─────────────┘  │ ├── adapter.log               │
+               │ 只读           │ └── system.log                │
+               │                └──────────────┬────────────────┘
+               v                               v
+┌──────────────────────────────────────────────────────────────────┐
+│                         Rust Web 后端 put-webd                   │
+│                                                                  │
+│  status_snapshot.rs        log_reader.rs        system_reader.rs │
+│  ├── read_modules()        ├── read_logs()      ├── /proc        │
+│  ├── read_ipc_status()     ├── source 白名单     ├── /sys        │
+│  ├── read_route_status()   ├── level / keyword  └── /dev         │
+│  └── read_events()         └── 分页游标                          │
+│                                                                  │
+│  REST API，只读 GET                                              │
+│  ├── /api/health                                                 │
+│  ├── /api/modules                                                │
+│  ├── /api/resources                                              │
+│  ├── /api/ipc-status                                             │
+│  ├── /api/route-status                                           │
+│  ├── /api/events                                                 │
+│  └── /api/logs                                                   │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 3. 快照文件接口（linux_app → Web 后端）
+## 3. 快照文件接口（linux_app -> Web 后端）
 
 ### 3.1 总体约定
 
-| 项目       | 约定                                                                                                                           |
-| ---------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| 根目录     | `/run/put/status/`                                                                                                             |
-| 文件格式   | UTF-8 JSON（`.json`）或 JSON Lines（`.jsonl`）                                                                                 |
-| 写入方式   | 先写临时文件，再 `rename(2)` 原子替换正式文件                                                                                  |
-| 时间戳字段 | 每个快照文件必须包含 `updated_at_ms`（毫秒级时间戳）                                                                           |
-| 时间戳基准 | 建议使用系统启动后的单调时间（`/proc/uptime` 换算），也可使用 UTC 绝对毫秒时间戳（值 ≥ `1000000000000`），Web 后端会自适应检测 |
-| 过期阈值   | 默认 `5000` ms，可通过 `web_config.toml` 中的 `snapshot_stale_ms` 配置                                                         |
-| 文件缺失   | Web 返回 `"unknown"` 状态，HTTP 200                                                                                            |
-| 文件过期   | Web 返回 `"stale"` 状态，HTTP 200                                                                                              |
-| JSON 损坏  | Web 返回 `"unknown"` 状态，HTTP 200，解析错误记入后端日志                                                                      |
-| 字段缺失   | 后端使用 `serde(default)` 填充零值或 `"unknown"`                                                                               |
+| 项目       | 约定                                                                   |
+| ---------- | ---------------------------------------------------------------------- |
+| 根目录     | `/run/put/status/`                                                     |
+| 固定快照   | `modules.json`、`ipc_status.json`、`route_status.json`、`events.jsonl` |
+| 文件格式   | UTF-8 JSON（`.json`）或 JSON Lines（`.jsonl`）                         |
+| 写入方式   | 先写临时文件，再 `rename(2)` 原子替换正式文件                          |
+| 时间戳字段 | 每个 `.json` 快照必须包含 `updated_at_ms`（毫秒级时间戳）              |
+| 时间戳基准 | 推荐使用系统启动后的单调时间，也可使用 UTC 绝对毫秒时间戳              |
+| 过期阈值   | 默认 `5000` ms，可通过 `web_config.toml` 的 `snapshot_stale_ms` 配置   |
+| 文件缺失   | Web 返回 `"unknown"` 状态，HTTP 200                                    |
+| 文件过期   | Web 返回 `"stale"` 状态，HTTP 200，并保留可解析的最后内容              |
+| JSON 损坏  | Web 返回 `"unknown"` 状态，HTTP 200，解析错误记入 `web.log`            |
+| 字段缺失   | Web 后端使用默认值填充，不因单个字段缺失导致接口失败                   |
 
-### 3.2 `modules.json` — 协议模块状态快照
+状态字段建议统一使用：
+
+| 值          | 含义                         |
+| ----------- | ---------------------------- |
+| `"ok"`      | 快照有效且无明显异常         |
+| `"warn"`    | 存在水位线、延迟、丢弃等警告 |
+| `"error"`   | 存在明确错误                 |
+| `"stale"`   | 快照超过过期阈值             |
+| `"unknown"` | 快照缺失、损坏或数据不足     |
+
+### 3.2 `modules.json` - 六类物理接口状态快照
 
 **文件路径：** `/run/put/status/modules.json`
 
-**用途：** 提供 4G、WiFi、蓝牙、以太网、RS485 等协议模块的连通性和收发统计。
+**用途：** 提供 CAN、Ethernet、Wi-Fi、Bluetooth、4G、RS485 六类物理接口的连通性、收发、分片重组和错误统计。CAN 是六类接口之一，不再单独定义独立状态快照。
 
-**JSON Schema：**
+**JSON 示例：**
 
 ```json
 {
@@ -102,13 +137,22 @@ Web 模块本身**不解析外部协议、不读取共享内存 ring、不直接
   "state": "ok",
   "modules": [
     {
-      "name": "4g",
+      "name": "can",
       "status": "online",
-      "rx_count": 1842,
-      "tx_count": 1810,
-      "error_count": 1,
-      "last_seen_ms": 12345000,
-      "message": "TCP uplink active"
+      "rx_bytes": 4096,
+      "tx_bytes": 8192,
+      "rx_frames": 128,
+      "tx_frames": 256,
+      "decode_error_count": 0,
+      "fragment_drop_count": 0,
+      "reassemble_timeout_count": 0,
+      "crc_error_count": 0,
+      "send_fail_count": 0,
+      "interface_offline_count": 0,
+      "last_rx_ms": 12345000,
+      "last_tx_ms": 12345500,
+      "last_error": "none",
+      "message": "interface active"
     }
   ]
 }
@@ -116,305 +160,462 @@ Web 模块本身**不解析外部协议、不读取共享内存 ring、不直接
 
 **字段说明：**
 
-| 字段                     | 类型     | 必填   | 说明                                                                     |
-| ------------------------ | -------- | ------ | ------------------------------------------------------------------------ |
-| `updated_at_ms`          | `u64`    | **是** | 快照生成时间戳（ms），用于 Web 判断快照是否过期                          |
-| `state`                  | `string` | 否     | 顶层状态汇总，缺失时 Web 根据 `updated_at_ms` 自动推断                   |
-| `modules`                | `array`  | **是** | 协议模块列表，`linux_app` 未启动或无法采集时可为空数组                   |
-| `modules[].name`         | `string` | **是** | 模块名称，建议取值：`"4g"` `"wifi"` `"bluetooth"` `"ethernet"` `"rs485"` |
-| `modules[].status`       | `string` | **是** | 模块状态，取值见下方状态表                                               |
-| `modules[].rx_count`     | `u64`    | 否     | 接收帧/包计数                                                            |
-| `modules[].tx_count`     | `u64`    | 否     | 发送帧/包计数                                                            |
-| `modules[].error_count`  | `u64`    | 否     | 错误计数                                                                 |
-| `modules[].last_seen_ms` | `u64`    | 否     | 最近一次收到该模块数据的时间戳（ms）                                     |
-| `modules[].message`      | `string` | 否     | 人类可读的状态描述                                                       |
-
-**`status` 取值约定：**
-
-| 值          | 含义                                  | 前端展示     |
-| ----------- | ------------------------------------- | ------------ |
-| `"online"`  | 模块存在且最近通信正常                | 绿色 / good  |
-| `"offline"` | 模块不存在或连接断开                  | 红色 / bad   |
-| `"stale"`   | 长时间没有新数据                      | 黄色 / warn  |
-| `"error"`   | 有明确错误（如 CRC 不匹配、协议异常） | 红色 / bad   |
-| `"unknown"` | 没有足够数据判断                      | 灰色 / muted |
-
-**Web 后端行为：**
-
-- 文件缺失 → `state = "unknown"`, `modules = []`
-- `updated_at_ms` 过期 → `state = "stale"`，但仍返回已有 `modules` 数据
-- 单模块内字段缺失 → 对应字段填充 `0` 或 `""`
-
----
-
-### 3.3 `can_status.json` — CAN 总线状态快照
-
-**文件路径：** `/run/put/status/can_status.json`
-
-**用途：** 提供 CAN 总线状态和小核回传的收发统计。
-
-**JSON Schema：**
-
-```json
-{
-  "updated_at_ms": 12345678,
-  "bus_state": "normal",
-  "tx_count": 2048,
-  "rx_count": 512,
-  "error_count": 3,
-  "drop_count": 1,
-  "last_error": "last arbitration lost recovered"
-}
-```
-
-**字段说明：**
-
-| 字段            | 类型     | 必填   | 说明                                               |
-| --------------- | -------- | ------ | -------------------------------------------------- |
-| `updated_at_ms` | `u64`    | **是** | 快照生成时间戳（ms）                               |
-| `bus_state`     | `string` | 否     | CAN 总线状态，建议取值见下表，缺失返回 `"unknown"` |
-| `tx_count`      | `u64`    | 否     | CAN 发送帧计数                                     |
-| `rx_count`      | `u64`    | 否     | CAN 接收帧计数                                     |
-| `error_count`   | `u64`    | 否     | CAN 错误计数（含仲裁丢失、ACK 错误、位错误等）     |
-| `drop_count`    | `u64`    | 否     | 发送队列满导致的丢帧计数                           |
-| `last_error`    | `string` | 否     | 最近一次错误的可读描述，正常时填 `"none"`          |
-
-**`bus_state` 建议取值：**
-
-| 值                | 含义                              |
-| ----------------- | --------------------------------- |
-| `"normal"`        | CAN 总线正常工作                  |
-| `"bus-off"`       | CAN 控制器进入 bus-off 状态       |
-| `"error-passive"` | CAN 控制器进入 error-passive 状态 |
-| `"error-warning"` | CAN 控制器进入 error-warning 状态 |
-| `"unknown"`       | 无法获取 CAN 状态                 |
+| 字段                                 | 类型     | 必填 | 说明                                                  |
+| ------------------------------------ | -------- | ---- | ----------------------------------------------------- |
+| `updated_at_ms`                      | `u64`    | 是   | 快照生成时间戳                                        |
+| `state`                              | `string` | 否   | 顶层状态汇总                                          |
+| `modules`                            | `array`  | 是   | 六类物理接口状态列表，允许某些接口因硬件未启用而缺失  |
+| `modules[].name`                     | `string` | 是   | `can`、`ethernet`、`wifi`、`bluetooth`、`4g`、`rs485` |
+| `modules[].status`                   | `string` | 是   | `online`、`offline`、`stale`、`error`、`unknown`      |
+| `modules[].rx_bytes`                 | `u64`    | 否   | 入口接收字节数                                        |
+| `modules[].tx_bytes`                 | `u64`    | 否   | 出口发送字节数                                        |
+| `modules[].rx_frames`                | `u64`    | 否   | 已重组并进入接入层处理的完整帧计数                    |
+| `modules[].tx_frames`                | `u64`    | 否   | 已交给物理接口发送的完整帧计数                        |
+| `modules[].decode_error_count`       | `u64`    | 否   | 物理协议解包错误                                      |
+| `modules[].fragment_drop_count`      | `u64`    | 否   | 分片缺失、乱序或缓存淘汰导致的丢弃                    |
+| `modules[].reassemble_timeout_count` | `u64`    | 否   | 分片重组超时计数                                      |
+| `modules[].crc_error_count`          | `u64`    | 否   | 链路层或适配器层 CRC 错误计数                         |
+| `modules[].send_fail_count`          | `u64`    | 否   | 真实物理发送失败计数                                  |
+| `modules[].interface_offline_count`  | `u64`    | 否   | 接口离线或不可用计数                                  |
+| `modules[].last_rx_ms`               | `u64`    | 否   | 最近一次接收时间戳                                    |
+| `modules[].last_tx_ms`               | `u64`    | 否   | 最近一次发送时间戳                                    |
+| `modules[].last_error`               | `string` | 否   | 最近一次错误描述，正常时为 `none`                     |
+| `modules[].message`                  | `string` | 否   | 人类可读状态说明                                      |
 
 **Web 后端行为：**
 
-- 文件缺失 → 全部字段返回 `"unknown"` 或 `0`
-- `updated_at_ms` 过期 → 顶层 `state` 返回 `"stale"`，但保留已上报数据
+- 文件缺失时返回 `state = "unknown"`、`modules = []`。
+- 快照过期时返回 `state = "stale"`，仍返回已解析的 `modules`。
+- 单个接口缺字段时对应字段填 `0`、`false`、`""` 或 `"unknown"`。
 
----
-
-### 3.4 `ipc_status.json` — 大小核 IPC 通信状态快照
+### 3.3 `ipc_status.json` - 共享内存 v2 状态快照
 
 **文件路径：** `/run/put/status/ipc_status.json`
 
-**用途：** 提供大核 Linux 与小核 RTOS 之间的共享内存通信状态。
+**用途：** 提供大小核通信与共享内存 v2 的只读汇总状态，包括 Frame Pool、Descriptor Ring、Pending Bitmap、Mailbox、水位线和回收闭环统计。
 
-**JSON Schema：**
+**JSON 示例：**
 
 ```json
 {
   "updated_at_ms": 12345678,
-  "online": true,
+  "state": "ok",
+  "rtos_online": true,
   "heartbeat_ms": 1000,
-  "tx_ring_used": 4,
-  "rx_ring_used": 1,
-  "timeout_count": 0
+  "frame_pool": {
+    "capacity": 256,
+    "used": 12,
+    "high_watermark": 40,
+    "full_count": 0,
+    "allocated": 2048,
+    "released": 2036,
+    "pending_reclaim": 0,
+    "leaked_suspect": 0
+  },
+  "rx_rings": [
+    {
+      "interface": "can",
+      "capacity": 64,
+      "used": 2,
+      "high_watermark": 16,
+      "full_count": 0
+    }
+  ],
+  "tx_rings": [
+    {
+      "interface": "rs485",
+      "capacity": 64,
+      "used": 1,
+      "high_watermark": 12,
+      "full_count": 0
+    }
+  ],
+  "pending_bitmap": {
+    "rx": "0x01",
+    "tx": "0x20"
+  },
+  "mailbox": {
+    "rx_doorbell_count": 2048,
+    "tx_doorbell_count": 2030,
+    "notify_fail_count": 0,
+    "periodic_drain_count": 4
+  },
+  "integrity": {
+    "descriptor_crc_error_count": 0,
+    "epoch_mismatch_count": 0,
+    "cache_sync_error_count": 0
+  },
+  "reclaim": {
+    "heartbeat_consumed": 80,
+    "invalid_frame_reclaimed": 2,
+    "no_route_reclaimed": 1,
+    "ttl_expired_reclaimed": 0,
+    "epoch_mismatch_reclaimed": 0,
+    "reclaim_ring_used": 0,
+    "reclaim_ack_count": 83
+  }
 }
 ```
 
 **字段说明：**
 
-| 字段            | 类型   | 必填   | 说明                                                          |
-| --------------- | ------ | ------ | ------------------------------------------------------------- |
-| `updated_at_ms` | `u64`  | **是** | 快照生成时间戳（ms）                                          |
-| `online`        | `bool` | 否     | 小核是否在线（能否收到心跳）                                  |
-| `heartbeat_ms`  | `u64`  | 否     | 心跳间隔（ms），或最近心跳耗时                                |
-| `tx_ring_used`  | `u64`  | 否     | 大核→小核发送环形队列当前使用槽位数                           |
-| `rx_ring_used`  | `u64`  | 否     | 小核→大核回传环形队列当前使用槽位数（如未实现回传通道则为 0） |
-| `timeout_count` | `u64`  | 否     | 心跳超时累计次数                                              |
+| 字段                         | 类型     | 必填 | 说明                                     |
+| ---------------------------- | -------- | ---- | ---------------------------------------- |
+| `updated_at_ms`              | `u64`    | 是   | 快照生成时间戳                           |
+| `state`                      | `string` | 否   | 共享内存总体状态                         |
+| `rtos_online`                | `bool`   | 否   | 小核是否在线                             |
+| `heartbeat_ms`               | `u64`    | 否   | 最近心跳间隔或周期                       |
+| `frame_pool.capacity`        | `u64`    | 否   | Frame Pool 总帧数或容量单位              |
+| `frame_pool.used`            | `u64`    | 否   | 当前占用量                               |
+| `frame_pool.high_watermark`  | `u64`    | 否   | 启动以来最高占用                         |
+| `frame_pool.full_count`      | `u64`    | 否   | Frame Pool 耗尽次数                      |
+| `frame_pool.allocated`       | `u64`    | 否   | Linux 分配次数                           |
+| `frame_pool.released`        | `u64`    | 否   | Linux 最终释放次数                       |
+| `frame_pool.pending_reclaim` | `u64`    | 否   | 小核已消费但等待 Linux 回收的帧数        |
+| `frame_pool.leaked_suspect`  | `u64`    | 否   | 疑似泄漏帧数                             |
+| `rx_rings[]`                 | `array`  | 否   | 六类入口 RX Descriptor Ring 使用情况     |
+| `tx_rings[]`                 | `array`  | 否   | 六类出口 TX Descriptor Ring 使用情况     |
+| `pending_bitmap.rx`          | `string` | 否   | RX Pending Bitmap 的可读十六进制值       |
+| `pending_bitmap.tx`          | `string` | 否   | TX Pending Bitmap 的可读十六进制值       |
+| `mailbox.*`                  | `object` | 否   | Doorbell 通知、失败和周期 drain 统计     |
+| `integrity.*`                | `object` | 否   | descriptor CRC、epoch、cache 同步错误    |
+| `reclaim.*`                  | `object` | 否   | free/reclaim 闭环和 drop reason 回收统计 |
 
 **Web 后端行为：**
 
-- 文件缺失 → `online = false`, `state = "unknown"`, 其余字段填 `0`
-- `updated_at_ms` 过期 → `state = "stale"`
+- 文件缺失时返回 `rtos_online = false`、`state = "unknown"`。
+- 快照过期时返回 `state = "stale"`。
+- `used` 接近 `capacity` 或达到配置水位线时，前端应显示警告。
+- `allocated - released - pending_reclaim` 长期增长时，前端应标记为疑似 Frame Pool 泄漏。
 
----
+### 3.4 `route_status.json` - 小核路由与调度状态快照
 
-### 3.5 `events.jsonl` — 异常事件日志
+**文件路径：** `/run/put/status/route_status.json`
 
-**文件路径：** `/run/put/status/events.jsonl`
+**用途：** 提供 FreeRTOS 小核路由、CID 映射、priority 队列、丢弃原因、鉴权/完整性/重放失败和端到端延迟统计。
 
-**用途：** 以 JSON Lines 格式记录系统异常事件，供 Web 展示最近告警。
-
-**格式：** 每行一条完整 JSON，行尾 `\n`。Web 从文件末尾反向读取，按 `limit` 参数截断。
-
-**JSON 条目 Schema：**
+**JSON 示例：**
 
 ```json
-{"timestamp_ms":12345670,"level":"info","source":"web","message":"monitor started","detail":"put-webd serving Vue dist and read-only API"}
-{"timestamp_ms":12345678,"level":"warn","source":"ipc","message":"rtos heartbeat delayed","detail":"last heartbeat arrived after 1500ms"}
-{"timestamp_ms":12345999,"level":"error","source":"rs485","message":"can direct crc mismatch","detail":"frame dropped before unified_frame packing"}
+{
+  "updated_at_ms": 12345678,
+  "state": "ok",
+  "route_table": {
+    "version": 3,
+    "epoch": 12,
+    "source": "compiled_config",
+    "active_entries": 6
+  },
+  "priority_queues": [
+    {
+      "priority": 0,
+      "queued": 0,
+      "capacity": 16,
+      "routed_frames": 102,
+      "dropped_frames": 0,
+      "max_latency_ms": 8
+    }
+  ],
+  "cid_stats": {
+    "routed_frames": 2048,
+    "heartbeat_consumed": 80,
+    "no_route": 1,
+    "invalid_cid": 2,
+    "reserved_cid": 0,
+    "broadcast_frames": 0
+  },
+  "drop_reasons": {
+    "invalid_length": 1,
+    "invalid_type": 0,
+    "ttl_expired": 0,
+    "frame_pool_full": 0,
+    "rx_ring_full": 0,
+    "tx_ring_full": 0,
+    "target_interface_offline": 0,
+    "auth_failed": 0,
+    "integrity_failed": 0,
+    "replay_dropped": 0
+  },
+  "latency": {
+    "rx_ring_to_tx_ring_max_ms": 12,
+    "rx_ring_to_tx_ring_avg_ms": 2,
+    "linux_egress_max_ms": 18,
+    "end_to_end_max_ms": 30
+  }
+}
 ```
 
 **字段说明：**
 
-| 字段           | 类型     | 必填   | 说明                                                               |
-| -------------- | -------- | ------ | ------------------------------------------------------------------ |
-| `timestamp_ms` | `u64`    | **是** | 事件发生时间戳（ms）                                               |
-| `level`        | `string` | **是** | 事件等级，建议取值：`"info"` `"warn"` `"error"`                    |
-| `source`       | `string` | **是** | 事件来源模块，例如 `"ipc"` `"can"` `"rs485"` `"web"` `"linux_app"` |
-| `message`      | `string` | **是** | 简短事件描述（一行）                                               |
-| `detail`       | `string` | 否     | 详细描述或上下文信息                                               |
-
-**`level` 取值约定：**
-
-| 值        | 含义                                        | 前端展示 |
-| --------- | ------------------------------------------- | -------- |
-| `"info"`  | 一般信息事件（如服务启动、模块上线）        | 默认     |
-| `"warn"`  | 警告事件（如心跳延迟、队列接近满）          | 黄色     |
-| `"error"` | 错误事件（如 CRC 错误、模块断连、总线关闭） | 红色     |
-
-**写入建议：**
-
-- 使用追加模式（`O_APPEND`）写入，避免覆盖已有事件。
-- 写入每条事件后 `fsync` 或依赖行缓冲。
-- 文件大小建议设置上限（如 1 MB），超过后轮转或截断旧内容。
-- 空行会被 Web 忽略，损坏行会增加 `parse_error_count` 但不影响其余事件解析。
+| 字段                  | 类型     | 必填 | 说明                                                |
+| --------------------- | -------- | ---- | --------------------------------------------------- |
+| `updated_at_ms`       | `u64`    | 是   | 快照生成时间戳                                      |
+| `state`               | `string` | 否   | 路由调度总体状态                                    |
+| `route_table.version` | `u64`    | 否   | 当前路由表版本                                      |
+| `route_table.epoch`   | `u64`    | 否   | Linux 启动纪元或路由配置纪元                        |
+| `route_table.source`  | `string` | 否   | `compiled_config`、`linux_init` 或 `shared_control` |
+| `priority_queues[]`   | `array`  | 否   | priority 0~3 队列占用、水位和处理统计               |
+| `cid_stats.*`         | `object` | 否   | CID 路由、心跳消费、非法/保留地址统计               |
+| `drop_reasons.*`      | `object` | 否   | 所有丢弃必须有明确原因计数                          |
+| `latency.*`           | `object` | 否   | 小核调度、Linux 出口和端到端延迟统计                |
 
 **Web 后端行为：**
 
-- 文件缺失 → `events = []`, `parse_error_count = 0`
-- 损坏行 → 跳过并在 `parse_error_count` 中计数，输出后端日志
-- `limit` 参数 → 默认 50，范围 `1~500`
+- 文件缺失时返回 `state = "unknown"`。
+- 快照过期时返回 `state = "stale"`。
+- `auth_failed`、`integrity_failed`、`replay_dropped` 非零时应在异常事件或总览中突出显示。
+- `no_route`、`ttl_expired`、`tx_ring_full`、`frame_pool_full` 非零时应能追踪到具体 drop reason 计数。
+
+### 3.5 `events.jsonl` - 异常事件日志
+
+**文件路径：** `/run/put/status/events.jsonl`
+
+**用途：** 以 JSON Lines 格式记录最近异常事件和关键状态变化，供 Web 展示告警。
+
+**JSON 条目示例：**
+
+```json
+{"timestamp_ms":12345670,"level":"info","source":"web","message":"monitor started","detail":"readonly API serving"}
+{"timestamp_ms":12345678,"level":"warn","source":"ipc","message":"frame pool high watermark","detail":"used=220 capacity=256"}
+{"timestamp_ms":12345999,"level":"error","source":"router","message":"route drop","detail":"reason=no_route destination_cid=0x61000001"}
+{"timestamp_ms":12346010,"level":"error","source":"adapter","message":"integrity failed","detail":"source=wifi reason=auth_failed"}
+```
+
+**字段说明：**
+
+| 字段           | 类型     | 必填 | 说明                                                     |
+| -------------- | -------- | ---- | -------------------------------------------------------- |
+| `timestamp_ms` | `u64`    | 是   | 事件发生时间戳                                           |
+| `level`        | `string` | 是   | `info`、`warn`、`error`                                  |
+| `source`       | `string` | 是   | `web`、`linux_app`、`ipc`、`router`、`adapter`、`system` |
+| `message`      | `string` | 是   | 简短事件描述                                             |
+| `detail`       | `string` | 否   | 详细上下文，写入前必须避免泄露 token、密钥、完整网络配置 |
+
+**事件来源建议：**
+
+- `adapter`：接口上线/离线、分片重组失败、链路 CRC 错误、发送失败。
+- `ipc`：Frame Pool 满、Ring 满、descriptor CRC 错误、Mailbox 通知失败、回收异常。
+- `router`：无路由、TTL 过期、非法 CID、非法 type、priority 队列拥塞。
+- `linux_app`：快照写入异常、配置加载异常、状态采集异常。
+- `web`：快照解析失败、日志读取失败、静态目录缺失。
+
+**Web 后端行为：**
+
+- 文件缺失时返回 `events = []`、`parse_error_count = 0`。
+- 损坏行会被跳过并计入 `parse_error_count`。
+- `limit` 默认 50，范围 `1~500`。
 
 ---
 
-## 4. 日志文件接口（linux_app / 系统 → Web 后端）
+## 4. 日志文件接口
 
 ### 4.1 总体约定
 
-| 项目     | 约定                                                                     |
-| -------- | ------------------------------------------------------------------------ |
-| 根目录   | `/var/log/put/`                                                          |
-| 文件命名 | `{source}.log`，例如 `linux_app.log`、`web.log`、`system.log`、`can.log` |
-| 文件编码 | UTF-8                                                                    |
-| 行格式   | 自由文本，建议 `[level] message` 或结构化格式                            |
-| 安全约束 | `source` 参数仅允许字母数字、下划线、连字符，禁止路径遍历                |
+| 项目       | 约定                                                                  |
+| ---------- | --------------------------------------------------------------------- |
+| 根目录     | `/var/log/put/`                                                       |
+| 文件命名   | `{source}.log`                                                        |
+| 默认日志源 | `linux_app`、`web`、`system`、`ipc`、`router`、`adapter`              |
+| 文件编码   | UTF-8                                                                 |
+| 行格式     | 自由文本，建议包含时间、等级、来源和简短消息                          |
+| 安全约束   | `source` 仅允许白名单值，禁止路径遍历                                 |
+| 脱敏要求   | 日志写入前不得暴露 token、密钥、完整 CID 凭据、完整网络配置和认证材料 |
 
 ### 4.2 日志源与文件名映射
 
-| source 参数   | 文件名          | 说明                                                  |
-| ------------- | --------------- | ----------------------------------------------------- |
-| `"linux_app"` | `linux_app.log` | 大核协议转换层日志（协议收发、打包、IPC 发送等）      |
-| `"web"`       | `web.log`       | `put-webd` 自身日志（启动、API 访问、快照读取错误等） |
-| `"system"`    | `system.log`    | 系统级日志（启动、关机、资源异常等）                  |
-| `"can"`       | `can.log`       | CAN 相关日志（总线状态变化、错误计数变化等）          |
+| source 参数 | 文件名          | 说明                                         |
+| ----------- | --------------- | -------------------------------------------- |
+| `linux_app` | `linux_app.log` | 大核接入、出口、状态采集和快照写入日志       |
+| `web`       | `web.log`       | `put-webd` 启动、API、快照读取、前端托管日志 |
+| `system`    | `system.log`    | 系统启动、关机、资源异常日志                 |
+| `ipc`       | `ipc.log`       | Frame Pool、Ring、Mailbox、回收闭环日志      |
+| `router`    | `router.log`    | CID 路由、priority 调度、drop reason 日志    |
+| `adapter`   | `adapter.log`   | 六类物理接口适配器日志                       |
 
-### 4.3 推荐的日志行格式
+### 4.3 查询参数
 
-不强制但建议的格式：
-
-```text
-[2025-01-15T10:30:00.123Z] [info] [linux_app] rs485 can_direct frame received, length=76
-[2025-01-15T10:30:01.456Z] [warn] [can] tx ring usage at 75%
-[2025-01-15T10:30:02.789Z] [error] [ipc] rtos heartbeat timeout, missed 3 heartbeats
-```
-
-`linux_app/log_manager.c` 负责统一写入。Web 后端的日志查询支持：
-
-| 参数      | 说明                                   |
-| --------- | -------------------------------------- |
-| `source`  | 按日志源选择文件（默认 `linux_app`）   |
-| `level`   | 按等级过滤（不区分大小写子串匹配）     |
-| `keyword` | 按关键字搜索（不区分大小写子串匹配）   |
-| `cursor`  | 分页游标（整数），从最新行开始反向分页 |
-| `limit`   | 返回行数（默认 200，范围 `1~500`）     |
+| 参数      | 默认        | 说明                               |
+| --------- | ----------- | ---------------------------------- |
+| `source`  | `linux_app` | 日志源白名单值                     |
+| `level`   | 空          | 按等级过滤，不区分大小写子串匹配   |
+| `keyword` | 空          | 按关键字搜索，不区分大小写子串匹配 |
+| `cursor`  | 空          | 分页游标，从最新行开始反向分页     |
+| `limit`   | `200`       | 返回行数，范围 `1~500`             |
 
 **Web 后端行为：**
 
-- 日志文件缺失 → 返回空列表，HTTP 200，不是错误
-- 非法的 `source` → HTTP 400
-- 返回体包含 `next_cursor` 和 `has_more` 用于前端分页
+- 日志文件缺失时返回空列表，HTTP 200。
+- 非法 `source` 返回 HTTP 400。
+- 返回体包含 `next_cursor` 和 `has_more`。
 
 ---
 
-## 5. 写入实现建议（对 linux_app 的要求）
+## 5. Web REST API 契约
 
-### 5.1 原子写入快照
+所有接口均为只读 `GET`。除参数错误外，快照缺失、过期或损坏不应导致 HTTP 5xx。
 
-`linux_app` 写入 `/run/put/status/` 下 JSON 快照时，必须避免 Web 读到写到一半的文件。推荐做法：
+| API                     | 数据来源                | 说明                                                               |
+| ----------------------- | ----------------------- | ------------------------------------------------------------------ |
+| `GET /api/health`       | Web 后端自身            | 服务健康、版本和只读标志                                           |
+| `GET /api/modules`      | `modules.json`          | 六类物理接口连通性、收发、分片重组和错误统计                       |
+| `GET /api/resources`    | `/proc`、`/sys`、`/dev` | CPU、内存、磁盘、网络、运行时间和设备存在性                        |
+| `GET /api/ipc-status`   | `ipc_status.json`       | Frame Pool、Descriptor Ring、Pending Bitmap、Mailbox、回收和水位线 |
+| `GET /api/route-status` | `route_status.json`     | CID 路由、priority 队列、drop reason、鉴权/完整性/重放失败和延迟   |
+| `GET /api/events`       | `events.jsonl`          | 最近异常事件                                                       |
+| `GET /api/logs`         | `/var/log/put/*.log`    | 日志查询                                                           |
+
+### 5.1 `GET /api/health`
+
+返回示例：
+
+```json
+{
+  "service": "put-webd",
+  "status": "ok",
+  "readonly": true,
+  "version": "0.2.1",
+  "architecture": "anymsg-v2"
+}
+```
+
+### 5.2 `GET /api/modules`
+
+快照缺失时返回示例：
+
+```json
+{
+  "updated_at_ms": 0,
+  "state": "unknown",
+  "modules": []
+}
+```
+
+### 5.3 `GET /api/ipc-status`
+
+快照缺失时返回示例：
+
+```json
+{
+  "updated_at_ms": 0,
+  "state": "unknown",
+  "rtos_online": false,
+  "frame_pool": {
+    "capacity": 0,
+    "used": 0,
+    "pending_reclaim": 0,
+    "leaked_suspect": 0
+  },
+  "rx_rings": [],
+  "tx_rings": []
+}
+```
+
+### 5.4 `GET /api/route-status`
+
+快照缺失时返回示例：
+
+```json
+{
+  "updated_at_ms": 0,
+  "state": "unknown",
+  "route_table": {
+    "version": 0,
+    "epoch": 0,
+    "source": "unknown",
+    "active_entries": 0
+  },
+  "priority_queues": [],
+  "drop_reasons": {}
+}
+```
+
+### 5.5 `GET /api/events?limit=50`
+
+参数：
+
+| 参数    | 默认 | 说明                           |
+| ------- | ---: | ------------------------------ |
+| `limit` |   50 | 返回最近事件数量，范围 `1~500` |
+
+### 5.6 `GET /api/logs`
+
+示例：
+
+```text
+GET /api/logs?source=router&level=warn&keyword=no_route&cursor=&limit=200
+```
+
+---
+
+## 6. 写入实现建议（对 linux_app 的要求）
+
+### 6.1 原子写入快照
+
+`linux_app` 写入 `/run/put/status/` 下 JSON 快照时，必须避免 Web 读到半截文件。推荐流程：
 
 ```c
-// 伪代码
 int write_snapshot(const char *dir, const char *filename, const char *json) {
     char tmp_path[256];
     char final_path[256];
     snprintf(tmp_path, sizeof(tmp_path), "%s/.%s.tmp", dir, filename);
     snprintf(final_path, sizeof(final_path), "%s/%s", dir, filename);
 
-    // 1. 写临时文件
     int fd = open(tmp_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
     write(fd, json, strlen(json));
     fsync(fd);
     close(fd);
 
-    // 2. 原子替换
     rename(tmp_path, final_path);
     return 0;
 }
 ```
 
-### 5.2 写入周期建议
+### 6.2 写入周期建议
 
-| 快照              | 建议写入周期 | 说明                             |
-| ----------------- | ------------ | -------------------------------- |
-| `modules.json`    | 1 秒         | 与前端轮询周期一致               |
-| `can_status.json` | 1 秒         | CAN 状态变化较频繁               |
-| `ipc_status.json` | 1 秒         | 心跳状态实时性要求高             |
-| `events.jsonl`    | 事件驱动追加 | 有事件发生时立即追加，不轮询写入 |
+| 快照                | 建议写入周期 | 说明                                    |
+| ------------------- | ------------ | --------------------------------------- |
+| `modules.json`      | 1 秒         | 物理接口在线、收发、错误统计            |
+| `ipc_status.json`   | 1 秒         | Frame Pool、Ring、Mailbox、回收闭环状态 |
+| `route_status.json` | 1 秒         | 小核路由、队列、丢弃和延迟状态          |
+| `events.jsonl`      | 事件驱动追加 | 有事件发生时立即追加                    |
 
-### 5.3 时间戳选择
+### 6.3 时间戳选择
 
-快照中的 `updated_at_ms` 支持两种基准，Web 后端自适应检测：
+建议 `linux_app` 统一使用系统启动后的单调时间，避免系统时间跳变导致误判过期。Web 后端可按如下规则自适应：
 
-- **单调时间**（推荐）：从 `/proc/uptime` 获取系统运行秒数，转换为毫秒。值范围通常为 0 ~ 数亿。Web 后端通过 `(updated_at_ms < 1000000000000)` 识别此模式，并与 `/proc/uptime` 比较判断过期。
-- **绝对时间**：UTC 毫秒时间戳，值 ≥ `1000000000000`。Web 后端通过 `SystemTime::now()` 获取当前时间进行比较。
+- `updated_at_ms < 1000000000000`：按单调时间处理，与 `/proc/uptime` 比较。
+- `updated_at_ms >= 1000000000000`：按 UTC 绝对毫秒时间处理。
 
-两种模式可混用，Web 后端按阈值自动切换。建议 `linux_app` 统一使用单调时间，避免系统时间跳变导致误判过期。
+### 6.4 脱敏要求
 
-### 5.4 异常事件写入
+写入事件和日志前必须处理敏感字段：
 
-`events.jsonl` 建议由 `linux_app` 的 `status_collector.c` 或专门的事件模块负责，在以下场景触发写入：
-
-- 协议模块上线/离线
-- 收发错误（CRC 不匹配、帧格式错误）
-- CAN 总线状态变化
-- IPC 心跳超时
-- 发送队列即将满或已满
-- 小核回传错误
-
-写入时注意：
-
-- 每条事件为单行 JSON，以 `\n` 结尾。
-- 不同事件源可写入同一文件（通过 `source` 字段区分）。
-- 文件大小建议监控，超过上限（如 1 MB）后截断或轮转。
+- token、密钥、会话凭据只能输出摘要或固定占位符。
+- CID 可按调试需要输出，但不应与鉴权材料、网络凭据同时完整出现。
+- IP、APN、账号、密码、SIM 标识等网络配置应按生产策略脱敏。
+- 鉴权失败、完整性失败、重放丢弃必须保留统计和原因，但不得输出可复用凭据。
 
 ---
 
-## 6. Web 后端的错误处理契约
+## 7. 错误处理契约
 
-为确保 Web 前端在快照异常时仍能给出明确反馈，Web 后端遵循以下错误处理约定：
+| 场景                       | HTTP 状态码       | 响应内容                                         |
+| -------------------------- | ----------------- | ------------------------------------------------ |
+| 快照文件不存在             | 200               | 对应状态返回 `"unknown"` 或空列表                |
+| 快照过期                   | 200               | 顶层 `state` 返回 `"stale"`，其余数据尽量保留    |
+| 快照 JSON 损坏             | 200               | 返回 `"unknown"`，损坏记入 `web.log`             |
+| 日志文件不存在             | 200               | `lines = []`、`has_more = false`                 |
+| 非法日志 `source`          | 400               | `{"error":"invalid log source","readonly":true}` |
+| `/proc` 或 `/sys` 读取失败 | 200               | 对应字段标记 `"unknown"`                         |
+| 前端静态目录不存在         | 200（API 仍可用） | 根路径访问返回 404                               |
 
-| 场景                                        | HTTP 状态码       | 响应内容                                            |
-| ------------------------------------------- | ----------------- | --------------------------------------------------- |
-| 快照文件不存在                              | 200               | 对应字段返回 `"unknown"` 或空列表                   |
-| 快照过期（超过 `snapshot_stale_ms` 未更新） | 200               | 顶层 `state` 返回 `"stale"`，其余数据保留           |
-| 快照 JSON 损坏                              | 200               | 返回 `"unknown"`，损坏记入后端日志                  |
-| 日志文件不存在                              | 200               | `lines = []`, `has_more = false`                    |
-| 非法的日志 `source` 参数                    | 400               | `{"error": "invalid log source", "readonly": true}` |
-| `/proc` 读取失败                            | 200               | 对应字段标记 `"unknown"`                            |
-| `dist/` 静态目录不存在                      | 200（API 仍可用） | 前端访问根路径返回 404                              |
-
-关键原则：**快照异常不影响 Web 服务可用性，Web 始终返回 HTTP 200（除参数错误外），通过状态字段区分数据质量。**
+关键原则：快照异常不影响 Web 服务可用性；数据质量通过 `state`、计数和事件体现。
 
 ---
 
-## 7. 配置接口（Web 后端 ← 部署配置）
+## 8. 配置接口（Web 后端 <- 部署配置）
 
-此部分不属于"其余模块接口"，但为完整性列在这里。Web 后端通过 `/etc/put/web_config.toml` 配置：
+推荐配置文件：`/etc/put/web_config.toml`
 
 ```toml
 bind_addr = "0.0.0.0:8080"
@@ -423,87 +624,98 @@ status_dir = "/run/put/status"
 log_dir = "/var/log/put"
 readonly = true
 snapshot_stale_ms = 5000
-log_sources = ["linux_app", "web", "system", "can"]
+log_sources = ["linux_app", "web", "system", "ipc", "router", "adapter"]
 ```
 
-| 配置项              | 默认值                                  | 说明                                                                    |
-| ------------------- | --------------------------------------- | ----------------------------------------------------------------------- |
-| `bind_addr`         | `"0.0.0.0:8080"`                        | Web 服务监听地址                                                        |
-| `static_dir`        | `"/opt/put/web/dist"`                   | Vue3 前端静态文件目录                                                   |
-| `status_dir`        | `"/run/put/status"`                     | 快照文件目录，即本文档第 3 节定义的所有 `.json` / `.jsonl` 文件所在目录 |
-| `log_dir`           | `"/var/log/put"`                        | 日志文件目录，即本文档第 4 节定义的所有 `.log` 文件所在目录             |
-| `readonly`          | `true`                                  | 只读标志（v1 固定为 `true`）                                            |
-| `snapshot_stale_ms` | `5000`                                  | 快照过期阈值（ms）                                                      |
-| `log_sources`       | `["linux_app", "web", "system", "can"]` | 允许的日志源白名单                                                      |
-
-如果 `linux_app` 使用不同的目录路径，需要同步修改此配置。
+| 配置项              | 默认值                | 说明                                                   |
+| ------------------- | --------------------- | ------------------------------------------------------ |
+| `bind_addr`         | `"0.0.0.0:8080"`      | Web 服务监听地址；生产部署必须限制在可信网络或防火墙后 |
+| `static_dir`        | `"/opt/put/web/dist"` | Vue3 前端静态文件目录                                  |
+| `status_dir`        | `"/run/put/status"`   | 快照文件目录                                           |
+| `log_dir`           | `"/var/log/put"`      | 日志文件目录                                           |
+| `readonly`          | `true`                | 只读标志，目标 v2 固定为 `true`                        |
+| `snapshot_stale_ms` | `5000`                | 快照过期阈值                                           |
+| `log_sources`       | 见示例                | 日志源白名单                                           |
 
 ---
 
-## 8. 职责边界重申
+## 9. 安全与部署边界
 
-| 模块          | 负责                                                                                | 不负责                                          |
-| ------------- | ----------------------------------------------------------------------------------- | ----------------------------------------------- |
-| `linux_app`   | 写入 `/run/put/status/*.json`、`/run/put/status/events.jsonl`、`/var/log/put/*.log` | 提供 HTTP API、托管 Vue 页面、采集系统资源      |
-| Web 后端      | 读取快照和日志、提供只读 REST API、托管前端静态文件、直接读取 `/proc` `/sys`        | 解析外部协议、读取共享内存 ring、向小核发送命令 |
-| FreeRTOS 小核 | CAN 实时转发、回传 CAN 状态和错误计数（通过共享内存→`linux_app`→快照的间接路径）    | 直接向 Web 提供数据                             |
-| 共享内存模块  | 大核↔小核帧传输                                                                     | 向 Web 暴露共享内存或 ring 元数据               |
+Web 只读不等于公网安全。目标 v2 阶段默认用于现场调试、比赛演示和可信局域网运维查看。
 
-Web 模块获取小核数据的唯一路径是：
+部署要求：
+
+- 默认不提供公网访问，不建议直接暴露到互联网。
+- `bind_addr = "0.0.0.0:8080"` 只能用于受控局域网、iptables、防火墙或上级路由限制后的环境。
+- 生产环境建议绑定到设备管理网地址，或仅监听 `127.0.0.1` 后由受控代理暴露。
+- `/run/put/status/` 建议由 `linux_app` 写、Web 只读，目录权限不应允许普通用户篡改快照。
+- `/var/log/put/` 日志必须按第 6.4 节脱敏，不得无意暴露鉴权材料。
+- Web 后端不得提供 POST、PUT、DELETE 等写接口。
+
+---
+
+## 10. 职责边界重申
+
+| 模块          | 负责                                                                                     | 不负责                                             |
+| ------------- | ---------------------------------------------------------------------------------------- | -------------------------------------------------- |
+| `linux_app`   | 真实物理收发、适配器解包/封包、分片重组、共享内存读写、状态快照和日志写入                | 提供 Web HTTP API、托管前端页面                    |
+| Web 后端      | 读取快照和日志、读取系统资源、提供只读 REST API、托管前端静态文件                        | 解析外部协议、读写共享内存、控制小核、控制物理接口 |
+| FreeRTOS 小核 | 共享内存 RX Ring drain、anyMSG 头部校验、心跳消费、CID 路由、priority 调度、TX Ring 写入 | 直接向 Web 提供数据、真实物理接口收发              |
+| 共享内存 IPC  | Frame Pool、Descriptor Ring、Pending Bitmap、Mailbox Doorbell、回收闭环                  | 解释业务 payload、向 Web 暴露可写控制面            |
+
+Web 获取小核和共享内存状态的唯一路径：
 
 ```text
-小核 RTOS → 共享内存回传 → linux_app 汇总 → /run/put/status/*.json → Web 后端只读 → 浏览器
+FreeRTOS 小核 / 共享内存统计
+  ↓ linux_app 汇总
+/run/put/status/*.json
+  ↓ put-webd 只读
+浏览器展示
 ```
 
-Web 模块**绝不**直接访问共享内存、ring queue 或小核寄存器。
-
 ---
 
-## 9. 测试验收
+## 11. 测试验收
 
-### 9.1 快照正常场景
+### 11.1 快照正常场景
 
-1. 启动 `linux_app`，确认 `/run/put/status/modules.json` 存在且 JSON 合法。
-2. Web `/api/modules` 返回 `state = "ok"` 且模块列表非空。
-3. Web `/api/can-status` 返回 `bus_state` 非 `"unknown"`。
-4. Web `/api/ipc-status` 返回 `online = true`。
-5. Web `/api/events` 返回最近事件列表。
-6. Web `/api/logs?source=linux_app` 返回日志行。
+1. `linux_app` 写入 `modules.json`、`ipc_status.json`、`route_status.json` 和 `events.jsonl`。
+2. `/api/modules` 返回六类物理接口状态，CAN 作为 `modules[].name = "can"` 展示。
+3. `/api/ipc-status` 返回 Frame Pool、RX/TX Ring、Mailbox、reclaim 统计。
+4. `/api/route-status` 返回路由表版本、priority 队列、drop reason 和延迟统计。
+5. `/api/events` 返回最近事件列表。
+6. `/api/logs?source=router` 返回路由日志行。
 
-### 9.2 快照缺失场景
+### 11.2 快照缺失和过期场景
 
 1. 停止 `linux_app` 或删除 `/run/put/status/`。
-2. Web `/api/modules` 返回 `state = "unknown"`, `modules = []`，HTTP 200。
-3. Web `/api/can-status` 返回 `bus_state = "unknown"`，HTTP 200。
-4. Web `/api/ipc-status` 返回 `online = false`，HTTP 200。
-5. Web 不崩溃，前端不白屏。
+2. Web API 返回 HTTP 200，状态为 `"unknown"` 或 `"stale"`。
+3. 前端不白屏，不显示假在线。
 
-### 9.3 快照过期场景
+### 11.3 共享内存和路由异常场景
 
-1. 停止 `linux_app` 写入超过 `snapshot_stale_ms`（默认 5 秒）。
-2. Web `/api/modules` 返回 `state = "stale"`，但模块列表仍保留最后已知数据。
+1. Frame Pool 满、RX Ring 满、TX Ring 满时，对应水位和 full 计数可见。
+2. 心跳帧、小核消费帧、无路由帧、TTL 过期帧、epoch 不匹配帧的回收统计可见。
+3. 无路由、非法 CID、非法 type、长度非法、目标接口离线均有明确 drop reason。
+4. 鉴权失败、完整性失败、重放丢弃可在 `/api/route-status` 或事件中看到统计。
+5. 延迟统计能区分小核调度延迟、Linux 出口延迟和端到端最大延迟。
 
-### 9.4 原子写入验证
+### 11.4 日志和安全场景
 
-1. Web 高频轮询时 `linux_app` 持续写入快照。
-2. Web 不应读到截断的 JSON（不会出现解析错误激增）。
-
-### 9.5 日志查询
-
-1. `linux_app/log_manager.c` 向 `/var/log/put/linux_app.log` 写入带 `[error]` `[warn]` `[info]` 标记的行。
-2. Web `/api/logs?source=linux_app&level=error` 仅返回包含 `error` 的行。
-3. Web `/api/logs?source=linux_app&keyword=rs485` 仅返回包含 `rs485` 的行。
-4. 分页游标正常工作。
+1. 非法日志 `source` 返回 HTTP 400。
+2. 日志文件缺失返回空列表。
+3. token、密钥、认证材料和完整网络凭据不会出现在 Web 日志接口中。
+4. 可信局域网、iptables、防火墙或绑定地址限制在部署文档中明确可查。
 
 ---
 
-## 10. 相关文档
+## 12. 相关文档
 
-| 文档                                     | 说明                               |
-| ---------------------------------------- | ---------------------------------- |
-| `docs/设计文档/web模块设计.md`           | Web 模块详细设计方案               |
-| `docs/设计文档/整体架构设计.md`          | 项目整体架构（含 Web 定位）        |
-| `docs/接口文档/统一协议帧格式.md`        | `unified_frame_t` 格式定义         |
-| `docs/接口文档/大小核共享内存IPC接口.md` | 共享内存 IPC 接口预留              |
-| `docs/接口文档/协议中间消息设计.md`      | `protocol_parsed_msg_t` 与解析流程 |
-| `web/README.md`                          | Web 模块开发与构建说明             |
+| 文档                                         | 说明                                            |
+| -------------------------------------------- | ----------------------------------------------- |
+| `docs/设计文档/web模块设计.md`               | Web 模块详细设计方案                            |
+| `docs/设计文档/整体架构设计.md`              | 项目整体架构、主链路和 Web 定位                 |
+| `docs/设计文档/统一数据帧设计.md`            | anyMSG 帧结构、CID 地址段和 type 定义           |
+| `docs/设计文档/共享内存 IPC 架构设计方案.md` | 共享内存 v2、Frame Pool 和 Descriptor Ring 设计 |
+| `docs/接口文档/大小核共享内存IPC接口.md`     | 大小核共享内存接口文档                          |
+| `web/README.md`                              | Web 模块开发与构建说明                          |

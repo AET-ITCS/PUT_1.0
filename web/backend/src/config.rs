@@ -82,7 +82,9 @@ fn default_log_sources() -> Vec<String> {
         "linux_app".to_string(),
         "web".to_string(),
         "system".to_string(),
-        "can".to_string(),
+        "ipc".to_string(),
+        "router".to_string(),
+        "adapter".to_string(),
     ]
 }
 
@@ -99,6 +101,17 @@ mod tests {
         assert_eq!(config.log_dir.to_string_lossy(), "/var/log/put");
         assert!(config.readonly);
         assert_eq!(config.snapshot_stale_ms, 5_000);
+        assert_eq!(
+            config.log_sources,
+            vec![
+                "linux_app".to_string(),
+                "web".to_string(),
+                "system".to_string(),
+                "ipc".to_string(),
+                "router".to_string(),
+                "adapter".to_string(),
+            ]
+        );
     }
 
     #[test]

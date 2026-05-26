@@ -4,5 +4,4 @@ status_dir = "/run/put/status"
 log_dir = "/var/log/put"
 readonly = true
 snapshot_stale_ms = 5000
-log_sources = ["linux_app", "web", "system", "can"]
-
+log_sources = ["linux_app", "web", "system", "ipc", "router", "adapter"]
