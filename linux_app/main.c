@@ -1,44 +1,18 @@
-/* linux_app 入口：加载配置并启动多协议 CAN 网关任务。 */
-#include <errno.h>
+/* linux_app 入口骨架：旧协议链路已删除，等待按 anyMSG 新架构重建。 */
 #include <stdbool.h>
-#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
 #include "app_config.h"
-#include "frame_packer.h"
-#include "protocol_manager.h"
 
 static void print_usage(const char *program)
 {
-    printf("Usage: %s [--config PATH] [--udp-port PORT] [--max-packets N]\n", program);
-    printf("          [--status-dir DIR] [--disable-status]\n");
+    printf("Usage: %s [--config PATH] [--status-dir DIR] [--disable-status]\n", program);
     printf("  --config PATH      INI config path, default linux_app/config/device_config.ini if present\n");
-    printf("  --udp-port PORT    compatibility override for ethernet_udp.port\n");
-    printf("  --max-packets N    stop each enabled protocol worker after N frames, default 0 means forever\n");
-    printf("  --status-dir DIR   write Web snapshots to DIR, default /run/put/status\n");
-    printf("  --disable-status   do not write Web status snapshot files\n");
-}
-
-static int parse_u32(const char *text, uint32_t *out_value)
-{
-    char *end = NULL;
-    unsigned long value;
-
-    if ((text == NULL) || (out_value == NULL)) {
-        return -1;
-    }
-
-    errno = 0;
-    value = strtoul(text, &end, 0);
-    if ((errno != 0) || (end == text) || (*end != '\0') || (value > UINT32_MAX)) {
-        return -1;
-    }
-
-    *out_value = (uint32_t)value;
-    return 0;
+    printf("  --status-dir DIR   status snapshot directory, default /run/put/status\n");
+    printf("  --disable-status   do not write status snapshot files\n");
 }
 
 static int find_config_arg(int argc, char **argv, const char **out_path, bool *out_explicit)
@@ -63,36 +37,12 @@ static int find_config_arg(int argc, char **argv, const char **out_path, bool *o
 static int apply_cli_overrides(int argc, char **argv, app_config_t *config)
 {
     for (int i = 1; i < argc; ++i) {
-        uint32_t value;
-
         if (strcmp(argv[i], "--help") == 0) {
             return 1;
         }
 
         if (strcmp(argv[i], "--config") == 0) {
             ++i;
-            continue;
-        }
-
-        if (strcmp(argv[i], "--udp-port") == 0) {
-            if ((i + 1) >= argc ||
-                parse_u32(argv[++i], &value) != 0 ||
-                value == 0u ||
-                value > UINT16_MAX) {
-                fprintf(stderr, "invalid --udp-port\n");
-                return -1;
-            }
-            config->ethernet_udp_enabled = true;
-            config->ethernet_udp_port = (uint16_t)value;
-            continue;
-        }
-
-        if (strcmp(argv[i], "--max-packets") == 0) {
-            if ((i + 1) >= argc || parse_u32(argv[++i], &value) != 0) {
-                fprintf(stderr, "invalid --max-packets\n");
-                return -1;
-            }
-            config->max_packets = value;
             continue;
         }
 
@@ -154,6 +104,6 @@ int main(int argc, char **argv)
         return EXIT_FAILURE;
     }
 
-    frame_packer_init(1u);
-    return (protocol_manager_run(&config) == UNIFIED_OK) ? EXIT_SUCCESS : EXIT_FAILURE;
+    printf("linux_app skeleton: legacy unified_frame pipeline removed; waiting for anyMSG rebuild.\n");
+    return EXIT_SUCCESS;
 }
