@@ -45,7 +45,7 @@ Mailbox Doorbell 只负责跨核唤醒
 
 本设计文档只描述 FreeRTOS 小核部分。
 
-> TODO 对齐：P0-2 冻结 v2 ABI，明确 `priority`、`ttl`、`epoch`、CRC、鉴权结果来自共享内存 descriptor 元数据，不写入 anyMSG 保留字段。
+> TODO 对齐：P0-2 v2 ABI 依赖说明，明确 `priority`、`ttl`、`epoch`、CRC、鉴权结果来自共享内存 descriptor 元数据，不写入 anyMSG 保留字段。
 
 本次修正的核心点是：
 
@@ -239,11 +239,11 @@ RX Ring / TX Ring 只是共享内存中的 descriptor 方向。
 
 ---
 
-### 6.1 `shared_memory_region_v2` 小核使用边界
+### 6.1 `shared_memory_region_v2` 小核侧 ABI 依赖清单
 
-> TODO 对齐：P0-2 冻结共享内存 v2 ABI。本节只描述小核依赖的 ABI 语义，最终结构体必须由 Linux 和 FreeRTOS 共用同一份公共头文件定义。
+> TODO 对齐：P0-2 / P1 审查修订。本节只列出 FreeRTOS 小核侧依赖的 v2 ABI 语义；正式 ABI 必须在接口文档和 Linux/FreeRTOS 共用公共头文件中冻结，本文不单独作为结构体 ABI 来源。
 
-`shared_memory_region_v2` 至少包含：
+小核依赖 `shared_memory_region_v2` 提供以下区域：
 
 ```text
 region header
@@ -257,45 +257,74 @@ stats_event_area
 control_area
 ```
 
-普通 descriptor 至少包含：
+普通 descriptor 小核依赖字段：
 
-| 字段 | 小核使用方式 |
-| ---- | ------------ |
-| `frame_id` | Frame Pool 中完整 anyMSG 的唯一引用 |
-| `frame_offset` | 完整 anyMSG 在 Frame Pool 中的偏移 |
-| `frame_length` | 完整 anyMSG 字节数，用于头部长度检查 |
-| `source_interface` | 来源物理接口，用于统计和限流 |
-| `target_interface` | 小核路由后写入 TX Ring 时填写 |
-| `source_cid` | 从 anyMSG 头部提取的源地址缓存 |
-| `destination_cid` | 从 anyMSG 头部提取的目的地址缓存 |
-| `type` | 从 anyMSG 头部提取的 payload 类型缓存 |
-| `priority` | 内部调度优先级，默认普通优先级 |
-| `ttl` | 内部转发 TTL，防止异常循环 |
-| `epoch` | Linux 启动纪元，用于重启恢复 |
-| `auth_state` | Linux 接入层写入的鉴权 / 完整性 / 重放检查结果 |
-| `crc16` | descriptor 元数据校验，不替代 anyMSG 业务完整性校验 |
-| `flags` | 分片重组完成、是否需要回执、是否可路由等内部标志 |
+| 字段 | 建议大小 | 字节序 / 对齐 | CRC 覆盖 | 小核使用方式 |
+| ---- | -------: | ------------- | -------- | ------------ |
+| `magic` | 32 bit | little-endian / 4B | 覆盖 | descriptor 类型和初始化校验 |
+| `version` | 16 bit | little-endian / 2B | 覆盖 | v2 ABI 版本校验 |
+| `state` | 16 bit | little-endian / 2B | 覆盖 | owner/state 校验，防止读半写 descriptor |
+| `frame_id` | 32 bit | little-endian / 4B | 覆盖 | Frame Pool 中完整 anyMSG 的唯一引用 |
+| `frame_offset` | 32 bit | little-endian / 4B | 覆盖 | 完整 anyMSG 在 Frame Pool 中的偏移 |
+| `frame_length` | 32 bit | little-endian / 4B | 覆盖 | 完整 anyMSG 字节数，用于头部长度检查 |
+| `source_interface` | 16 bit | little-endian / 2B | 覆盖 | 来源物理接口，用于统计和限流 |
+| `target_interface` | 16 bit | little-endian / 2B | 覆盖 | 小核路由后写入 TX Ring 时填写 |
+| `source_cid` | 32 bit | raw bytes | 覆盖 | 从 anyMSG 头部提取的源地址缓存 |
+| `destination_cid` | 32 bit | raw bytes | 覆盖 | 从 anyMSG 头部提取的目的地址缓存 |
+| `type` | 8 bit | raw byte | 覆盖 | 从 anyMSG 头部提取的 payload 类型缓存 |
+| `priority` | 8 bit | raw byte | 覆盖 | 内部调度优先级，默认普通优先级 |
+| `ttl` | 16 bit | little-endian / 2B | 覆盖 | 内部转发 TTL，防止异常循环 |
+| `epoch` | 32 bit | little-endian / 4B | 覆盖 | Linux 启动纪元，用于重启恢复 |
+| `route_epoch` | 32 bit | little-endian / 4B | 覆盖 | descriptor 入队时看到的路由表 epoch |
+| `auth_state` | 16 bit | little-endian / 2B | 覆盖 | Linux 接入层写入的鉴权 / 完整性 / 重放检查结果 |
+| `flags` | 32 bit | little-endian / 4B | 覆盖 | 分片重组完成、是否需要回执、是否可路由等内部标志 |
+| `crc16` | 16 bit | little-endian / 2B | 不覆盖自身 | descriptor 元数据校验，不替代 anyMSG 业务完整性校验 |
 
-reclaim descriptor 至少包含：
+reclaim descriptor 小核依赖字段：
 
-| 字段 | 小核写入规则 |
-| ---- | ------------ |
-| `frame_id` | 必填，Linux 通过它归还 Frame Pool |
-| `source_ring_id` | 原 RX Ring 或本地队列来源 |
-| `source_desc_seq` | 原 descriptor 序号，便于 Linux 对账 |
-| `drop_reason` | 必填，表示消费或丢弃原因 |
-| `epoch` | 必填，防止 Linux 重启后回收旧 epoch 引用 |
-| `rtos_timestamp_ms` | 小核产生 reclaim 的时间 |
-| `flags` | 标记是否已消费、是否丢弃、是否需要事件上报 |
-| `crc16` | reclaim descriptor 元数据校验 |
+| 字段 | 建议大小 | 字节序 / 对齐 | CRC 覆盖 | 小核写入规则 |
+| ---- | -------: | ------------- | -------- | ------------ |
+| `magic` | 32 bit | little-endian / 4B | 覆盖 | reclaim descriptor 类型校验 |
+| `version` | 16 bit | little-endian / 2B | 覆盖 | v2 ABI 版本校验 |
+| `frame_id` | 32 bit | little-endian / 4B | 覆盖 | 必填，Linux 通过它归还 Frame Pool |
+| `source_ring_id` | 16 bit | little-endian / 2B | 覆盖 | 原 RX Ring 或本地队列来源 |
+| `source_desc_seq` | 32 bit | little-endian / 4B | 覆盖 | 原 descriptor 序号，便于 Linux 对账 |
+| `drop_reason` | 16 bit | little-endian / 2B | 覆盖 | 必填，表示消费或丢弃原因 |
+| `epoch` | 32 bit | little-endian / 4B | 覆盖 | 必填，防止 Linux 重启后回收旧 epoch 引用 |
+| `rtos_timestamp_ms` | 32 bit | little-endian / 4B | 覆盖 | 小核产生 reclaim 的时间 |
+| `flags` | 32 bit | little-endian / 4B | 覆盖 | 标记是否已消费、是否丢弃、是否需要事件上报 |
+| `crc16` | 16 bit | little-endian / 2B | 不覆盖自身 | reclaim descriptor 元数据校验 |
+
+descriptor 状态字段语义：
+
+| state | 生产者 | 消费者 | 含义 |
+| ----- | ------ | ------ | ---- |
+| `FREE` | Linux | Linux | Slot 空闲，小核不得读取 |
+| `WRITING` | Linux | 小核只读检测 | Linux 正在写，不能消费 |
+| `READY` | Linux | 小核 | descriptor 可被小核校验和消费 |
+| `IN_RTOS` | 小核 | 小核 | 小核已接管引用，Linux 不得复用 |
+| `TX_READY` | 小核 | Linux | descriptor 已进入 TX Ring |
+| `RECLAIM_PENDING` | 小核 | Linux | 小核已请求 Linux 回收 |
+| `ERROR_QUARANTINED` | 小核/Linux | Linux | descriptor 早期损坏，不能信任 `frame_id`，由 Linux sweep |
+
+descriptor 信任分级：
+
+| 信任级别 | 判定条件 | 小核允许动作 |
+| -------- | -------- | ------------ |
+| `UNTRUSTED_DESCRIPTOR` | magic/version/length/state/CRC 任一失败 | 不读取 `frame_id`，不写 reclaim；记录 `INVALID_DESCRIPTOR_NO_RECLAIM` 事件并进入 Recovery |
+| `FRAME_REF_TRUSTED` | descriptor 元数据通过，`frame_id` 范围合法，owner/state 合法，epoch 可判定 | 可在丢弃或消费时写 reclaim descriptor |
+| `FRAME_CONTENT_TRUSTED` | `FRAME_REF_TRUSTED` 且 anyMSG 头部、长度、CID/type 基础校验通过 | 可进入心跳消费或 Router Scheduler 前置判断 |
+| `ROUTABLE_TRUSTED` | `FRAME_CONTENT_TRUSTED` 且可信性状态允许路由 | 可进入 Router Scheduler |
 
 状态机要求：
 
 1. Linux 写 RX descriptor 前，必须先完成 Frame Pool 写入和 cache flush。
 2. 小核读取 RX descriptor 前，必须先校验 magic/version/length/state/CRC。
 3. 小核转发成功时，只把同一 `frame_id` 写入目标 TX descriptor，不复制完整 payload。
-4. 小核消费或丢弃时，必须写 reclaim descriptor；如果 reclaim ring 满，进入全局降级并停止继续消费新的 RX descriptor。
-5. Linux 消费 reclaim descriptor 后释放 Frame Buffer，并通过 reclaim ring 的 read/ack 状态体现回收完成。
+4. 小核只有在 descriptor 达到 `FRAME_REF_TRUSTED` 后，才能对消费或丢弃路径写 reclaim descriptor。
+5. `UNTRUSTED_DESCRIPTOR` 不得使用 `frame_id` 回收，必须隔离 descriptor 并通知 Linux 执行 ring/epoch sweep。
+6. 小核消费或丢弃时，必须优先写 reclaim descriptor；如果 reclaim ring 满，进入 `DEGRADED_RECLAIM_FULL` 并停止继续消费新的 RX descriptor。
+7. Linux 消费 reclaim descriptor 后释放 Frame Buffer，并通过 reclaim ring 的 read/ack 状态体现回收完成。
 
 ---
 
@@ -312,10 +341,12 @@ reclaim descriptor 至少包含：
 | `TTL_EXPIRED` | descriptor TTL 已过期 |
 | `EPOCH_MISMATCH` | descriptor epoch 与当前 `linux_epoch` 不一致 |
 | `INVALID_DESCRIPTOR` | magic/version/length/state/CRC 异常 |
+| `INVALID_DESCRIPTOR_NO_RECLAIM` | descriptor 早期损坏，`frame_id` 不可信，不能写 reclaim |
 | `INVALID_ANYMSG` | anyMSG 长度、保留字段、CID 或 type 基础校验失败 |
 | `AUTH_FAILED` | Linux 标记外部入口鉴权失败 |
 | `INTEGRITY_FAILED` | Linux 标记 anyMSG 业务完整性失败 |
 | `REPLAY_DROPPED` | Linux 标记重放保护失败 |
+| `GATEWAY_CID_NOT_READY` | `gateway_cid` 未配置，心跳不能进入端在线表 |
 | `TX_RING_FULL` | 目标 TX Ring 满且超过重试策略 |
 | `LOCAL_QUEUE_OVERFLOW` | 小核本地优先级队列满 |
 | `RECOVERY_DISCARD` | Recovery 清理旧本地引用 |
@@ -323,10 +354,12 @@ reclaim descriptor 至少包含：
 可信性边界：
 
 1. `verify_string[16]` 当前在 anyMSG 文档中未定义真实算法，小核不得把它当作有效鉴权依据。
-2. Ethernet、Wi-Fi、4G、Bluetooth 等外部入口的认证、MAC/token、timestamp/sequence/nonce/session_id 重放保护由 Linux 接入层完成。
-3. Linux 只有在鉴权、完整性和重放检查通过后，才允许把 descriptor 标记为 `AUTH_OK` 或等价状态。
-4. 小核发现 descriptor 未通过可信性状态时，不进入 Router Scheduler，直接写 reclaim descriptor 并更新统计。
-5. descriptor CRC 只保护共享内存搬运元数据，不替代链路层 CRC 或 anyMSG 业务完整性校验。
+2. Ethernet、Wi-Fi、4G、Bluetooth 等外部入口必须由 Linux 接入层完成 token/MAC 或等价鉴权，并使用 timestamp/sequence/nonce/session_id 或等价机制做重放保护。
+3. descriptor 可信状态固定为 `AUTH_OK`、`INTERNAL_TRUSTED`、`AUTH_FAILED`、`INTEGRITY_FAILED`、`REPLAY_DROPPED`。
+4. priority 0/1 控制帧只接受 `AUTH_OK` 或明确可信的 `INTERNAL_TRUSTED` 来源。
+5. Linux 只有在鉴权、完整性和重放检查通过后，才允许把外部入口 descriptor 标记为 `AUTH_OK`。
+6. 小核发现 descriptor 未通过可信性状态时，不进入 Router Scheduler；仅当 descriptor 达到 `FRAME_REF_TRUSTED` 时写 reclaim，否则记录 `INVALID_DESCRIPTOR_NO_RECLAIM`。
+7. descriptor CRC 只保护共享内存搬运元数据，不替代链路层 CRC 或 anyMSG 业务完整性校验。
 
 ---
 
@@ -537,6 +570,13 @@ Mailbox ISR
   ↓
 检查 descriptor magic / version / length / CRC / state
   ↓
+descriptor 达到 FRAME_REF_TRUSTED ?
+  ├── 否：记录 INVALID_DESCRIPTOR_NO_RECLAIM
+  │       不读取 frame_id
+  │       不写 reclaim/free ring
+  │       进入 Recovery，由 Linux ring/epoch sweep 兜底清理
+  └── 是：继续
+  ↓
 检查 auth_state / replay_state
   ↓
 通过 frame_id 定位 Frame Pool 中完整 anyMSG
@@ -563,12 +603,20 @@ type = 0x00 ?
           如果 TX Ring 从 empty 变为 non-empty，则 Mailbox 通知 Linux
 ```
 
-任一检查失败时：
+检查失败处理：
 
 ```text
-记录明确 drop_reason
-写 reclaim/free ring
-更新统计和必要 event
+descriptor 未达到 FRAME_REF_TRUSTED：
+  记录 INVALID_DESCRIPTOR_NO_RECLAIM
+  隔离 descriptor / 设置 error bitmap
+  不使用 frame_id，不写 reclaim/free ring
+  进入 Recovery，等待 Linux ring/epoch sweep
+
+descriptor 已达到 FRAME_REF_TRUSTED：
+  记录明确 drop_reason
+  写 reclaim/free ring
+  更新统计和必要 event
+
 不进入 Router Scheduler
 不写 TX Ring
 ```
@@ -678,6 +726,7 @@ TTL
 epoch
 frame_len
 auth_state
+route_epoch_seen
 ```
 
 注意：
@@ -723,6 +772,19 @@ priority 定义：
 ```text
 priority 数值越小，优先级越高。
 ```
+
+本地队列项必须保存：
+
+```text
+descriptor 指针 / Frame Buffer ID
+priority
+source_ring_id
+enqueue_time
+route_epoch_seen
+retry_count
+```
+
+`route_epoch_seen` 表示 descriptor 入队时看到的 active route table epoch；路由表切换后，队列中尚未写入 TX Ring 的 descriptor 必须在出队时重新校验该 epoch。
 
 ---
 
@@ -834,10 +896,19 @@ Linux 设置 route_update_pending
 小核在调度边界暂停取新 descriptor
 小核校验 route_version / CRC
 小核原子切换 active route table
+小核记录新的 active_route_epoch
 小核清 route_update_pending 并继续调度
 ```
 
 如果 route table CRC 错误或版本回退，小核保持旧路由表，更新 `route_table_error_count`，并通知 Linux。
+
+本地队列一致性规则：
+
+1. IPC Event Task 投递到本地队列时，队列项必须记录 `route_epoch_seen = active_route_epoch`。
+2. route table 原子切换后，已入队但尚未写入 TX Ring 的 descriptor 在出队时必须重新比较 `route_epoch_seen`。
+3. 如果 `route_epoch_seen != active_route_epoch`，Router Scheduler 必须重新查询路由表，并更新队列项路由结果。
+4. 已写入 TX Ring 的 descriptor 不回滚；从切换点之后进入 TX Ring 的 descriptor 使用新路由表。
+5. 重新查询后无路由的帧按 `NO_ROUTE` 写 reclaim/free ring。
 
 广播 CID、网关 CID 和保留 CID：
 
@@ -916,21 +987,22 @@ TX Ring Writer Task 负责将 Router Scheduler 输出的 descriptor 写入目标
 
 当目标 TX Ring 满时，根据 priority 处理：
 
-| priority | 处理策略                         |
-| -------: | -------------------------------- |
-|        0 | 尽量保留，可尝试抢占低优先级缓存 |
-|        1 | 保留，短暂等待或重试             |
-|        2 | 可重试，超过阈值后丢弃           |
-|        3 | 直接丢弃或优先丢弃               |
+| priority | 处理策略 |
+| -------: | -------- |
+|        0 | bounded retry，短暂保留并通知 Linux drain，超过阈值后按 `TX_RING_FULL` 回收 |
+|        1 | bounded retry，重试窗口短于 priority 0，超过阈值后按 `TX_RING_FULL` 回收 |
+|        2 | 可少量重试，超过阈值后按 `TX_RING_FULL` 回收 |
+|        3 | 不等待或极短重试，优先按 `TX_RING_FULL` 回收 |
 
 建议策略：
 
 ```text
-1. 如果目标 TX Ring 满，先检查本地是否有低优先级等待帧。
-2. 如果当前帧优先级更高，可以移除低优先级等待 descriptor 的本地队列引用，并写 reclaim/free ring。
-3. 如果当前帧也是低优先级，写 reclaim/free ring 并丢弃。
-4. 不允许 TX Ring Writer 长时间阻塞。
-5. 所有丢弃都必须写入 drop_reason = TX_RING_FULL 或 LOCAL_QUEUE_OVERFLOW，并更新统计。
+1. 如果目标 TX Ring 满，TX Ring Writer 不允许长时间阻塞。
+2. priority 0/1 可进入 bounded retry 队列，并通过 Doorbell / event 请求 Linux 尽快 drain 目标 TX Ring。
+3. retry_count 或 retry_deadline 超限后，当前 descriptor 写 reclaim/free ring，drop_reason = TX_RING_FULL。
+4. priority 2/3 使用更小的 retry_count / retry_deadline，拥塞时优先回收。
+5. 丢弃本地低优先级等待 descriptor 只能释放本地队列和 Frame Pool 压力，不能释放已经被目标 TX Ring 占用的 slot。
+6. 所有丢弃都必须写入 drop_reason = TX_RING_FULL 或 LOCAL_QUEUE_OVERFLOW，并更新统计。
 ```
 
 ---
@@ -963,6 +1035,29 @@ Linux 出口层必须配合：
 | `linux_send_done_time` | Linux | 真实物理发送完成或失败的时间 |
 
 Web/日志展示端到端最大延迟时，必须同时展示 drop reason 和拥塞水位，否则不能判断瓶颈在小核还是 Linux 出口。
+
+小核内部延迟目标建议按 priority 分层配置：
+
+| priority | 小核内部统计目标 | 说明 |
+| -------: | ---------------- | ---- |
+| 0 / 1 | `rtos_rx_dequeue_time` 到 `rtos_tx_enqueue_time` 记录 max/p95/p99，目标值由 `RTOS_LATENCY_TARGET_PRIO_0_1_US` 配置 | 紧急和高优先级控制帧 |
+| 2 | 记录 max/p95/p99，目标值由 `RTOS_LATENCY_TARGET_PRIO_2_US` 配置 | 普通业务帧 |
+| 3 | 至少记录 max/count，拥塞时允许被丢弃 | 低优先级日志/状态帧 |
+
+Linux 出口实时性分类：
+
+| 接口 | 出口实时性要求 |
+| ---- | -------------- |
+| CAN / RS485 | 应配置最大出口阻塞时间和发送线程优先级，压测报告必须给出最大值 |
+| Ethernet | 根据部署场景配置目标值，默认尽力而为 |
+| Wi-Fi / Bluetooth / 4G | 默认尽力而为，必须展示出口排队和发送失败统计 |
+
+压测验收场景：
+
+1. 高负载 RX Ring drain 下 priority 0/1 的小核内部 max/p95/p99 延迟。
+2. 目标 TX Ring 拥塞下 bounded retry、`TX_RING_FULL` 和 reclaim 行为。
+3. 低 MTU 分片发送时 priority 0/1 在分片边界插队的实际延迟。
+4. Linux 出口线程阻塞时，小核 TX Ring 写入延迟和 Linux send done 延迟分别统计。
 
 ---
 
@@ -1172,7 +1267,14 @@ reclaim_free_ring
 7. Linux 更新 reclaim ring read_idx、`frame_pool_released` 和 ack 统计。
 8. 小核通过 pending_reclaim 水位判断 Linux 是否及时回收。
 
-reclaim ring 满时，小核不得继续消费会产生新 reclaim 的 RX descriptor；必须进入 DEGRADED，等待 Linux 回收。
+reclaim ring 满时，小核进入 `DEGRADED_RECLAIM_FULL`：
+
+1. 暂停 RX drain 和所有会产生新 reclaim 的丢弃动作。
+2. 保留本地队列引用，不继续扩大 pending reclaim。
+3. 只保留 heartbeat、错误统计和 Doorbell/event 通知能力。
+4. 等待 Linux drain reclaim ring 后，进入 `RECLAIM_BLOCKED` 恢复流程。
+5. Linux 释放出 reclaim ring 空间后，小核按预算分批补写被冻结的 reclaim descriptor。
+6. 补写完成后才允许恢复普通 RX drain。
 
 ---
 
@@ -1261,7 +1363,8 @@ source_cid 是端设备身份；
 source_cid 首字节必须落在 anyMSG 定义的设备地址段 0x20 ~ 0xDF；
 0x00 ~ 0x1F 和 0xE0 ~ 0xFF 为保留地址，不进入端心跳表；
 destination_cid 用于判断是否发往本网关，具体 gateway cid 规则由 Linux 配置；
-如果 gateway cid 尚未配置，小核先按 type = 0x00 + source_cid 维护心跳状态；
+如果 gateway cid 尚未配置，小核不更新端心跳表；
+只有 destination_cid 匹配已配置 gateway cid 或 Linux 明确配置的 gateway alias 时，才维护端在线状态；
 payload_length 可以为 0；
 小核不解析端心跳 payload。
 ```
@@ -1280,6 +1383,8 @@ type = 0x00
 读取 source_cid / destination_cid / local_time
   ↓
 校验 source_cid 是否为有效设备地址
+  ↓
+校验 gateway_cid 已配置且 destination_cid 匹配 gateway cid / alias
   ↓
 更新 endpoint_heartbeat_table
   ↓
@@ -1300,6 +1405,15 @@ endpoint_hb_rx_count++
 1. 不更新端心跳表
 2. 更新 endpoint_hb_invalid_count 或 endpoint_hb_table_full_count
 3. 写入 drop reason / error bitmap
+4. 写 reclaim/free ring，等待 Linux 回收 Frame Buffer
+```
+
+如果 `gateway_cid` 未配置，或 `destination_cid` 不匹配本网关：
+
+```text
+1. 不更新端心跳表
+2. gateway_cid 未配置时写 drop_reason = GATEWAY_CID_NOT_READY
+3. destination_cid 不匹配时写 drop_reason = NO_ROUTE 或 INVALID_ANYMSG
 4. 写 reclaim/free ring，等待 Linux 回收 Frame Buffer
 ```
 
@@ -1370,19 +1484,21 @@ Recovery Task 负责系统重新同步。
 1. 暂停 IPC Event Task 的新帧投递
 2. 暂停 Router Scheduler
 3. 暂停 TX Ring Writer
-4. 对本地优先级队列引用逐条写 reclaim/free ring，drop_reason = RECOVERY_DISCARD
-5. 标记旧 epoch 数据为丢弃
-6. 标记 TTL 过期数据为丢弃
-7. 重新检查共享内存 magic/version
-8. 重新读取 linux_epoch
-9. 重新建立 RX/TX Ring 映射
-10. 重新加载路由表
-11. 重新加载 gateway cid / 端心跳配置
-12. 清理本地 pending bitmap 快照
-13. 清理错误状态
-14. 将端心跳表标记为待重新确认
-15. 恢复任务运行
-16. 回到 NORMAL
+4. 冻结本地优先级队列引用，不在 reclaim ring 满时继续写入 reclaim/free ring
+5. 如果 reclaim ring 有空间，按预算分批写 reclaim/free ring，drop_reason = RECOVERY_DISCARD
+6. 如果 reclaim ring 满，进入 RECLAIM_BLOCKED，等待 Linux drain 后继续补写
+7. 标记旧 epoch 数据为待丢弃
+8. 标记 TTL 过期数据为待丢弃
+9. 重新检查共享内存 magic/version
+10. 重新读取 linux_epoch
+11. 重新建立 RX/TX Ring 映射
+12. 重新加载路由表
+13. 重新加载 gateway cid / 端心跳配置
+14. 清理本地 pending bitmap 快照
+15. 清理错误状态
+16. 将端心跳表标记为待重新确认
+17. 恢复任务运行
+18. 回到 NORMAL
 ```
 
 设计原则：
@@ -1391,7 +1507,8 @@ Recovery Task 负责系统重新同步。
 Recovery 不是继续旧状态；
 Recovery 必须重新同步状态；
 Recovery 清理的是小核本地引用，不直接释放共享内存 payload / Frame Buffer；
-Recovery 丢弃本地引用前必须尽力写 reclaim/free ring；
+Recovery 丢弃本地引用前必须先确认 reclaim ring 可写；
+reclaim ring 满时 Recovery 只能冻结本地引用，不能继续写入 reclaim；
 Recovery 后端心跳状态必须重新由 type = 0x00 心跳刷新确认。
 ```
 
@@ -1418,6 +1535,10 @@ NORMAL
   ↓
 DEGRADED
   ↓
+DEGRADED_RECLAIM_FULL
+  ↓
+RECLAIM_BLOCKED
+  ↓
 RECOVERY
   ↓
 NORMAL
@@ -1435,6 +1556,8 @@ NORMAL
 | INIT_ROUTER_TABLE | 加载目的地址到 TX Ring 的映射        |
 | NORMAL            | 正常路由调度                         |
 | DEGRADED          | Linux 或共享内存异常时降级           |
+| DEGRADED_RECLAIM_FULL | reclaim/free ring 满，暂停产生新 reclaim 的消费 |
+| RECLAIM_BLOCKED   | 等待 Linux drain 后分批补写被冻结 reclaim |
 | RECOVERY          | 重新同步 epoch、Ring、bitmap、路由表 |
 | NORMAL            | 恢复正常运行                         |
 
@@ -1458,10 +1581,10 @@ NORMAL
 
 ```text
 1. 停止普通业务路由
-2. 对普通和低优先级本地队列引用写 reclaim/free ring
+2. 冻结普通和低优先级本地队列引用
 3. 保留关键错误统计
-4. 标记旧 epoch 数据为丢弃并写 reclaim/free ring
-5. 标记 TTL 过期数据为丢弃并写 reclaim/free ring
+4. 标记旧 epoch 数据为待丢弃，等待 reclaim ring 可写后分批回收
+5. 标记 TTL 过期数据为待丢弃，等待 reclaim ring 可写后分批回收
 6. 停止重复发送无意义 Doorbell
 7. 等待 Linux 恢复
 8. 进入 Recovery
@@ -1518,12 +1641,17 @@ NORMAL
 | `frame_pool_leaked_suspect`     | 疑似 Frame Pool 泄漏数           |
 | `reclaim_write_count`           | 小核写 reclaim descriptor 次数   |
 | `reclaim_ring_full_count`       | reclaim/free ring 满次数         |
+| `reclaim_blocked_count`         | reclaim 满导致暂停 RX drain 次数 |
+| `pending_reclaim_retry_count`   | reclaim 满后补写重试次数         |
 | `auth_failed_drop_count`        | 鉴权失败丢弃次数                 |
 | `integrity_failed_drop_count`   | 完整性失败丢弃次数               |
 | `replay_drop_count`             | 重放保护丢弃次数                 |
 | `invalid_descriptor_count`      | descriptor 异常次数              |
+| `invalid_descriptor_no_reclaim_count` | descriptor 不可信且未写 reclaim 次数 |
 | `invalid_anymsg_count`          | anyMSG 基础校验失败次数          |
 | `latency_rtos_max_us`           | 小核 RX 出队到 TX 入队最大延迟   |
+| `latency_rtos_p95_us`           | 小核 RX 出队到 TX 入队 p95 延迟  |
+| `latency_rtos_p99_us`           | 小核 RX 出队到 TX 入队 p99 延迟  |
 | `mailbox_fail_count`            | Mailbox 通知失败次数             |
 | `linux_heartbeat_timeout_count` | Linux 心跳超时次数               |
 | `endpoint_hb_rx_count`          | 收到合法端到网关心跳次数         |
@@ -1539,6 +1667,9 @@ NORMAL
 2. 周期性同步到共享内存统计区。
 3. 统计更新不能阻塞路由主流程。
 4. Linux 可以读取统计区用于日志和调试。
+5. drop、route、latency、ring full 统计必须至少按 `interface`、`priority`、`drop_reason` 维度拆分。
+6. Ethernet、Wi-Fi、Bluetooth、4G 等会话型入口应额外记录 `session_id` 或等价会话维度。
+7. 延迟统计至少包含 max + count；priority 0/1 和 priority 2 应保留 p95/p99 或等价滑动窗口摘要。
 
 ---
 
