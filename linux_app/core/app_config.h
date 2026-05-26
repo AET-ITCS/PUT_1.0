@@ -1,4 +1,4 @@
-/* linux_app 配置解析：读取多协议入口和状态快照参数。 */
+/* linux_app 配置解析：读取协议入口和状态快照参数。 */
 #ifndef APP_CONFIG_H
 #define APP_CONFIG_H
 
@@ -13,21 +13,8 @@ extern "C" {
 
 #define APP_CONFIG_DEFAULT_PATH "linux_app/config/device_config.ini"
 #define APP_CONFIG_PATH_MAX 256u
-#define APP_CONFIG_DEV_PATH_MAX 128u
-
-typedef enum {
-    APP_RS485_PROTOCOL_CAN_DIRECT = 0,
-} app_rs485_protocol_t;
 
 typedef struct {
-    bool ethernet_udp_enabled;
-    uint16_t ethernet_udp_port;
-
-    bool rs485_enabled;
-    char rs485_dev[APP_CONFIG_DEV_PATH_MAX];
-    uint32_t rs485_baud;
-    app_rs485_protocol_t rs485_protocol;
-
     bool status_enabled;
     char status_dir[APP_CONFIG_PATH_MAX];
 

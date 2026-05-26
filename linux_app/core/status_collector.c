@@ -45,10 +45,6 @@ const char *status_module_name(status_module_id_t module_id)
         return "wifi";
     case STATUS_MODULE_BLUETOOTH:
         return "bluetooth";
-    case STATUS_MODULE_ETHERNET:
-        return "ethernet";
-    case STATUS_MODULE_RS485:
-        return "rs485";
     default:
         return "unknown";
     }
