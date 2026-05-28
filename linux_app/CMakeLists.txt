@@ -33,19 +33,31 @@ target_compile_definitions(linux_shm_ipc PRIVATE
     _POSIX_C_SOURCE=200809L
 )
 
-add_executable(linux_app
-    main.c
+add_library(linux_app_core STATIC
     core/app_config.c
+    core/status_collector.c
+    adapters/ethernet_adapter.c
+)
+target_include_directories(linux_app_core PUBLIC
+    core
+    adapters
+    ipc
+    ../common/include
+)
+target_link_libraries(linux_app_core PUBLIC
+    linux_shm_ipc
+    Threads::Threads
+)
+target_compile_definitions(linux_app_core PRIVATE
+    _POSIX_C_SOURCE=200809L
 )
 
-target_include_directories(linux_app PRIVATE
-    core
-    ../common/include
+add_executable(linux_app
+    main.c
 )
 
 target_link_libraries(linux_app PRIVATE
-    common_crc
-    Threads::Threads
+    linux_app_core
 )
 
 target_compile_definitions(linux_app PRIVATE
@@ -53,9 +65,10 @@ target_compile_definitions(linux_app PRIVATE
 )
 
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
-    target_compile_options(linux_app PRIVATE -Wall -Wextra)
     target_compile_options(common_crc PRIVATE -Wall -Wextra)
     target_compile_options(linux_shm_ipc PRIVATE -Wall -Wextra)
+    target_compile_options(linux_app_core PRIVATE -Wall -Wextra)
+    target_compile_options(linux_app PRIVATE -Wall -Wextra)
 endif()
 
 if(LINUX_APP_BUILD_TESTS)
@@ -68,9 +81,36 @@ if(LINUX_APP_BUILD_TESTS)
         linux_shm_ipc
     )
 
+    add_executable(ethernet_adapter_test
+        test/ethernet_adapter_test.c
+    )
+    target_link_libraries(ethernet_adapter_test PRIVATE
+        linux_app_core
+    )
+
+    add_executable(app_config_test
+        test/app_config_test.c
+    )
+    target_link_libraries(app_config_test PRIVATE
+        linux_app_core
+    )
+
+    add_executable(status_collector_test
+        test/status_collector_test.c
+    )
+    target_link_libraries(status_collector_test PRIVATE
+        linux_app_core
+    )
+
     if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
         target_compile_options(linux_shm_ipc_test PRIVATE -Wall -Wextra)
+        target_compile_options(ethernet_adapter_test PRIVATE -Wall -Wextra)
+        target_compile_options(app_config_test PRIVATE -Wall -Wextra)
+        target_compile_options(status_collector_test PRIVATE -Wall -Wextra)
     endif()
 
     add_test(NAME linux_shm_ipc_test COMMAND linux_shm_ipc_test)
+    add_test(NAME ethernet_adapter_test COMMAND ethernet_adapter_test)
+    add_test(NAME app_config_test COMMAND app_config_test)
+    add_test(NAME status_collector_test COMMAND status_collector_test)
 endif()

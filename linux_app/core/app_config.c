@@ -128,6 +128,11 @@ void app_config_set_defaults(app_config_t *config)
     memset(config, 0, sizeof(*config));
     config->status_enabled = true;
     copy_string(config->status_dir, sizeof(config->status_dir), "/run/put/status");
+    config->ethernet_enabled = true;
+    copy_string(config->ethernet_bind_addr,
+                sizeof(config->ethernet_bind_addr),
+                APP_CONFIG_ETHERNET_DEFAULT_BIND_ADDR);
+    config->ethernet_port = (uint16_t)APP_CONFIG_ETHERNET_DEFAULT_PORT;
     config->bluetooth_enabled = false;
     config->bluetooth_channel = 1u;
     config->max_packets = 0u;
@@ -146,7 +151,6 @@ static unified_error_t apply_key_value(app_config_t *config,
     }
 
     if (strcmp(section, "status") == 0) {
-
         if (strcmp(key, "enabled") == 0) {
             if (parse_bool(value, &bool_value) != 0) {
                 return UNIFIED_ERR_INVALID_ARG;
@@ -160,6 +164,30 @@ static unified_error_t apply_key_value(app_config_t *config,
                 return UNIFIED_ERR_INVALID_ARG;
             }
             copy_string(config->status_dir, sizeof(config->status_dir), value);
+            return UNIFIED_OK;
+        }
+    } else if (strcmp(section, "ethernet") == 0) {
+        if (strcmp(key, "enabled") == 0) {
+            if (parse_bool(value, &bool_value) != 0) {
+                return UNIFIED_ERR_INVALID_ARG;
+            }
+            config->ethernet_enabled = bool_value;
+            return UNIFIED_OK;
+        }
+
+        if (strcmp(key, "bind_addr") == 0) {
+            if (value[0] == '\0') {
+                return UNIFIED_ERR_INVALID_ARG;
+            }
+            copy_string(config->ethernet_bind_addr, sizeof(config->ethernet_bind_addr), value);
+            return UNIFIED_OK;
+        }
+
+        if (strcmp(key, "port") == 0) {
+            if ((parse_u32(value, &u32_value) != 0) || (u32_value == 0u) || (u32_value > UINT16_MAX)) {
+                return UNIFIED_ERR_INVALID_ARG;
+            }
+            config->ethernet_port = (uint16_t)u32_value;
             return UNIFIED_OK;
         }
     } else if (strcmp(section, "bluetooth") == 0) {
@@ -176,6 +204,14 @@ static unified_error_t apply_key_value(app_config_t *config,
                 return UNIFIED_ERR_INVALID_ARG;
             }
             config->bluetooth_channel = (uint8_t)u32_value;
+            return UNIFIED_OK;
+        }
+    } else if (strcmp(section, "runtime") == 0) {
+        if (strcmp(key, "max_packets") == 0) {
+            if (parse_u32(value, &u32_value) != 0) {
+                return UNIFIED_ERR_INVALID_ARG;
+            }
+            config->max_packets = u32_value;
             return UNIFIED_OK;
         }
     }
@@ -256,6 +292,11 @@ unified_error_t app_config_validate(const app_config_t *config)
     }
 
     if (config->status_enabled && (config->status_dir[0] == '\0')) {
+        return UNIFIED_ERR_INVALID_ARG;
+    }
+
+    if (config->ethernet_enabled &&
+        ((config->ethernet_bind_addr[0] == '\0') || (config->ethernet_port == 0u))) {
         return UNIFIED_ERR_INVALID_ARG;
     }
 

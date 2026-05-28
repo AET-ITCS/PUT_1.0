@@ -13,10 +13,17 @@ extern "C" {
 
 #define APP_CONFIG_DEFAULT_PATH "linux_app/config/device_config.ini"
 #define APP_CONFIG_PATH_MAX 256u
+#define APP_CONFIG_ETHERNET_BIND_ADDR_MAX 64u
+#define APP_CONFIG_ETHERNET_DEFAULT_BIND_ADDR "0.0.0.0"
+#define APP_CONFIG_ETHERNET_DEFAULT_PORT 5000u
 
 typedef struct {
     bool status_enabled;
     char status_dir[APP_CONFIG_PATH_MAX];
+
+    bool ethernet_enabled;
+    char ethernet_bind_addr[APP_CONFIG_ETHERNET_BIND_ADDR_MAX];
+    uint16_t ethernet_port;
 
     bool bluetooth_enabled;
     uint8_t bluetooth_channel;
