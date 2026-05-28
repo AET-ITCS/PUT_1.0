@@ -30,6 +30,11 @@ static int test_default_ethernet_config(void)
     CHECK(config.ethernet_tcp_enabled);
     CHECK(strcmp(config.ethernet_bind_addr, "0.0.0.0") == 0);
     CHECK(config.ethernet_port == 5000u);
+    CHECK(!config.wifi_enabled);
+    CHECK(config.wifi_udp_enabled);
+    CHECK(config.wifi_tcp_enabled);
+    CHECK(strcmp(config.wifi_bind_addr, "0.0.0.0") == 0);
+    CHECK(config.wifi_port == 5001u);
     CHECK(app_config_validate(&config) == UNIFIED_OK);
     return 0;
 }
@@ -84,6 +89,12 @@ static int test_load_ethernet_config(void)
     fputs("tcp_enabled = true\n", fp);
     fputs("bind_addr = \"127.0.0.1\"\n", fp);
     fputs("port = 6000\n", fp);
+    fputs("[wifi]\n", fp);
+    fputs("enabled = true\n", fp);
+    fputs("udp_enabled = true\n", fp);
+    fputs("tcp_enabled = false\n", fp);
+    fputs("bind_addr = \"127.0.0.2\"\n", fp);
+    fputs("port = 6001\n", fp);
     CHECK(fclose(fp) == 0);
 
     app_config_set_defaults(&config);
@@ -94,6 +105,11 @@ static int test_load_ethernet_config(void)
     CHECK(config.ethernet_tcp_enabled);
     CHECK(strcmp(config.ethernet_bind_addr, "127.0.0.1") == 0);
     CHECK(config.ethernet_port == 6000u);
+    CHECK(config.wifi_enabled);
+    CHECK(config.wifi_udp_enabled);
+    CHECK(!config.wifi_tcp_enabled);
+    CHECK(strcmp(config.wifi_bind_addr, "127.0.0.2") == 0);
+    CHECK(config.wifi_port == 6001u);
     (void)remove(path);
     return 0;
 }
@@ -140,6 +156,18 @@ static int test_reject_invalid_can_config(void)
     return 0;
 }
 
+static int test_reject_wifi_with_no_transport(void)
+{
+    app_config_t config;
+
+    app_config_set_defaults(&config);
+    config.wifi_enabled = true;
+    config.wifi_udp_enabled = false;
+    config.wifi_tcp_enabled = false;
+    CHECK(app_config_validate(&config) == UNIFIED_ERR_INVALID_ARG);
+    return 0;
+}
+
 int main(void)
 {
     if (test_default_ethernet_config() != 0) {
@@ -158,6 +186,9 @@ int main(void)
         return 1;
     }
     if (test_reject_invalid_can_config() != 0) {
+        return 1;
+    }
+    if (test_reject_wifi_with_no_transport() != 0) {
         return 1;
     }
     puts("app_config_test: OK");

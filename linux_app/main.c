@@ -15,6 +15,7 @@
 #include "ethernet_adapter.h"
 #include "linux_shm_ipc.h"
 #include "status_collector.h"
+#include "wifi_adapter.h"
 
 static volatile sig_atomic_t g_should_stop = 0;
 
@@ -108,6 +109,12 @@ static void configure_status_modules(status_collector_t *collector, const app_co
                                       config->ethernet_enabled,
                                       "Ethernet UDP/TCP raw",
                                       "UDP datagram or TCP stream carries complete anyMSG; RX to Linux SHM v2");
+    status_collector_configure_module(collector,
+                                      STATUS_MODULE_WIFI,
+                                      true,
+                                      config->wifi_enabled,
+                                      "Wi-Fi UDP/TCP raw",
+                                      "Wi-Fi UDP datagram or TCP stream carries complete anyMSG; RX to Linux SHM v2");
 }
 
 static uint32_t make_linux_epoch(void)
@@ -160,6 +167,8 @@ int main(int argc, char **argv)
     bool can_started = false;
     bool ethernet_udp_started = false;
     bool ethernet_tcp_started = false;
+    bool wifi_udp_started = false;
+    bool wifi_tcp_started = false;
     int exit_code = EXIT_SUCCESS;
 
     if (find_config_arg(argc, argv, &config_path, &config_explicit) != 0) {
@@ -316,6 +325,67 @@ int main(int argc, char **argv)
         }
     }
 
+    if (!g_should_stop && config.wifi_enabled && config.wifi_udp_enabled) {
+        wifi_udp_config_t wifi_udp_config;
+
+        memset(&wifi_udp_config, 0, sizeof(wifi_udp_config));
+        wifi_udp_config.enabled = true;
+        (void)snprintf(wifi_udp_config.bind_addr,
+                       sizeof(wifi_udp_config.bind_addr),
+                       "%s",
+                       config.wifi_bind_addr);
+        wifi_udp_config.port = config.wifi_port;
+        wifi_udp_config.ipc = &ipc;
+        wifi_udp_config.collector = &collector;
+        wifi_udp_config.linux_epoch = linux_epoch;
+
+        if (wifi_udp_server_start(&wifi_udp_config) != 0) {
+            fprintf(stderr,
+                    "failed to start wifi UDP RX service on %s:%u\n",
+                    config.wifi_bind_addr,
+                    (unsigned)config.wifi_port);
+            exit_code = EXIT_FAILURE;
+            g_should_stop = 1;
+        } else {
+            wifi_udp_started = true;
+            printf("linux_app: Wi-Fi UDP RX listening on %s:%u, linux_epoch=%u\n",
+                   config.wifi_bind_addr,
+                   (unsigned)config.wifi_port,
+                   linux_epoch);
+        }
+    }
+
+    if (!g_should_stop && config.wifi_enabled && config.wifi_tcp_enabled) {
+        wifi_tcp_config_t wifi_tcp_config;
+
+        memset(&wifi_tcp_config, 0, sizeof(wifi_tcp_config));
+        wifi_tcp_config.enabled = true;
+        (void)snprintf(wifi_tcp_config.bind_addr,
+                       sizeof(wifi_tcp_config.bind_addr),
+                       "%s",
+                       config.wifi_bind_addr);
+        wifi_tcp_config.port = config.wifi_port;
+        wifi_tcp_config.listen_backlog = WIFI_ADAPTER_DEFAULT_TCP_BACKLOG;
+        wifi_tcp_config.ipc = &ipc;
+        wifi_tcp_config.collector = &collector;
+        wifi_tcp_config.linux_epoch = linux_epoch;
+
+        if (wifi_tcp_server_start(&wifi_tcp_config) != 0) {
+            fprintf(stderr,
+                    "failed to start wifi TCP RX service on %s:%u\n",
+                    config.wifi_bind_addr,
+                    (unsigned)config.wifi_port);
+            exit_code = EXIT_FAILURE;
+            g_should_stop = 1;
+        } else {
+            wifi_tcp_started = true;
+            printf("linux_app: Wi-Fi TCP RX listening on %s:%u, linux_epoch=%u\n",
+                   config.wifi_bind_addr,
+                   (unsigned)config.wifi_port,
+                   linux_epoch);
+        }
+    }
+
     while (!g_should_stop) {
         linux_shm_ipc_stats_t stats;
 
@@ -335,6 +405,12 @@ int main(int argc, char **argv)
     }
     if (can_started) {
         can_adapter_stop();
+    }
+    if (wifi_udp_started) {
+        wifi_udp_server_stop();
+    }
+    if (wifi_tcp_started) {
+        wifi_tcp_server_stop();
     }
 
     {
