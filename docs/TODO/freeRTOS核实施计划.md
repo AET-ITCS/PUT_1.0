@@ -5,27 +5,29 @@
 - `docs/设计文档/freeRTOS核设计.md`
 - `docs/接口文档/大小核共享内存IPC接口.md`
 - `docs/设计文档/共享内存 IPC 架构设计方案.md`
+- `docs/设计文档/整体架构设计.md`
 - `common/include/shared_memory_ipc.h`
 - `rtos_firmware/ipc/`
 - `linux_app/ipc/`
 
 日期：2026-05-28  
-目标目录：`rtos_firmware/`  
-阶段策略：第一阶段完成小核路由核心和 mock 验证；第二阶段基于现有 `rtos_shm_ipc_*` API 接入共享内存 IPC v2；第三阶段完成 Linux/RTOS host 闭环、板端联调和压测验收。
+正式目标目录：`rtos_firmware/`  
+阶段策略：P0 固化已有 IPC 基线；P1 将路由核心落入 `rtos_firmware`；P2 接入真实 IPC Event / Router Scheduler / TX Writer 闭环；P3 补齐 Heartbeat、Error Monitor、Recovery、Statistics；P4 完成 Linux/RTOS host 闭环和板端联调。
 
 ---
 
-## 0. 实施边界
+## 0. 实施边界与现状
 
-本计划用于指导 FreeRTOS 小核后续开发。当前目标不是重新设计共享内存 ABI，而是在已冻结的 IPC v2 ABI 和已有 Linux/RTOS IPC 底座之上补齐小核路由、调度、心跳、Recovery 和集成闭环。
+本计划用于指导 FreeRTOS 小核在 `rtos_firmware/` 中继续实现。当前目标不是重新设计共享内存 ABI，而是在已冻结的 IPC v2 ABI 和已有 Linux/RTOS IPC 底座之上，补齐小核路由、调度、心跳、Recovery、统计和联调闭环。
 
 现状快照：
 
 - 公共 ABI 已冻结在 `common/include/shared_memory_ipc.h`。
 - RTOS 侧 IPC v2 底座已在 `rtos_firmware/ipc/rtos_shm_ipc.*` 实现，并已有 host 单测。
 - Linux 侧 Frame Pool、RX/TX descriptor、reclaim 状态机已在 `linux_app/ipc/linux_shm_ipc.*` 实现，并已有 host 单测。
-- 待实现重点是小核路由核心、IPC Event Task、Router Scheduler、Heartbeat、Recovery、统计以及 Linux/RTOS 闭环集成测试。
-- `freertos/` 目录只作为历史参考；正式小核开发以 `rtos_firmware/` 为准。
+- `rtos_firmware/` 已有 BSP、CAN、watchdog 骨架和 `rtos_firmware_main()` 初始化入口。
+- `freertos/router_core/` 只作为历史参考和迁移来源，不能作为正式小核实现目录或完成项。
+- 待实现重点是 `rtos_firmware` 内的小核路由核心、IPC Event Task、Router Scheduler、TX Writer、Heartbeat、Error Monitor、Recovery、Statistics 和 Linux/RTOS 闭环测试。
 
 固定 ABI 边界：
 
@@ -37,243 +39,384 @@
 - reclaim ring 深度固定 8。
 - descriptor 和 reclaim descriptor 均固定 64B。
 - `rx_pending_bitmap`、`tx_pending_bitmap`、`reclaim_pending` 分别独占一个 64B cache line。
+- 设计文档中的 `reclaim/free ring` 在本实施计划中统一对应 ABI 的 `reclaim_ring` / `put_shm_reclaim_descriptor_t`，不得新建第二套 free ring。
 
 职责边界：
 
 - Linux 是 Frame Pool 唯一分配者和最终释放者。
 - RTOS 不释放 Frame Pool block，不清零 payload，不修改 Linux free list。
 - RTOS 只读 Frame Pool 中的完整 anyMSG，写目标 TX descriptor 或 reclaim descriptor。
-- RTOS 路由层不得重实现 pending bitmap 原子操作、descriptor CRC、cache flush/invalidate、Doorbell 发布细节，这些由 `rtos_firmware/ipc` 层负责。
-- IPC 层负责 descriptor ABI、CRC、Frame Pool 边界和接口一致性校验；路由层只处理可信 route input。
-- 坏 descriptor 如果未达到可信 frame reference，不由路由层写 reclaim，交给 IPC 错误统计和 recovery/sweep 路径。
-- 第一阶段内部 mock 类型不是公共 ABI；第二阶段适配以 `shared_memory_ipc.h` 和 `rtos_shm_ipc.h` 为准。
-
-目标拆分：
-
-```text
-第一阶段：小核路由核心和 mock 验证
-第二阶段：基于现有 RTOS IPC v2 API 的共享内存适配
-第三阶段：Linux/RTOS host 闭环、板端联调和压测验收
-```
+- RTOS 路由层不得重实现 pending bitmap 原子操作、descriptor CRC、cache flush/invalidate、Doorbell 发布细节，这些继续由 `rtos_firmware/ipc` 层负责。
+- IPC 层负责 descriptor ABI、CRC、Frame Pool 边界和接口一致性校验；路由层只处理已经达到可信 frame reference 的 route input。
+- 坏 descriptor 如果未达到可信 frame reference，不由路由层读取 `frame_id` 或写 reclaim，交给 IPC 错误统计和 recovery/sweep 路径。
 
 ---
 
-## 1. 第一阶段：路由核心和 mock 验证
+## 1. rtos_firmware 工程落位
 
-目标：在不依赖真实共享内存 region 的条件下，完成小核路由、调度、心跳、统计和状态机核心能力。第一阶段所有输入输出都通过 mock source/sink 驱动，确保核心逻辑可在 host 单元测试中独立验证。
+目标：把正式小核实现集中到 `rtos_firmware/`，让后续代码、测试和 CMake 都围绕该目录演进。
 
-### 1.1 任务骨架与模块边界
+建议新增或整理的模块边界：
 
-- [ ] 在 `rtos_firmware/` 规划小核核心模块边界：抽象入口、Router Scheduler、TX Writer 抽象出口、Heartbeat、Error Monitor、Recovery、Statistics。
-- [ ] 明确第一阶段所有输入来自 mock descriptor / mock anyMSG header，不直接访问 Frame Pool。
-- [ ] 明确第一阶段所有输出写入 mock TX sink 或 mock reclaim sink，不写真实 TX Ring / reclaim ring。
-- [ ] 将小核核心逻辑与共享内存 IPC 层解耦，避免业务逻辑直接依赖 `put_shm_descriptor_t`。
-- [ ] 保留第二阶段适配点，后续把 mock source/sink 替换为 `rtos_shm_ipc_*` API。
+- [ ] `rtos_firmware/router/`：CID 路由、route table、route epoch、路由策略、drop reason 映射。
+- [ ] `rtos_firmware/queue/`：四级 priority 本地队列、队列水位线、驱逐策略。
+- [ ] `rtos_firmware/tasks/`：IPC Event、Router Scheduler、TX Writer、Heartbeat、Recovery、Statistics、Error Monitor 的 task 入口或 host mock 调度入口。
+- [ ] `rtos_firmware/mailbox/`：Mailbox ISR、Doorbell port、event wakeup 抽象。
+- [ ] `rtos_firmware/monitor/` 或并入 `tasks/`：端心跳表、Linux heartbeat、错误监控、统计快照。
+- [ ] 继续复用 `rtos_firmware/ipc/`，不得在路由层重写 descriptor ring、pending bitmap、CRC、cache 同步和 notify 发布。
+- [ ] 将新增正式模块接入 `rtos_firmware/CMakeLists.txt`，新增 host 单测统一放入 `rtos_firmware/test/`。
+
+建议文件架构：
+
+```text
+rtos_firmware/
+├── CMakeLists.txt
+├── main.c                         # host smoke 入口；板端可替换为 RTOS 启动入口
+├── include/
+│   ├── rtos_firmware.h            # 固件顶层入口
+│   └── rtos_firmware_config.h     # 小核公共配置开关和默认参数
+├── src/
+│   └── rtos_entry.c               # rtos_firmware_main() 初始化编排
+├── bsp/
+│   ├── rtos_bsp.h
+│   ├── board.c                    # board 占位/真实初始化
+│   ├── clock.c                    # 时钟初始化
+│   ├── pinmux.c                   # 引脚复用初始化
+│   └── interrupt.c                # 中断控制器和基础 ISR 初始化
+├── ipc/
+│   ├── rtos_shm_ipc.h
+│   ├── rtos_shm_ipc.c             # 已有共享内存 IPC v2 descriptor API
+│   ├── rtos_shm_platform.h
+│   └── rtos_shm_platform.c        # cache / barrier / notify / atomic 平台抽象
+├── mailbox/
+│   ├── rtos_mailbox.h             # Mailbox / Doorbell 抽象接口
+│   ├── rtos_mailbox_port.c        # 平台 doorbell 适配
+│   ├── rtos_mailbox_isr.c         # ISR 只清中断并唤醒 IPC Event Task
+│   └── rtos_mailbox_event.c       # host mock 或 RTOS event 封装
+├── router/
+│   ├── rtos_router.h              # 路由核心公共内部接口
+│   ├── rtos_router_core.c         # route input 校验、drop 映射、状态机
+│   ├── rtos_router_table.c        # CID 路由表、active_route_epoch
+│   ├── rtos_router_policy.c       # TTL / epoch / trust / 背压策略
+│   └── rtos_router_adapter.c      # IPC descriptor <-> route input/output 适配
+├── queue/
+│   ├── rtos_priority_queue.h
+│   └── rtos_priority_queue.c      # priority 0..3 队列、配额和驱逐策略
+├── tasks/
+│   ├── rtos_ipc_event_task.c      # RX pending bitmap 扫描和 RX drain
+│   ├── rtos_router_scheduler_task.c
+│   ├── rtos_tx_writer_task.c
+│   ├── rtos_heartbeat_task.c
+│   ├── rtos_error_monitor_task.c
+│   ├── rtos_recovery_task.c
+│   └── rtos_statistics_task.c
+├── monitor/
+│   ├── rtos_endpoint_heartbeat.c  # 端到网关心跳表
+│   ├── rtos_linux_heartbeat.c     # Linux heartbeat 状态判断
+│   ├── rtos_error_state.c         # 错误状态和降级原因
+│   └── rtos_statistics.c          # 本地统计快照和导出
+├── can/
+│   ├── rtos_can.h
+│   └── rtos_can.c                 # 当前占位；真实物理收发仍以 Linux 为主
+├── watchdog/
+│   ├── rtos_watchdog.h
+│   └── rtos_watchdog.c
+└── test/
+    ├── rtos_shm_ipc_test.c        # 已有 IPC v2 host 单测
+    ├── rtos_router_core_test.c    # P1 路由核心 host 单测
+    ├── rtos_ipc_adapter_test.c    # P2 descriptor 到 route input 适配测试
+    ├── rtos_recovery_test.c       # P3 Recovery / reclaim full 测试
+    └── rtos_host_loop_test.c      # P4 Linux/RTOS host 闭环测试
+```
+
+架构约束：
+
+- [ ] 已有文件优先原地演进；新增文件按上面的目录归属落位。
+- [ ] `ipc/` 只提供共享内存 descriptor 搬运能力，不放业务路由策略。
+- [ ] `router/` 和 `queue/` 不直接调用平台 cache、atomic 或 mailbox API。
+- [ ] `tasks/` 负责调度编排，可以连接 `ipc/`、`router/`、`queue/`、`monitor/` 和 `mailbox/`。
+- [ ] `monitor/` 不阻塞路由主流程，高频计数先本地累加。
+- [ ] `test/` 中新增 host 单测与阶段任务同名对应，避免继续把正式验收放到 `freertos/`。
+
+内部接口规划：
+
+- [ ] 定义 `rtos_route_input_t` 或等价内部类型，表示经过 IPC 适配后的可信路由输入，不携带共享内存指针，不执行 Frame Pool 所有权操作。
+- [ ] 定义 `rtos_route_output_t` 或等价内部类型，表示 TX / reclaim 输出、目标接口、priority、drop reason、latency。
+- [ ] 定义 TX sink adapter：mock 阶段写测试队列，真实阶段调用 `rtos_shm_ipc_enqueue_tx_descriptor()`。
+- [ ] 定义 reclaim sink adapter：mock 阶段写测试队列，真实阶段调用 `rtos_shm_ipc_reclaim_frame()`。
+- [ ] 定义 route table snapshot，至少包含 `route_version`、`active_route_epoch`、CID 段到目标接口映射和 CRC/有效性状态。
+- [ ] 定义 heartbeat/error/recovery/statistics snapshot，用于 host 测试和后续共享状态区同步。
 
 验收标准：
 
-- 小核路由核心可以在 host 单元测试中运行。
-- 第一阶段代码不需要真实共享内存 region。
-- mock 输入输出结构足够覆盖路由、丢弃、心跳和统计路径。
+- `rtos_firmware` 成为正式小核实现和测试入口。
+- `freertos/router_core` 不再作为新增验收目标，只允许作为迁移参考。
+- 路由层和 IPC 层边界清晰，业务逻辑不直接普通读改写 shared memory pending line。
 
-### 1.2 内部抽象接口
+---
 
-- [ ] 定义 `rtos_route_input_t`，表示小核路由输入的抽象帧描述。
-- [ ] 定义 `rtos_route_output_t`，表示小核路由输出的目标接口、处理结果和 drop reason。
-- [ ] 定义 `rtos_tx_sink`，第一阶段写 mock TX 队列，第二阶段调用 `rtos_shm_ipc_enqueue_tx_descriptor()`。
-- [ ] 定义 `rtos_reclaim_sink`，第一阶段写 mock reclaim 队列，第二阶段调用 `rtos_shm_ipc_reclaim_frame()`。
-- [ ] 定义 `rtos_time_source`，用于 TTL、heartbeat、Recovery 和 latency 统计。
-- [ ] 定义小核内部 drop reason，并提供到 `put_shm_reclaim_reason_t` 的映射。
+## 2. P0 已有基线
 
-drop/reclaim 映射必须覆盖：
+目标：确认当前可复用底座，不在后续阶段重复实现。
+
+RTOS IPC 已有基线：
+
+- [x] `rtos_firmware/ipc/rtos_shm_ipc.*` 支持 format / attach。
+- [x] 支持 RX descriptor ring dequeue。
+- [x] 支持 TX descriptor ring enqueue。
+- [x] 支持 reclaim descriptor 写入。
+- [x] 支持 descriptor CRC-16 校验。
+- [x] 支持 Frame Pool 边界校验。
+- [x] 支持 RX/TX ring 接口一致性校验。
+- [x] 支持 pending bit 原子 OR / AND 和诊断计数原子 ADD。
+- [x] 支持 cache flush / invalidate / memory barrier / notify 平台抽象。
+- [x] notify 失败时 descriptor 保持已发布，通过 pending bitmap 兜底。
+- [x] pending bit 清除和并发入队竞态已有 host 单测覆盖。
+
+Linux IPC 已有基线：
+
+- [x] `linux_app/ipc/linux_shm_ipc.*` 支持 host map/unmap、format/attach。
+- [x] 支持 Linux Frame Pool alloc、RX commit、TX dequeue、reclaim dequeue 和 reclaim ack。
+- [x] `RX_QUEUED` frame 不允许被 Linux 公开 release API 直接释放。
+- [x] reclaim ack 后 Linux 最终释放 Frame Pool block。
+- [x] TX/reclaim 元数据错配拒绝已有 host 单测覆盖。
+
+P0 保持原则：
+
+- [ ] 后续不修改 `shared_memory_ipc.h` 的 ABI 尺寸、ring 深度、pending bitmap 语义。
+- [ ] 后续如果 `rtos_shm_ipc_*` API 返回码或平台 ops 细节变化，只调整 IPC 适配层和对应 TODO。
+- [ ] 后续新增统计区或控制区必须另行设计，不混入已冻结 descriptor ABI。
+
+验收标准：
+
+- 当前 `rtos_shm_ipc_test` 和 `linux_shm_ipc_test` 继续通过。
+- 后续路由层开发不复制 IPC 底层职责。
+
+---
+
+## 3. P1 路由核心迁入 rtos_firmware
+
+目标：在 `rtos_firmware/` 内建立可 host 单测的路由核心，先使用 mock source/sink，不依赖真实 shared memory region。
+
+迁移与模块化：
+
+- [ ] 评估 `freertos/router_core` 已有逻辑，按 `rtos_firmware` 风格迁入或重建到正式模块中。
+- [ ] 将正式路由核心接入 `rtos_firmware/CMakeLists.txt`，新增 `rtos_firmware/test/rtos_router_*_test.c`。
+- [ ] 保持 route input 与 `put_shm_descriptor_t` 解耦；第一阶段不访问 Frame Pool 指针。
+- [ ] 保持 TX / reclaim 输出可替换为 mock sink。
+- [ ] 使用统一时间源抽象，供 TTL、heartbeat、latency、Recovery 测试使用。
+
+CID 路由规则：
+
+- [ ] 使用 `anymsg_frame.h` 中定义的 CID 地址段作为路由依据。
+- [ ] `destination_cid[0]` 在 `0x20 ~ 0x3F` 时路由到 CAN。
+- [ ] `destination_cid[0]` 在 `0x40 ~ 0x5F` 时路由到 Ethernet。
+- [ ] `destination_cid[0]` 在 `0x60 ~ 0x7F` 时路由到 Wi-Fi。
+- [ ] `destination_cid[0]` 在 `0x80 ~ 0x9F` 时路由到 Bluetooth。
+- [ ] `destination_cid[0]` 在 `0xA0 ~ 0xBF` 时路由到 4G。
+- [ ] `destination_cid[0]` 在 `0xC0 ~ 0xDF` 时路由到 RS485。
+- [ ] `0x00 ~ 0x1F` 和 `0xE0 ~ 0xFF` 作为保留地址，不进入 Router Scheduler。
+- [ ] 当前 anyMSG 未定义广播 CID，小核不自行扩展广播语义，统一按 `NO_ROUTE` 处理。
+
+Priority 队列与调度：
+
+- [ ] 实现 priority 0/1/2/3 四级本地队列，数值越小优先级越高。
+- [ ] priority 超出 0..3 时按非法输入处理。
+- [ ] 实现严格优先级 + 配额防饥饿调度。
+- [ ] 默认配额：priority 0 每轮 16 帧，priority 1 每轮 12 帧，priority 2 每轮 8 帧，priority 3 每轮 4 帧。
+- [ ] 本地队列项保存 `frame_id`、source ring/interface、priority、enqueue time、retry count、`route_epoch_seen`。
+- [ ] 本地队列满时优先驱逐 priority 3，再 priority 2，再 priority 1；priority 0 仅在全局降级或 epoch/recovery 异常时丢弃。
+- [ ] priority 0/1 预留策略作为配置项预留，第一版可先通过队列驱逐和测试断言体现。
+
+TTL、epoch、trust 和 anyMSG 基础状态：
+
+- [ ] route input 入队前检查 epoch。
+- [ ] route input 入队前检查 TTL。
+- [ ] 写 TX sink 前再次检查 TTL。
+- [ ] `ttl == 0` 表示不启用过期检查。
+- [ ] 鉴权失败、完整性失败、重放失败的输入不得进入调度队列。
+- [ ] 非法 anyMSG header、非法 CID、非法 type 统一走丢弃统计和 mock reclaim。
+- [ ] descriptor 级 CRC、Frame Pool 边界和 ring 接口一致性校验不在 P1 重做，由 P2 IPC 适配层和 `rtos_shm_ipc_*` API 承担。
+
+Drop/reclaim 映射：
 
 | 小核语义 | IPC reclaim reason |
 | ---- | ---- |
 | 端到网关心跳被消费 | `PUT_SHM_RECLAIM_REASON_HEARTBEAT_CONSUMED` |
-| 无路由 / 保留 CID / 未定义广播 CID | `PUT_SHM_RECLAIM_REASON_NO_ROUTE` |
+| 无路由 / 保留 CID / 未定义广播 CID / gateway CID 未就绪 | `PUT_SHM_RECLAIM_REASON_NO_ROUTE` |
 | TTL 过期 | `PUT_SHM_RECLAIM_REASON_TTL_EXPIRED` |
 | epoch 不匹配 | `PUT_SHM_RECLAIM_REASON_EPOCH_MISMATCH` |
 | 非法 anyMSG / 鉴权失败 / 完整性失败 / 重放失败 | `PUT_SHM_RECLAIM_REASON_INVALID_FRAME` |
 | 本地队列满 / 目标 TX ring 满 / Recovery 丢弃 | `PUT_SHM_RECLAIM_REASON_QUEUE_FULL` |
 
-验收标准：
+P1 验收标准：
 
-- route input 不包含共享内存指针和 Frame Pool 所有权操作。
-- TX / reclaim 输出都可在测试中替换为 mock。
-- 内部 drop reason 能稳定映射到公共 reclaim reason。
-
-### 1.3 CID 路由规则
-
-- [ ] 使用 `anymsg_frame.h` 中定义的 CID 地址段作为路由依据。
-- [ ] 实现 `destination_cid[0]` 到目标接口的固定映射。
-- [ ] `0x20 ~ 0x3F` 路由到 CAN。
-- [ ] `0x40 ~ 0x5F` 路由到 Ethernet。
-- [ ] `0x60 ~ 0x7F` 路由到 Wi-Fi。
-- [ ] `0x80 ~ 0x9F` 路由到 Bluetooth。
-- [ ] `0xA0 ~ 0xBF` 路由到 4G。
-- [ ] `0xC0 ~ 0xDF` 路由到 RS485。
-- [ ] `0x00 ~ 0x1F` 和 `0xE0 ~ 0xFF` 作为保留地址，不进入 Router Scheduler。
-- [ ] 未定义广播 CID 暂不扩展广播语义，统一按 `NO_ROUTE` 处理。
-
-验收标准：
-
-- 每个合法 CID 地址段都有确定目标接口。
-- 保留地址和未定义广播地址不会进入 TX mock。
-- 无路由帧写 mock reclaim，并记录 `NO_ROUTE` 统计。
-
-### 1.4 Priority 队列与调度
-
-- [ ] 实现 priority 0/1/2/3 四级本地队列。
-- [ ] priority 数值越小优先级越高。
-- [ ] priority 超出 0/1/2/3 时按非法输入处理，不进入调度队列。
-- [ ] 实现严格优先级 + 配额的防饥饿调度。
-- [ ] 默认配额：priority 0 每轮 16 帧，priority 1 每轮 12 帧，priority 2 每轮 8 帧，priority 3 每轮 4 帧。
-- [ ] 本地队列满时优先丢弃低优先级帧，并写 mock reclaim。
-- [ ] TX mock 拥塞时按 priority 执行 bounded retry 或丢弃策略。
-
-验收标准：
-
-- priority 0/1 能优先进入 TX mock。
-- priority 2/3 在持续高优先级流量下不会永久饿死。
-- 非法 priority 不会进入调度队列。
-- 本地队列满或 TX mock 拥塞时有确定 drop reason 和统计。
-
-### 1.5 TTL、epoch 与可信性状态
-
-- [ ] route input 入队前检查 epoch。
-- [ ] route input 入队前检查 TTL。
-- [ ] route input 写 TX mock 前再次检查 TTL。
-- [ ] `ttl == 0` 表示不启用过期检查。
-- [ ] 鉴权失败、完整性失败、重放失败的输入不得进入调度队列。
-- [ ] 非法 anyMSG header、非法 CID、非法 type 统一走丢弃统计和 mock reclaim。
-- [ ] descriptor 级 CRC、Frame Pool 边界和 ring 接口一致性校验不在第一阶段实现，由第二阶段 IPC 适配层和 `rtos_shm_ipc_*` API 承担。
-
-验收标准：
-
-- TTL 过期帧不会进入 TX mock。
-- `ttl == 0` 的帧不会因 TTL 检查被误丢弃。
-- epoch 不匹配帧不会进入 TX mock。
-- 鉴权、完整性、重放失败帧不会进入 TX mock。
-- 所有可回收丢弃路径都写 mock reclaim。
-
-### 1.6 端到网关心跳
-
-- [ ] 识别 `type = 0x00` 的端到网关心跳帧。
-- [ ] 使用 `source_cid` 作为端设备身份更新端心跳表。
-- [ ] 仅当 `source_cid[0]` 位于 `0x20 ~ 0xDF` 时进入端心跳表。
-- [ ] 校验 `destination_cid` 是否匹配已配置 gateway CID 或 gateway alias。
-- [ ] gateway CID 未配置时，不更新端心跳表，并写 mock reclaim。
-- [ ] 心跳消费后不进入 Router Scheduler、不写 TX mock。
-- [ ] 小核不生成 `type = 0x01` 网关到端心跳。
-
-验收标准：
-
-- 合法端心跳更新端在线表。
-- 非法端心跳只更新错误统计并写 mock reclaim。
-- 心跳帧不会出现在 TX mock 中。
-
-### 1.7 状态机、Recovery 与降级
-
-- [ ] 实现小核内部状态机：`BOOT`、`INIT_BOARD`、`INIT_ROUTER_TABLE`、`NORMAL`、`DEGRADED`、`RECOVERY`。
-- [ ] 第一阶段 Recovery 只清理小核本地队列和本地状态，不操作共享内存。
-- [ ] Recovery 清理本地队列引用时写 mock reclaim，公共映射为 `PUT_SHM_RECLAIM_REASON_QUEUE_FULL`。
-- [ ] Linux heartbeat、Mailbox 异常、共享内存 epoch 变化等触发条件在第一阶段用 mock event 注入。
-- [ ] 局部降级覆盖本地队列满、目标 TX mock 拥塞、某类 CID 持续无路由。
-
-验收标准：
-
-- Recovery 后本地队列没有遗留待转发旧引用。
-- DEGRADED 状态不继续普通业务路由。
-- mock event 能覆盖状态切换路径。
-
-### 1.8 统计与观测
-
-- [ ] 维护 route success、route miss、drop reason、priority、heartbeat、queue full、recovery 等统计。
-- [ ] 按接口、priority、drop reason 拆分关键统计。
-- [ ] 记录小核内部延迟：mock RX 进入时间到 mock TX 输出时间。
-- [ ] 第一阶段统计输出到小核本地 snapshot 或测试可读取结构。
-- [ ] Web、共享内存 stats/event area 暂不在第一阶段实现。
-
-验收标准：
-
-- 单元测试能读取统计并断言计数。
-- drop、route、heartbeat、recovery 统计与行为一致。
-- priority 0/1、priority 2 至少记录 max/count 延迟。
+- CID 地址段能稳定路由到 6 类目标接口。
+- 保留 CID、未定义广播 CID、无路由不会进入 TX mock。
+- priority 0/1 优先，priority 2/3 在持续高优先级流量下不会永久饿死。
+- TTL、epoch、trust、invalid anyMSG 失败路径全部写 mock reclaim。
+- P1 所有新增单测位于 `rtos_firmware/test/`。
 
 ---
 
-## 2. 第二阶段：基于现有 RTOS IPC v2 API 的共享内存适配
+## 4. P2 IPC Event / Router Scheduler / TX Writer 闭环
 
-目标：将第一阶段的小核核心逻辑接入 `rtos_firmware/ipc/rtos_shm_ipc.*` 提供的现有 v2 descriptor API，形成 RTOS 侧真实 RX drain、TX enqueue 和 reclaim 闭环。
+目标：将 P1 路由核心接入 `rtos_firmware/ipc/rtos_shm_ipc.*`，形成 RTOS 侧真实 RX drain、TX enqueue 和 reclaim 闭环。
 
-### 2.1 IPC 初始化与输入适配
+Mailbox 与 IPC Event Task：
 
-- [ ] 在小核启动流程中接入 `rtos_shm_ipc_attach()`，绑定 BSP/linker 提供的共享内存 region。
-- [ ] IPC Event Task 周期读取 RX pending 状态，并对 6 个接口执行 drain 兜底。
-- [ ] 使用 `rtos_shm_ipc_dequeue_rx_descriptor()` 从指定接口 RX ring 获取 descriptor。
+- [ ] 新增 Mailbox ISR / Doorbell port 抽象；ISR 只清中断并唤醒 IPC Event Task。
+- [ ] Doorbell 只作为 empty -> non-empty 的唤醒信号，不作为队列计数。
+- [ ] IPC Event Task 被 Doorbell 或周期兜底调度唤醒后读取 RX pending bitmap 快照。
+- [ ] IPC Event Task 对 6 个接口执行 RX drain。
+- [ ] 默认每接口 RX drain budget 为 8，默认每轮总 budget 为 64。
+- [ ] Doorbell 丢失或 notify 失败时，周期 drain 仍能依靠 pending bitmap 和 ring read/write seq 兜底。
+- [ ] 路由层不得直接普通 RMW pending bitmap；pending bit 清除、二次检查和竞态处理继续通过 `rtos_shm_ipc_*` 或 IPC 内部 helper 完成。
+
+RX descriptor 到 route input：
+
+- [ ] IPC Event Task 使用 `rtos_shm_ipc_dequeue_rx_descriptor()` 从指定接口 RX ring 获取 descriptor。
 - [ ] 使用 `rtos_shm_ipc_get_frame_const()` 只读访问 Frame Pool 中的完整 anyMSG。
-- [ ] 把真实 descriptor 和 anyMSG header 转换为第一阶段的 `rtos_route_input_t`。
+- [ ] 校验 anyMSG normalized length、保留字段、CID、type。
+- [ ] descriptor 达到 `FRAME_REF_TRUSTED` 前，不读取不可信 `frame_id` 给路由层，不写 reclaim。
 - [ ] IPC API 返回 CRC、Frame Pool 边界、接口一致性等错误时，不把 descriptor 交给路由核心。
-- [ ] descriptor 未达到可信 frame reference 时，不由路由层读取 `frame_id` 或写 reclaim，进入 IPC recovery/error 路径。
+- [ ] 将真实 descriptor、anyMSG header、可信状态转换为 P1 route input。
+- [ ] route input 入队时记录 `route_epoch_seen = active_route_epoch`。
 
-验收标准：
+Heartbeat 快速消费路径：
 
-- RX Descriptor Ring 能被 drain 到路由核心。
-- 小核核心仍不直接依赖共享内存结构体细节。
-- 非法 descriptor 不会把不可信 `frame_id` 交给路由核心。
-- Doorbell 丢失时仍可依靠 pending bitmap 和周期 drain 兜底。
+- [ ] `type = 0x00` 的端到网关心跳帧在 IPC Event / Heartbeat 路径消费。
+- [ ] 合法心跳更新 endpoint heartbeat table。
+- [ ] 心跳消费后写 reclaim，reason 为 `PUT_SHM_RECLAIM_REASON_HEARTBEAT_CONSUMED`。
+- [ ] 心跳帧不进入 Router Scheduler，不写 TX Ring，不触发 TX Doorbell。
+- [ ] 小核不主动生成 `type = 0x01` 网关到端心跳。
 
-### 2.2 TX Writer 与 reclaim 适配
+Router Scheduler：
 
-- [ ] 将第一阶段 `rtos_tx_sink` 的真实实现接到 `rtos_shm_ipc_enqueue_tx_descriptor()`。
-- [ ] 将第一阶段 `rtos_reclaim_sink` 的真实实现接到 `rtos_shm_ipc_reclaim_frame()`。
-- [ ] route success 写目标 TX Descriptor Ring。
-- [ ] 消费或丢弃但不转发的帧写 reclaim ring。
+- [ ] 普通帧进入 Router Scheduler 本地 priority 队列。
+- [ ] Router Scheduler 出队前检查 TTL。
+- [ ] 出队前比较 `route_epoch_seen` 与当前 `active_route_epoch`。
+- [ ] route epoch 变化时重新查询 active route table，并更新目标接口。
+- [ ] 重新查询后无路由的帧写 reclaim，reason 为 `PUT_SHM_RECLAIM_REASON_NO_ROUTE`。
+- [ ] 已写入 TX Ring 的 descriptor 不回滚。
+
+TX Writer 与 reclaim adapter：
+
+- [ ] TX Writer 从 Router Scheduler 获取待发送输出。
+- [ ] TX sink 真实实现调用 `rtos_shm_ipc_enqueue_tx_descriptor()`。
+- [ ] reclaim sink 真实实现调用 `rtos_shm_ipc_reclaim_frame()`。
 - [ ] TX descriptor 和 reclaim descriptor 只能引用 Linux 已发布给 RTOS 的 RX frame。
-- [ ] 小核不释放 Frame Pool，不清零 payload，不修改 Linux free list。
+- [ ] TX Ring 满时执行 bounded retry；重试耗尽后写 reclaim，公共 reason 为 `PUT_SHM_RECLAIM_REASON_QUEUE_FULL`。
+- [ ] reclaim ring 满时暂停继续消费 RX descriptor，进入 `DEGRADED_RECLAIM_FULL` 或等价状态。
+- [ ] reclaim ring 满期间冻结本地引用，等待 Linux drain 后进入补写流程。
 
-验收标准：
+P2 验收标准：
 
+- Linux 写 RX descriptor 后，RTOS 能 drain 并交给路由核心。
 - 成功路由帧出现在目标 TX Ring。
-- 心跳、无路由、TTL 过期、epoch mismatch、非法 anyMSG 等路径出现在 reclaim ring。
-- Frame Pool 最终释放仍由 Linux 完成。
-
-### 2.3 Pending Bitmap、Doorbell 与拥塞
-
-- [ ] pending bitmap 原子 OR/AND、诊断计数原子 ADD、descriptor CRC、cache sync 和 Doorbell 发布继续由 `rtos_shm_ipc_*` API 承担。
-- [ ] 路由层只把 pending bitmap 和 Doorbell 作为事件来源，不直接普通 RMW 共享 pending line。
-- [ ] TX Ring 满时执行 bounded retry 或按 priority 丢弃，并最终写 reclaim reason `PUT_SHM_RECLAIM_REASON_QUEUE_FULL`。
-- [ ] reclaim ring 满时暂停继续消费 RX descriptor，进入 `DEGRADED_RECLAIM_FULL` 或等价状态，等待 Linux drain 后恢复。
-- [ ] Doorbell 失败不作为 descriptor 已发布失败处理；依赖 pending bitmap 和周期 drain 兜底。
-
-验收标准：
-
-- pending bit 不会因路由层普通读改写被覆盖。
-- TX ring full 有确定 retry、drop 和 reclaim 行为。
+- 心跳、无路由、TTL 过期、epoch mismatch、invalid anyMSG 等路径出现在 reclaim ring。
+- IPC 错误 descriptor 不进入路由核心，不产生不可信 reclaim。
+- Doorbell 丢失时仍可通过 pending bitmap 和周期 drain 消费。
 - reclaim ring 满不会导致新的不可回收 Frame Buffer 引用继续产生。
 
-### 2.4 共享内存 Recovery
+---
 
-- [ ] 接入 Linux epoch 变化检测。
-- [ ] 接入共享内存 magic/version 变化检测。
-- [ ] 接入 route table / gateway CID / control area 更新。
-- [ ] Recovery 时暂停新帧投递、冻结本地队列、分批写 reclaim。
-- [ ] reclaim ring 满时 Recovery 不继续写 reclaim，等待 Linux drain 后补写。
-- [ ] Recovery 后重新 attach 或刷新本地 IPC/route/gateway 状态。
+## 5. P3 Heartbeat / Error Monitor / Recovery / Statistics
 
-验收标准：
+目标：补齐小核运行期状态维护、异常降级、恢复同步和可观测性。
 
-- Linux 重启或共享内存重建后，小核不会继续转发旧 epoch 帧。
-- Recovery 后重新加载 Ring 映射、路由表和 gateway CID。
-- 本地旧引用要么已写 reclaim，要么被冻结等待补写，不会静默丢失。
+Heartbeat：
+
+- [ ] 周期性更新 RTOS heartbeat seq。
+- [ ] 周期性读取 Linux heartbeat seq。
+- [ ] Linux heartbeat 300 ms 未变化进入 warning。
+- [ ] Linux heartbeat 500 ms 未变化进入 suspected abnormal。
+- [ ] Linux heartbeat 1000 ms 未变化进入全局降级。
+- [ ] Linux heartbeat 从异常恢复时触发 Recovery。
+- [ ] 端到网关心跳表最大记录数默认 64。
+- [ ] endpoint heartbeat warn 默认 3000 ms，offline 默认 5000 ms。
+- [ ] endpoint entry 至少保存 `source_cid`、last RX interface/ring、last RTOS time、last frame local_time、state、rx_count、timeout_count。
+- [ ] gateway CID 和 gateway alias 由配置或控制区加载；未配置时不更新端心跳表。
+
+Error Monitor：
+
+- [ ] 监控 RX Ring 长时间积压。
+- [ ] 监控 TX Ring 长时间满。
+- [ ] 监控 pending bit 长时间未清除。
+- [ ] 监控 Frame Pool 异常或疑似泄漏。
+- [ ] 监控 TTL 过期、epoch mismatch、route miss 大量增加。
+- [ ] 监控 Mailbox notify 失败。
+- [ ] 监控 Linux heartbeat 超时。
+- [ ] 监控端心跳超时、非法端心跳 source CID、端心跳表满。
+- [ ] 监控共享内存 magic/version、ring descriptor、cache sync 异常。
+- [ ] 监控 reclaim ring 积压或满、pending reclaim 长时间不下降。
+- [ ] 不监控 CAN BusOff、RS485 方向控制、SPI/UART 物理驱动错误，这些由 Linux 物理层负责。
+
+Recovery：
+
+- [ ] Recovery 触发条件包括 Linux heartbeat 恢复、Linux ready 重新置位、linux_epoch 变化、共享内存 magic/version 重建、ring descriptor 变化、route table 更新、Mailbox 恢复、reclaim ring 从满状态恢复。
+- [ ] Recovery 时暂停 IPC Event Task 新帧投递。
+- [ ] Recovery 时暂停 Router Scheduler 和 TX Writer。
+- [ ] 冻结本地 priority 队列引用。
+- [ ] reclaim ring 可写时，按预算分批写 reclaim，reason 映射为 `PUT_SHM_RECLAIM_REASON_QUEUE_FULL`。
+- [ ] reclaim ring 满时进入 `RECLAIM_BLOCKED`，等待 Linux drain 后补写。
+- [ ] 标记旧 epoch 和 TTL 过期数据为待丢弃，不继续写 TX Ring。
+- [ ] 重新检查共享内存 magic/version。
+- [ ] 重新读取 linux_epoch。
+- [ ] 重新 attach 或刷新 RX/TX Ring 映射。
+- [ ] 重新加载 route table、gateway CID 和端心跳配置。
+- [ ] 清理本地 pending bitmap 快照和错误状态。
+- [ ] 端心跳表恢复后必须由新的 `type = 0x00` 心跳重新确认。
+- [ ] Recovery 完成后回到 `NORMAL`。
+
+状态机：
+
+- [ ] 扩展小核全局状态机为：
+
+```text
+BOOT
+INIT_BOARD
+INIT_MAILBOX
+WAIT_SHM_READY
+INIT_RING_MAP
+INIT_ROUTER_TABLE
+NORMAL
+DEGRADED
+DEGRADED_RECLAIM_FULL
+RECLAIM_BLOCKED
+RECOVERY
+```
+
+- [ ] `DEGRADED` 停止普通业务路由，保留错误统计和必要 Doorbell/event。
+- [ ] `DEGRADED_RECLAIM_FULL` 暂停所有会产生新 reclaim 的 RX drain。
+- [ ] `RECLAIM_BLOCKED` 只等待 Linux drain 后补写被冻结 reclaim descriptor。
+- [ ] `RECOVERY` 必须重新同步 epoch、Ring、bitmap、route table 和 gateway 配置，不继续旧状态。
+
+Statistics：
+
+- [ ] 维护 Doorbell RX/TX 次数、RX ring drain 次数、TX ring write 次数。
+- [ ] 维护 route success、route miss、drop reason、priority、interface 维度统计。
+- [ ] 维护 TTL drop、epoch drop、TX ring full、reclaim ring full、reclaim blocked、pending reclaim retry。
+- [ ] 维护 auth failed、integrity failed、replay drop、invalid descriptor、invalid descriptor no reclaim、invalid anyMSG。
+- [ ] 维护 Linux heartbeat timeout、endpoint heartbeat rx/invalid/timeout/recover/table full。
+- [ ] 维护小核内部 latency：RX dequeue 到 TX enqueue 的 max/count，priority 0/1 和 priority 2 预留 p95/p99 或滑动窗口摘要。
+- [ ] 高频统计先在小核本地累加，后续按周期同步到共享状态区。
+
+P3 验收标准：
+
+- Linux heartbeat 超时后停止普通路由，恢复后进入 Recovery。
+- endpoint heartbeat 能从 ONLINE 转 WARN / OFFLINE，并在新心跳到达后恢复。
+- reclaim ring full 能阻塞 RX drain，Linux drain 后能分批补写并恢复。
+- route epoch 切换后，未写 TX Ring 的本地队列项会重新查路由。
+- Recovery 后没有旧 epoch 或 TTL 过期帧继续写 TX Ring。
 
 ---
 
-## 3. 第三阶段：Linux/RTOS host 闭环、板端联调和压测
+## 6. P4 Linux/RTOS host 闭环与板端联调
 
-目标：联调 Linux IPC library、RTOS IPC library、小核路由层和 Linux 出口层，验证端到端行为。第三阶段先完成 host 闭环，再推进板端 reserved-memory、cache maintenance 和 Mailbox/CMDQU。
+目标：联调 Linux IPC library、RTOS IPC library、小核路由层和 Linux 出口层，验证端到端行为。先完成 host 闭环，再推进板端 reserved-memory、cache maintenance 和 Mailbox/CMDQU。
 
-### 3.1 Host 闭环场景
+Host 闭环：
 
 - [ ] Linux 使用 `linux_shm_frame_alloc()` 分配 Frame Pool block。
 - [ ] Linux 写入完整 anyMSG 后调用 `linux_shm_frame_commit_rx()` 发布 RX descriptor。
@@ -282,18 +425,10 @@ drop/reclaim 映射必须覆盖：
 - [ ] Linux 使用 `linux_shm_dequeue_tx_descriptor()` 读取目标 TX descriptor 和只读 frame。
 - [ ] RTOS 消费或丢弃时调用 `rtos_shm_ipc_reclaim_frame()`。
 - [ ] Linux 使用 `linux_shm_dequeue_reclaim_descriptor()` ack reclaim 并最终释放 Frame Pool block。
-- [ ] 验证 `RX_QUEUED` frame 不可由 Linux 公开 release API 直接释放。
 - [ ] 验证 RTOS 回写 TX/reclaim 只能引用 Linux 已发布给 RTOS 的 frame。
+- [ ] 长时间闭环后 Linux Frame Pool used 回落稳定，无持续增长疑似泄漏。
 
-验收标准：
-
-- CAN RX 能路由到 RS485 TX。
-- `type = 0x00` 心跳被 RTOS 消费，Linux 能从 reclaim ring 回收。
-- 无路由、TTL 过期、epoch mismatch、invalid frame 进入 reclaim。
-- TX ring full 后 bounded retry 失败，最终 reclaim `PUT_SHM_RECLAIM_REASON_QUEUE_FULL`。
-- reclaim ring full 时 RTOS 暂停继续消费 RX。
-
-### 3.2 板端联调场景
+板端联调：
 
 - [ ] 确认 Linux DTS `reserved-memory` 与 RTOS BSP/linker 使用同一物理共享内存区域。
 - [ ] 替换 host no-op cache ops 为板端真实 cache flush/invalidate。
@@ -301,61 +436,42 @@ drop/reclaim 映射必须覆盖：
 - [ ] 验证 Doorbell 只作为唤醒信号，pending bitmap 和 ring 状态仍是唯一可信数据状态。
 - [ ] 验证 Doorbell 丢失、notify 失败、Linux 出口暂时不 drain 时周期 drain 能兜底。
 - [ ] 验证 Linux 重启或共享内存重建触发 RTOS Recovery。
+- [ ] 验证 cache maintenance 和 Mailbox 平台 ops 的错误能被统计和降级处理。
 
-验收标准：
+压测：
 
-- 真实 TX Ring 和 Linux 出口层能收到正确目标帧。
-- 消费或丢弃帧最终能被 Linux 回收 Frame Buffer。
-- 路由结果、drop reason、统计和日志一致。
-- cache maintenance 和 Mailbox 平台 ops 的错误能被统计和降级处理。
-
-### 3.3 压测场景
-
-- [ ] 高负载 RX Ring drain 下 priority 0/1 小核内部延迟。
+- [ ] 高负载 RX ring drain 下 priority 0/1 小核内部 max/p95/p99 延迟。
 - [ ] 单一高吞吐入口打满时，其他入口和高优先级帧仍可处理。
-- [ ] 目标 TX Ring 拥塞下 bounded retry、`QUEUE_FULL` reclaim 和统计行为。
+- [ ] 目标 TX ring 拥塞下 bounded retry、`QUEUE_FULL` reclaim 和统计行为。
 - [ ] reclaim ring 积压和满载恢复。
-- [ ] Linux 出口阻塞时，小核 TX enqueue 延迟与 Linux send done 延迟分开统计。
-- [ ] 长时间压测后 Frame Pool 使用量回落到稳定水平。
+- [ ] Linux 出口阻塞时，小核 TX ring 写入延迟与 Linux send done 延迟分开统计。
+- [ ] 低 MTU 接口分片发送时，验证 priority 0/1 是否能按 Linux 出口策略在分片边界插队。
+- [ ] 压测报告包含最大延迟、p95/p99、drop reason、水位线和 Frame Pool 使用曲线。
 
-验收标准：
+P4 验收标准：
 
-- priority 0/1 在小核内获得优先调度。
-- priority 2/3 在拥塞时按策略丢弃或降级。
-- Frame Pool 不出现持续增长的疑似泄漏。
-- 压测报告包含最大延迟、p95/p99、drop reason 和水位线。
-
----
-
-## 4. 已有测试基线
-
-RTOS IPC 基线：
-
-- [x] `rtos_firmware/test/rtos_shm_ipc_test.c` 覆盖 ABI size、format/attach。
-- [x] 覆盖 RX/TX descriptor ring enqueue/dequeue。
-- [x] 覆盖 descriptor CRC 错误消费。
-- [x] 覆盖 Frame Pool 边界校验。
-- [x] 覆盖 reclaim descriptor 写入。
-- [x] 覆盖 notify 失败后 descriptor 保持已发布。
-- [x] 覆盖 pending bit 清除与并发入队竞态。
-- [x] 覆盖跨接口 pending bit 设置不被清位覆盖。
-- [x] 覆盖 RX/TX ring 接口不一致时消费坏 descriptor 并计数。
-
-Linux IPC 基线：
-
-- [x] `linux_app/test/linux_shm_ipc_test.c` 覆盖 format/attach、host map/unmap。
-- [x] 覆盖 Frame Pool alloc/release/quota/global full。
-- [x] 覆盖 RX commit、notify partial-success 和重复 frame 拒绝。
-- [x] 覆盖 `RX_QUEUED` frame 不允许直接 release。
-- [x] 覆盖 TX dequeue 成功、坏 descriptor 消费、未发布 frame 拒绝。
-- [x] 覆盖 reclaim dequeue、reclaim ack 和来源/目标元数据错配拒绝。
-- [x] 覆盖 pending clear 的跨接口和同接口竞态。
+- CAN RX 能路由到 RS485 TX。
+- RS485 RX 能路由到 CAN TX。
+- Ethernet RX 能按 CID 路由到目标 TX ring。
+- `type = 0x00` 心跳被 RTOS 消费，Linux 能从 reclaim ring 回收。
+- 无路由、TTL 过期、epoch mismatch、invalid frame 进入 reclaim。
+- TX ring full 后 bounded retry 失败，最终 reclaim `PUT_SHM_RECLAIM_REASON_QUEUE_FULL`。
+- reclaim ring full 时 RTOS 暂停继续消费 RX。
+- 板端真实 TX Ring 和 Linux 出口层能收到正确目标帧。
 
 ---
 
-## 5. 新增测试清单
+## 7. 测试与验收清单
 
-### 5.1 第一阶段路由核心测试
+新增测试落位：
+
+- [ ] 新增正式路由核心测试放入 `rtos_firmware/test/`。
+- [ ] 新增 IPC 适配和闭环测试放入 `rtos_firmware/test/` 或跨库 host test 目录。
+- [ ] 不继续扩展 `freertos/router_core/test` 作为正式验收入口。
+- [ ] 保留并持续运行 `rtos_firmware/test/rtos_shm_ipc_test.c`。
+- [ ] 保留并持续运行 `linux_app/test/linux_shm_ipc_test.c`。
+
+P1 测试：
 
 - [ ] CID 首字节路由到 CAN / Ethernet / Wi-Fi / Bluetooth / 4G / RS485。
 - [ ] 保留 CID、未定义广播 CID、无路由进入 drop / mock reclaim。
@@ -373,9 +489,9 @@ Linux IPC 基线：
 - [ ] Recovery 清理本地队列引用并写 mock reclaim。
 - [ ] 统计计数与实际处理路径一致。
 
-### 5.2 第二阶段 IPC 适配测试
+P2 测试：
 
-- [ ] RX Descriptor Ring drain 到第一阶段路由核心。
+- [ ] RX Descriptor Ring drain 到正式路由核心。
 - [ ] Frame Pool 只读访问完整 anyMSG header。
 - [ ] TX Ring 写入目标接口 descriptor。
 - [ ] reclaim ring 写入公共 reclaim reason。
@@ -383,12 +499,26 @@ Linux IPC 基线：
 - [ ] Doorbell 失败后 descriptor 仍可通过 pending bitmap 和周期 drain 消费。
 - [ ] reclaim ring 满时暂停继续消费 RX descriptor。
 - [ ] Frame Pool 引用不在小核释放或清零。
-- [ ] epoch 变化触发 Recovery。
+- [ ] route input 记录 `route_epoch_seen`。
+- [ ] route epoch 变化后出队前重新查路由。
 
-### 5.3 第三阶段跨库闭环测试
+P3 测试：
+
+- [ ] Linux heartbeat warning / suspected abnormal / global degraded 转换。
+- [ ] Linux heartbeat 恢复触发 Recovery。
+- [ ] endpoint heartbeat ONLINE / WARN / OFFLINE 转换。
+- [ ] reclaim full 进入 `DEGRADED_RECLAIM_FULL`。
+- [ ] Linux drain reclaim 后进入 `RECLAIM_BLOCKED` 补写并恢复。
+- [ ] linux_epoch 变化触发 Recovery。
+- [ ] magic/version 变化触发 Recovery。
+- [ ] route table CRC 错误保持旧表并计数。
+- [ ] Recovery 后旧 epoch 本地引用不会写 TX Ring。
+
+P4 测试：
 
 - [ ] Linux `alloc + commit_rx`，RTOS drain/route，Linux `dequeue_tx`。
 - [ ] CAN RX 到 RS485 TX。
+- [ ] RS485 RX 到 CAN TX。
 - [ ] `type = 0x00` 心跳被 RTOS 消费，Linux 从 reclaim ring 回收。
 - [ ] 无路由、TTL 过期、epoch mismatch、invalid frame 进入 reclaim。
 - [ ] TX ring full 后 bounded retry 失败，最终 reclaim `PUT_SHM_RECLAIM_REASON_QUEUE_FULL`。
@@ -397,10 +527,12 @@ Linux IPC 基线：
 
 ---
 
-## 6. 关键假设
+## 8. 关键假设
 
 - 本计划只指导 `rtos_firmware/` 小核后续实现，不修改公共 ABI。
-- 第二阶段共享内存 ABI 以 `common/include/shared_memory_ipc.h`、接口文档和架构设计文档为准，不以第一阶段 mock 类型作为 ABI。
-- `rtos_firmware/ipc` 当前实现视为第二阶段可用底座；后续若 API 返回码或平台 ops 细节变化，只调整 IPC 适配层和本 TODO 对应条目。
-- `linux_app/ipc` 当前实现视为 host 闭环的 Linux 侧基线；真实协议入口和物理出口接入可在第三阶段逐步替换 mock。
-- 板端 cache maintenance、Mailbox/CMDQU doorbell 以后续内核驱动或 ioctl 接口为准。
+- `common/include/shared_memory_ipc.h`、接口文档和共享内存架构设计是第二阶段及以后真实适配的 ABI 来源。
+- `rtos_firmware/ipc` 当前实现视为可复用底座。
+- `linux_app/ipc` 当前实现视为 host 闭环的 Linux 侧基线。
+- `freertos/router_core` 的已有实现可被借鉴或迁移，但不能在实施计划中标为 `rtos_firmware` 已完成。
+- 真实 Mailbox/CMDQU、cache maintenance、DTS reserved-memory 细节留到板端联调阶段，不在 TODO 文档中虚构具体驱动接口。
+- 后续若新增共享状态区、控制区、route table wire format 或统计 ABI，需要单独设计并评审，不能隐式塞入现有 descriptor。

@@ -1,0 +1,336 @@
+#include "ethernet_adapter.h"
+
+#include <stdio.h>
+#include <string.h>
+
+#include "anymsg_frame.h"
+#include "shared_memory_ipc.h"
+
+#define CHECK(condition)                                                            \
+    do {                                                                            \
+        if (!(condition)) {                                                         \
+            (void)fprintf(stderr, "CHECK failed: %s:%d: %s\n", __FILE__, __LINE__, \
+                          #condition);                                              \
+            return 1;                                                               \
+        }                                                                           \
+    } while (0)
+
+static put_shm_region_t g_region;
+
+static void write_le16(uint8_t bytes[2], uint16_t value)
+{
+    bytes[0] = (uint8_t)(value & 0xFFu);
+    bytes[1] = (uint8_t)((value >> 8u) & 0xFFu);
+}
+
+static size_t make_anymsg(uint8_t *buffer,
+                          uint16_t payload_length,
+                          uint8_t source_first,
+                          uint8_t destination_first)
+{
+    anymsg_header_t *header;
+    uint16_t msg_length;
+
+    memset(buffer, 0, PUT_SHM_FRAME_POOL_BLOCK_SIZE + 1u);
+    msg_length = (uint16_t)(ANYMSG_HEADER_SIZE + payload_length);
+    header = (anymsg_header_t *)buffer;
+    write_le16(header->msg_length, msg_length);
+    header->retries = 1u;
+    header->destination_cid[0] = destination_first;
+    header->source_cid[0] = source_first;
+    write_le16(header->payload_length, payload_length);
+    header->type = ANYMSG_TYPE_RAW_CAN;
+    for (uint16_t i = 0u; i < payload_length; ++i) {
+        buffer[ANYMSG_HEADER_SIZE + i] = (uint8_t)(0xA0u + (i & 0x0Fu));
+    }
+    return msg_length;
+}
+
+static int setup_ipc(linux_shm_ipc_t *ipc, uint32_t linux_epoch)
+{
+    linux_shm_ipc_init(ipc);
+    return (linux_shm_ipc_format_region(ipc, &g_region, linux_epoch, 0u, NULL) == UNIFIED_OK) ? 0 : 1;
+}
+
+static int test_valid_udp_anymsg_enters_ethernet_rx_ring(void)
+{
+    linux_shm_ipc_t ipc;
+    ethernet_rx_context_t ctx;
+    linux_shm_ipc_stats_t stats;
+    put_shm_descriptor_ring_t *ring;
+    const put_shm_descriptor_t *descriptor;
+    uint8_t frame[PUT_SHM_FRAME_POOL_BLOCK_SIZE + 1u];
+    size_t frame_len;
+
+    CHECK(setup_ipc(&ipc, 1234u) == 0);
+    frame_len = make_anymsg(frame, 4u, 0x40u, 0x20u);
+
+    memset(&ctx, 0, sizeof(ctx));
+    ctx.ipc = &ipc;
+    ctx.linux_epoch = 1234u;
+
+    CHECK(ethernet_adapter_handle_datagram(&ctx, frame, frame_len) == UNIFIED_OK);
+    CHECK(memcmp(g_region.frame_pool[0].bytes, frame, frame_len) == 0);
+
+    ring = &g_region.rx_rings[PUT_SHM_INTERFACE_ETHERNET];
+    CHECK(ring->producer.write_seq == 1u);
+    CHECK(g_region.rx_pending_bitmap.bits == (uint32_t)(1u << PUT_SHM_INTERFACE_ETHERNET));
+    descriptor = &ring->descriptors[0];
+    CHECK(descriptor->frame_id == 0u);
+    CHECK(descriptor->frame_length == (uint16_t)frame_len);
+    CHECK(descriptor->source_interface == (uint8_t)PUT_SHM_INTERFACE_ETHERNET);
+    CHECK(descriptor->target_interface == (uint8_t)PUT_SHM_INTERFACE_CAN);
+    CHECK(descriptor->source_cid[0] == 0x40u);
+    CHECK(descriptor->destination_cid[0] == 0x20u);
+    CHECK(descriptor->type == ANYMSG_TYPE_RAW_CAN);
+    CHECK(descriptor->priority == ETHERNET_ADAPTER_DEFAULT_PRIORITY);
+    CHECK(descriptor->ttl == ETHERNET_ADAPTER_DEFAULT_TTL);
+    CHECK(descriptor->epoch == 1234u);
+
+    linux_shm_ipc_get_stats(&ipc, &stats);
+    CHECK(stats.frame_pool.used == 1u);
+    CHECK(stats.frame_pool.high_watermark == 1u);
+    CHECK(stats.rx_rings[PUT_SHM_INTERFACE_ETHERNET].used == 1u);
+    return 0;
+}
+
+static int test_decode_rejects_invalid_udp_anymsg(void)
+{
+    adapter_rx_result_t rx;
+    uint8_t frame[PUT_SHM_FRAME_POOL_BLOCK_SIZE + 1u];
+    size_t frame_len;
+    anymsg_header_t *header;
+
+    frame_len = make_anymsg(frame, 4u, 0x40u, 0x20u);
+    header = (anymsg_header_t *)frame;
+
+    CHECK(ethernet_adapter_decode_datagram(frame, ANYMSG_HEADER_SIZE - 1u, &rx) != UNIFIED_OK);
+    CHECK(ethernet_adapter_decode_datagram(frame, PUT_SHM_FRAME_POOL_BLOCK_SIZE + 1u, &rx) != UNIFIED_OK);
+
+    frame_len = make_anymsg(frame, 4u, 0x40u, 0x20u);
+    write_le16(header->msg_length, (uint16_t)(frame_len + 1u));
+    CHECK(ethernet_adapter_decode_datagram(frame, frame_len, &rx) != UNIFIED_OK);
+
+    frame_len = make_anymsg(frame, 4u, 0x40u, 0x20u);
+    write_le16(header->payload_length, 3u);
+    CHECK(ethernet_adapter_decode_datagram(frame, frame_len, &rx) != UNIFIED_OK);
+
+    frame_len = make_anymsg(frame, 4u, 0x40u, 0x20u);
+    header->reserved = 1u;
+    CHECK(ethernet_adapter_decode_datagram(frame, frame_len, &rx) != UNIFIED_OK);
+
+    frame_len = make_anymsg(frame, 4u, 0x20u, 0x40u);
+    CHECK(ethernet_adapter_decode_datagram(frame, frame_len, &rx) != UNIFIED_OK);
+
+    return 0;
+}
+
+static int test_decode_errors_are_counted(void)
+{
+    linux_shm_ipc_t ipc;
+    status_collector_t collector;
+    ethernet_rx_context_t ctx;
+    uint8_t frame[PUT_SHM_FRAME_POOL_BLOCK_SIZE + 1u];
+    size_t frame_len;
+
+    CHECK(setup_ipc(&ipc, 2000u) == 0);
+    status_collector_init(&collector, NULL, false);
+    status_collector_configure_module(&collector,
+                                      STATUS_MODULE_ETHERNET,
+                                      true,
+                                      true,
+                                      "Ethernet UDP/TCP raw",
+                                      "test");
+    memset(&ctx, 0, sizeof(ctx));
+    ctx.ipc = &ipc;
+    ctx.collector = &collector;
+    ctx.linux_epoch = 2000u;
+
+    frame_len = make_anymsg(frame, 4u, 0x20u, 0x40u);
+    CHECK(ethernet_adapter_handle_datagram(&ctx, frame, frame_len) != UNIFIED_OK);
+    CHECK(collector.modules[STATUS_MODULE_ETHERNET].decode_error_count == 1u);
+    CHECK(collector.modules[STATUS_MODULE_ETHERNET].error_count == 1u);
+    status_collector_destroy(&collector);
+    return 0;
+}
+
+static int test_frame_pool_full_has_no_leak(void)
+{
+    linux_shm_ipc_t ipc;
+    ethernet_rx_context_t ctx;
+    linux_shm_ipc_stats_t stats;
+    uint8_t frame[PUT_SHM_FRAME_POOL_BLOCK_SIZE + 1u];
+    size_t frame_len;
+
+    CHECK(setup_ipc(&ipc, 3000u) == 0);
+    CHECK(linux_shm_ipc_set_interface_quota(&ipc, PUT_SHM_INTERFACE_ETHERNET, 0u) == UNIFIED_OK);
+    frame_len = make_anymsg(frame, 0u, 0x40u, 0x20u);
+
+    memset(&ctx, 0, sizeof(ctx));
+    ctx.ipc = &ipc;
+    ctx.linux_epoch = 3000u;
+
+    CHECK(ethernet_adapter_handle_datagram(&ctx, frame, frame_len) == UNIFIED_ERR_IPC_FRAME_POOL_FULL);
+    linux_shm_ipc_get_stats(&ipc, &stats);
+    CHECK(stats.frame_pool.used == 0u);
+    CHECK(stats.frame_pool.full_count == 1u);
+    CHECK(stats.rx_rings[PUT_SHM_INTERFACE_ETHERNET].used == 0u);
+    return 0;
+}
+
+static int test_rx_ring_full_releases_unpublished_frame(void)
+{
+    linux_shm_ipc_t ipc;
+    ethernet_rx_context_t ctx;
+    linux_shm_ipc_stats_t stats;
+    uint8_t frame[PUT_SHM_FRAME_POOL_BLOCK_SIZE + 1u];
+    size_t frame_len;
+
+    CHECK(setup_ipc(&ipc, 4000u) == 0);
+    frame_len = make_anymsg(frame, 0u, 0x40u, 0x20u);
+    memset(&ctx, 0, sizeof(ctx));
+    ctx.ipc = &ipc;
+    ctx.linux_epoch = 4000u;
+
+    for (uint32_t i = 0u; i < PUT_SHM_DESCRIPTOR_RING_DEPTH; ++i) {
+        frame[ANYMSG_OFFSET_LOCAL_TIME] = (uint8_t)i;
+        CHECK(ethernet_adapter_handle_datagram(&ctx, frame, frame_len) == UNIFIED_OK);
+    }
+
+    CHECK(ethernet_adapter_handle_datagram(&ctx, frame, frame_len) == UNIFIED_ERR_IPC_QUEUE_FULL);
+    linux_shm_ipc_get_stats(&ipc, &stats);
+    CHECK(stats.frame_pool.used == PUT_SHM_DESCRIPTOR_RING_DEPTH);
+    CHECK(stats.frame_pool.allocated == PUT_SHM_DESCRIPTOR_RING_DEPTH + 1u);
+    CHECK(stats.frame_pool.released == 1u);
+    CHECK(stats.rx_rings[PUT_SHM_INTERFACE_ETHERNET].used == PUT_SHM_DESCRIPTOR_RING_DEPTH);
+    CHECK(stats.rx_rings[PUT_SHM_INTERFACE_ETHERNET].full_count == 1u);
+    return 0;
+}
+
+
+static int test_tcp_stream_partial_frame_enters_ethernet_rx_ring(void)
+{
+    linux_shm_ipc_t ipc;
+    ethernet_rx_context_t rx_ctx;
+    ethernet_tcp_stream_context_t stream_ctx;
+    linux_shm_ipc_stats_t stats;
+    uint8_t frame[PUT_SHM_FRAME_POOL_BLOCK_SIZE + 1u];
+    size_t frame_len;
+
+    CHECK(setup_ipc(&ipc, 5000u) == 0);
+    frame_len = make_anymsg(frame, 8u, 0x40u, 0x20u);
+    memset(&rx_ctx, 0, sizeof(rx_ctx));
+    rx_ctx.ipc = &ipc;
+    rx_ctx.linux_epoch = 5000u;
+    ethernet_tcp_stream_init(&stream_ctx, &rx_ctx);
+
+    CHECK(ethernet_adapter_handle_tcp_bytes(&stream_ctx, frame, 7u) == UNIFIED_OK);
+    linux_shm_ipc_get_stats(&ipc, &stats);
+    CHECK(stats.frame_pool.used == 0u);
+    CHECK(stream_ctx.buffered_len == 7u);
+
+    CHECK(ethernet_adapter_handle_tcp_bytes(&stream_ctx, frame + 7u, frame_len - 7u) == UNIFIED_OK);
+    linux_shm_ipc_get_stats(&ipc, &stats);
+    CHECK(stats.frame_pool.used == 1u);
+    CHECK(stats.rx_rings[PUT_SHM_INTERFACE_ETHERNET].used == 1u);
+    CHECK(stream_ctx.buffered_len == 0u);
+    CHECK(memcmp(g_region.frame_pool[0].bytes, frame, frame_len) == 0);
+    return 0;
+}
+
+static int test_tcp_stream_multiple_frames_in_one_chunk(void)
+{
+    linux_shm_ipc_t ipc;
+    ethernet_rx_context_t rx_ctx;
+    ethernet_tcp_stream_context_t stream_ctx;
+    linux_shm_ipc_stats_t stats;
+    uint8_t frame_a[PUT_SHM_FRAME_POOL_BLOCK_SIZE + 1u];
+    uint8_t frame_b[PUT_SHM_FRAME_POOL_BLOCK_SIZE + 1u];
+    uint8_t stream[PUT_SHM_FRAME_POOL_BLOCK_SIZE * 2u];
+    size_t len_a;
+    size_t len_b;
+
+    CHECK(setup_ipc(&ipc, 5001u) == 0);
+    len_a = make_anymsg(frame_a, 0u, 0x40u, 0x20u);
+    len_b = make_anymsg(frame_b, 3u, 0x41u, 0x60u);
+    memcpy(stream, frame_a, len_a);
+    memcpy(stream + len_a, frame_b, len_b);
+
+    memset(&rx_ctx, 0, sizeof(rx_ctx));
+    rx_ctx.ipc = &ipc;
+    rx_ctx.linux_epoch = 5001u;
+    ethernet_tcp_stream_init(&stream_ctx, &rx_ctx);
+
+    CHECK(ethernet_adapter_handle_tcp_bytes(&stream_ctx, stream, len_a + len_b) == UNIFIED_OK);
+    linux_shm_ipc_get_stats(&ipc, &stats);
+    CHECK(stats.frame_pool.used == 2u);
+    CHECK(stats.rx_rings[PUT_SHM_INTERFACE_ETHERNET].used == 2u);
+    CHECK(g_region.rx_rings[PUT_SHM_INTERFACE_ETHERNET].descriptors[0].target_interface ==
+          (uint8_t)PUT_SHM_INTERFACE_CAN);
+    CHECK(g_region.rx_rings[PUT_SHM_INTERFACE_ETHERNET].descriptors[1].target_interface ==
+          (uint8_t)PUT_SHM_INTERFACE_WIFI);
+    CHECK(stream_ctx.buffered_len == 0u);
+    return 0;
+}
+
+static int test_tcp_stream_invalid_length_is_counted(void)
+{
+    linux_shm_ipc_t ipc;
+    status_collector_t collector;
+    ethernet_rx_context_t rx_ctx;
+    ethernet_tcp_stream_context_t stream_ctx;
+    uint8_t bad_length[2] = {0x01u, 0x00u};
+
+    CHECK(setup_ipc(&ipc, 5002u) == 0);
+    status_collector_init(&collector, NULL, false);
+    status_collector_configure_module(&collector,
+                                      STATUS_MODULE_ETHERNET,
+                                      true,
+                                      true,
+                                      "Ethernet UDP/TCP raw",
+                                      "test");
+    memset(&rx_ctx, 0, sizeof(rx_ctx));
+    rx_ctx.ipc = &ipc;
+    rx_ctx.collector = &collector;
+    rx_ctx.linux_epoch = 5002u;
+    ethernet_tcp_stream_init(&stream_ctx, &rx_ctx);
+
+    CHECK(ethernet_adapter_handle_tcp_bytes(&stream_ctx, bad_length, sizeof(bad_length)) ==
+          UNIFIED_ERR_LENGTH);
+    CHECK(stream_ctx.buffered_len == 0u);
+    CHECK(collector.modules[STATUS_MODULE_ETHERNET].decode_error_count == 1u);
+    CHECK(collector.modules[STATUS_MODULE_ETHERNET].error_count == 1u);
+    status_collector_destroy(&collector);
+    return 0;
+}
+
+int main(void)
+{
+    if (test_valid_udp_anymsg_enters_ethernet_rx_ring() != 0) {
+        return 1;
+    }
+    if (test_decode_rejects_invalid_udp_anymsg() != 0) {
+        return 1;
+    }
+    if (test_decode_errors_are_counted() != 0) {
+        return 1;
+    }
+    if (test_frame_pool_full_has_no_leak() != 0) {
+        return 1;
+    }
+    if (test_rx_ring_full_releases_unpublished_frame() != 0) {
+        return 1;
+    }
+    if (test_tcp_stream_partial_frame_enters_ethernet_rx_ring() != 0) {
+        return 1;
+    }
+    if (test_tcp_stream_multiple_frames_in_one_chunk() != 0) {
+        return 1;
+    }
+    if (test_tcp_stream_invalid_length_is_counted() != 0) {
+        return 1;
+    }
+
+    puts("ethernet_adapter_test: OK");
+    return 0;
+}

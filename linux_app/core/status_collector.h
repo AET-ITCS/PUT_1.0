@@ -1,4 +1,3 @@
-/* 通用 Web 状态快照：维护多协议模块统计并写入 /run/put/status。 */
 #ifndef STATUS_COLLECTOR_H
 #define STATUS_COLLECTOR_H
 
@@ -9,6 +8,7 @@
 #include <pthread.h>
 
 #include "error_code.h"
+#include "linux_shm_ipc.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -19,9 +19,12 @@ extern "C" {
 #define STATUS_COLLECTOR_TEXT_MAX 128u
 
 typedef enum {
-    STATUS_MODULE_4G = 0,
+    STATUS_MODULE_CAN = 0,
+    STATUS_MODULE_ETHERNET,
     STATUS_MODULE_WIFI,
     STATUS_MODULE_BLUETOOTH,
+    STATUS_MODULE_4G,
+    STATUS_MODULE_RS485,
     STATUS_MODULE_COUNT
 } status_module_id_t;
 
@@ -34,15 +37,20 @@ typedef struct {
     char protocol[32];
     char detail[STATUS_COLLECTOR_TEXT_MAX];
 
-    uint64_t rx_count;
-    uint64_t tx_count;
+    uint64_t rx_frames;
+    uint64_t tx_frames;
     uint64_t rx_bytes;
+    uint64_t tx_bytes;
     uint64_t error_count;
-    uint64_t parse_error_count;
-    uint64_t pack_error_count;
+    uint64_t decode_error_count;
+    uint64_t fragment_drop_count;
+    uint64_t reassemble_timeout_count;
+    uint64_t crc_error_count;
+    uint64_t send_fail_count;
+    uint64_t interface_offline_count;
     uint64_t ipc_error_count;
 
-    uint64_t last_seen_ms;
+    uint64_t last_rx_ms;
     uint64_t last_tx_ms;
     uint64_t last_error_ms;
     uint64_t last_ipc_error_ms;
@@ -60,6 +68,10 @@ typedef struct {
     uint64_t updated_at_ms;
     pthread_mutex_t mutex;
     status_module_snapshot_t modules[STATUS_MODULE_COUNT];
+    bool ipc_stats_valid;
+    bool rtos_online;
+    uint64_t heartbeat_ms;
+    linux_shm_ipc_stats_t ipc_stats;
 } status_collector_t;
 
 void status_collector_init(status_collector_t *collector, const char *status_dir, bool enabled);
@@ -75,14 +87,19 @@ void status_collector_mark_stopped(status_collector_t *collector,
                                    status_module_id_t module_id,
                                    const char *reason);
 void status_collector_record_rx(status_collector_t *collector, status_module_id_t module_id, size_t bytes);
-void status_collector_record_tx_ok(status_collector_t *collector, status_module_id_t module_id);
+void status_collector_record_tx_ok(status_collector_t *collector, status_module_id_t module_id, size_t bytes);
 void status_collector_record_error(status_collector_t *collector,
                                    status_module_id_t module_id,
                                    const char *stage,
                                    unified_error_t err);
+void status_collector_update_ipc_stats(status_collector_t *collector,
+                                       const linux_shm_ipc_stats_t *stats,
+                                       bool rtos_online,
+                                       uint64_t heartbeat_ms);
 int status_collector_write_all(status_collector_t *collector);
 
 const char *status_module_name(status_module_id_t module_id);
+const char *status_module_display_protocol(status_module_id_t module_id);
 
 #ifdef __cplusplus
 }

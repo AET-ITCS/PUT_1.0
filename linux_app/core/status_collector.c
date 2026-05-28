@@ -1,4 +1,3 @@
-/* 通用 Web 状态快照实现：原子写 JSON/JSONL，供 put-webd 只读展示。 */
 #define _POSIX_C_SOURCE 200809L
 
 #include "status_collector.h"
@@ -16,6 +15,26 @@
 
 typedef int (*status_writer_t)(FILE *fp, const status_collector_t *collector, uint64_t now_ms);
 
+static const char *interface_name_from_id(uint32_t interface_id)
+{
+    switch (interface_id) {
+    case PUT_SHM_INTERFACE_CAN:
+        return "can";
+    case PUT_SHM_INTERFACE_ETHERNET:
+        return "ethernet";
+    case PUT_SHM_INTERFACE_WIFI:
+        return "wifi";
+    case PUT_SHM_INTERFACE_BLUETOOTH:
+        return "bluetooth";
+    case PUT_SHM_INTERFACE_4G:
+        return "4g";
+    case PUT_SHM_INTERFACE_RS485:
+        return "rs485";
+    default:
+        return "unknown";
+    }
+}
+
 static uint64_t now_monotonic_ms(void)
 {
     struct timespec ts;
@@ -29,22 +48,48 @@ static uint64_t now_monotonic_ms(void)
 
 static void copy_text(char *dst, size_t dst_size, const char *src)
 {
-    if ((dst == NULL) || (dst_size == 0u)) {
+    if ((dst == 0) || (dst_size == 0u)) {
         return;
     }
 
-    (void)snprintf(dst, dst_size, "%s", (src == NULL) ? "" : src);
+    (void)snprintf(dst, dst_size, "%s", (src == 0) ? "" : src);
 }
 
 const char *status_module_name(status_module_id_t module_id)
 {
     switch (module_id) {
-    case STATUS_MODULE_4G:
-        return "4g";
+    case STATUS_MODULE_CAN:
+        return "can";
+    case STATUS_MODULE_ETHERNET:
+        return "ethernet";
     case STATUS_MODULE_WIFI:
         return "wifi";
     case STATUS_MODULE_BLUETOOTH:
         return "bluetooth";
+    case STATUS_MODULE_4G:
+        return "4g";
+    case STATUS_MODULE_RS485:
+        return "rs485";
+    default:
+        return "unknown";
+    }
+}
+
+const char *status_module_display_protocol(status_module_id_t module_id)
+{
+    switch (module_id) {
+    case STATUS_MODULE_CAN:
+        return "CAN";
+    case STATUS_MODULE_ETHERNET:
+        return "Ethernet UDP/TCP raw";
+    case STATUS_MODULE_WIFI:
+        return "Wi-Fi";
+    case STATUS_MODULE_BLUETOOTH:
+        return "Bluetooth";
+    case STATUS_MODULE_4G:
+        return "4G";
+    case STATUS_MODULE_RS485:
+        return "RS485";
     default:
         return "unknown";
     }
@@ -55,7 +100,7 @@ static int mkdir_p(const char *path)
     char tmp[STATUS_COLLECTOR_PATH_MAX];
     size_t len;
 
-    if ((path == NULL) || (path[0] == '\0')) {
+    if ((path == 0) || (path[0] == '\0')) {
         return -1;
     }
 
@@ -89,7 +134,7 @@ static int mkdir_p(const char *path)
 
 static void fprint_json_string(FILE *fp, const char *text)
 {
-    const unsigned char *p = (const unsigned char *)((text == NULL) ? "" : text);
+    const unsigned char *p = (const unsigned char *)((text == 0) ? "" : text);
 
     fputc('"', fp);
     while (*p != '\0') {
@@ -139,10 +184,13 @@ static const char *module_state(const status_module_snapshot_t *module, uint64_t
     }
 
     if (module->stopped) {
-        return ((module->last_error_ms != 0u) && (module->last_error_ms > module->last_tx_ms)) ? "error" : "offline";
+        return ((module->last_error_ms != 0u) && (module->last_error_ms > module->last_tx_ms)) ?
+            "error" : "offline";
     }
 
-    if ((module->last_error_ms != 0u) && (module->last_error_ms > module->last_tx_ms)) {
+    if ((module->last_error_ms != 0u) &&
+        (module->last_error_ms > module->last_rx_ms) &&
+        (module->last_error_ms > module->last_tx_ms)) {
         return "error";
     }
 
@@ -150,9 +198,9 @@ static const char *module_state(const status_module_snapshot_t *module, uint64_t
         return "unknown";
     }
 
-    if ((module->last_seen_ms != 0u) &&
-        (now_ms > module->last_seen_ms) &&
-        ((now_ms - module->last_seen_ms) > STATUS_STALE_MS)) {
+    if ((module->last_rx_ms != 0u) &&
+        (now_ms > module->last_rx_ms) &&
+        ((now_ms - module->last_rx_ms) > STATUS_STALE_MS)) {
         return "stale";
     }
 
@@ -186,21 +234,35 @@ static const char *module_message(const status_module_snapshot_t *module, uint64
         return "no packet received for more than 10 seconds";
     }
 
-    if (module->rx_count == 0u) {
+    if (module->rx_frames == 0u) {
         return "module running; no packet received yet";
     }
 
-    return "protocol forwarding active";
+    return "interface active";
 }
 
 static int write_modules_json(FILE *fp, const status_collector_t *collector, uint64_t now_ms)
 {
+    const char *top_state = "ok";
+
+    for (int i = 0; i < (int)STATUS_MODULE_COUNT; ++i) {
+        const char *state = module_state(&collector->modules[i], now_ms);
+        if (strcmp(state, "error") == 0) {
+            top_state = "error";
+            break;
+        }
+        if ((strcmp(state, "stale") == 0) || (strcmp(state, "offline") == 0)) {
+            top_state = "warn";
+        }
+    }
+
     fprintf(fp,
             "{\n"
             "  \"updated_at_ms\":%" PRIu64 ",\n"
-            "  \"state\":\"ok\",\n"
+            "  \"state\":\"%s\",\n"
             "  \"modules\":[\n",
-            now_ms);
+            now_ms,
+            top_state);
 
     for (int i = 0; i < (int)STATUS_MODULE_COUNT; ++i) {
         const status_module_snapshot_t *m = &collector->modules[i];
@@ -209,28 +271,31 @@ static int write_modules_json(FILE *fp, const status_collector_t *collector, uin
 
         fputs("    {\"name\":", fp);
         fprint_json_string(fp, m->name);
-        fputs(",\"protocol\":", fp);
-        fprint_json_string(fp, m->protocol);
         fprintf(fp,
-                ",\"status\":\"%s\",\"enabled\":%s,\"rx_count\":%" PRIu64
-                ",\"tx_count\":%" PRIu64 ",\"rx_bytes\":%" PRIu64
-                ",\"error_count\":%" PRIu64 ",\"parse_error_count\":%" PRIu64
-                ",\"pack_error_count\":%" PRIu64 ",\"ipc_error_count\":%" PRIu64
-                ",\"last_seen_ms\":%" PRIu64 ",\"last_tx_ms\":%" PRIu64
-                ",\"last_error_ms\":%" PRIu64 ",\"detail\":",
+                ",\"status\":\"%s\",\"rx_bytes\":%" PRIu64
+                ",\"tx_bytes\":%" PRIu64 ",\"rx_frames\":%" PRIu64
+                ",\"tx_frames\":%" PRIu64 ",\"decode_error_count\":%" PRIu64
+                ",\"fragment_drop_count\":%" PRIu64
+                ",\"reassemble_timeout_count\":%" PRIu64
+                ",\"crc_error_count\":%" PRIu64
+                ",\"send_fail_count\":%" PRIu64
+                ",\"interface_offline_count\":%" PRIu64
+                ",\"last_rx_ms\":%" PRIu64 ",\"last_tx_ms\":%" PRIu64
+                ",\"last_error\":",
                 state,
-                m->enabled ? "true" : "false",
-                m->rx_count,
-                m->tx_count,
                 m->rx_bytes,
-                m->error_count,
-                m->parse_error_count,
-                m->pack_error_count,
-                m->ipc_error_count,
-                m->last_seen_ms,
-                m->last_tx_ms,
-                m->last_error_ms);
-        fprint_json_string(fp, m->detail);
+                m->tx_bytes,
+                m->rx_frames,
+                m->tx_frames,
+                m->decode_error_count,
+                m->fragment_drop_count,
+                m->reassemble_timeout_count,
+                m->crc_error_count,
+                m->send_fail_count,
+                m->interface_offline_count,
+                m->last_rx_ms,
+                m->last_tx_ms);
+        fprint_json_string(fp, (m->last_error_message[0] == '\0') ? "none" : m->last_error_message);
         fputs(",\"message\":", fp);
         fprint_json_string(fp, message);
         fputs("}", fp);
@@ -245,98 +310,118 @@ static int write_modules_json(FILE *fp, const status_collector_t *collector, uin
     return ferror(fp) ? -1 : 0;
 }
 
-static void aggregate_ipc(const status_collector_t *collector,
-                          uint64_t *tx_count,
-                          uint64_t *error_count,
-                          uint64_t *last_tx_ms,
-                          uint64_t *last_error_ms,
-                          unified_error_t *last_error_code,
-                          const char **last_message)
+static void write_ring_array(FILE *fp, const char *name, const linux_shm_ring_stats_t rings[PUT_SHM_INTERFACE_COUNT])
 {
-    *tx_count = 0u;
-    *error_count = 0u;
-    *last_tx_ms = 0u;
-    *last_error_ms = 0u;
-    *last_error_code = UNIFIED_OK;
-    *last_message = "";
-
-    for (int i = 0; i < (int)STATUS_MODULE_COUNT; ++i) {
-        const status_module_snapshot_t *m = &collector->modules[i];
-        *tx_count += m->tx_count;
-        *error_count += m->ipc_error_count;
-        if (m->last_tx_ms > *last_tx_ms) {
-            *last_tx_ms = m->last_tx_ms;
-        }
-        if (m->last_ipc_error_ms > *last_error_ms) {
-            *last_error_ms = m->last_ipc_error_ms;
-            *last_error_code = m->last_ipc_error_code;
-            *last_message = m->last_ipc_error_message;
-        }
+    fprintf(fp, "  \"%s\":[\n", name);
+    for (uint32_t i = 0u; i < PUT_SHM_INTERFACE_COUNT; ++i) {
+        fprintf(fp,
+                "    {\"interface\":\"%s\",\"capacity\":%" PRIu64
+                ",\"used\":%" PRIu64 ",\"high_watermark\":%" PRIu64
+                ",\"full_count\":%" PRIu64 "}%s\n",
+                interface_name_from_id(i),
+                rings[i].capacity,
+                rings[i].used,
+                rings[i].high_watermark,
+                rings[i].full_count,
+                (i + 1u < PUT_SHM_INTERFACE_COUNT) ? "," : "");
     }
+    fputs("  ]", fp);
 }
 
 static int write_ipc_status_json(FILE *fp, const status_collector_t *collector, uint64_t now_ms)
 {
-    uint64_t tx_count;
-    uint64_t error_count;
-    uint64_t last_tx_ms;
-    uint64_t last_error_ms;
-    unified_error_t last_error_code;
-    const char *last_message;
-    const char *state;
-    const char *message;
+    const linux_shm_ipc_stats_t *stats = &collector->ipc_stats;
 
-    aggregate_ipc(collector, &tx_count, &error_count, &last_tx_ms, &last_error_ms, &last_error_code, &last_message);
-
-    if ((last_error_ms != 0u) && (last_error_ms > last_tx_ms)) {
-        state = "error";
-        message = (last_message[0] == '\0') ? "ipc_to_rtos send failed" : last_message;
-    } else if (tx_count == 0u) {
-        state = "unknown";
-        message = "no frame has been sent to ipc_to_rtos yet";
-    } else {
-        state = "ok";
-        message = "ipc_to_rtos send path is healthy";
+    if (!collector->ipc_stats_valid) {
+        fprintf(fp,
+                "{\n"
+                "  \"updated_at_ms\":%" PRIu64 ",\n"
+                "  \"state\":\"unknown\",\n"
+                "  \"rtos_online\":false,\n"
+                "  \"frame_pool\":{\"capacity\":0,\"used\":0,\"pending_reclaim\":0,\"leaked_suspect\":0},\n"
+                "  \"rx_rings\":[],\n"
+                "  \"tx_rings\":[]\n"
+                "}\n",
+                now_ms);
+        return ferror(fp) ? -1 : 0;
     }
 
     fprintf(fp,
             "{\n"
             "  \"updated_at_ms\":%" PRIu64 ",\n"
-            "  \"state\":\"%s\",\n"
-            "  \"tx_count\":%" PRIu64 ",\n"
-            "  \"error_count\":%" PRIu64 ",\n"
-            "  \"last_tx_ms\":%" PRIu64 ",\n"
-            "  \"last_error_ms\":%" PRIu64 ",\n"
-            "  \"last_error_code\":%d,\n"
-            "  \"message\":",
+            "  \"state\":\"ok\",\n"
+            "  \"rtos_online\":%s,\n"
+            "  \"heartbeat_ms\":%" PRIu64 ",\n"
+            "  \"frame_pool\":{\"capacity\":%" PRIu64 ",\"used\":%" PRIu64
+            ",\"high_watermark\":%" PRIu64 ",\"full_count\":%" PRIu64
+            ",\"allocated\":%" PRIu64 ",\"released\":%" PRIu64
+            ",\"pending_reclaim\":%" PRIu64 ",\"leaked_suspect\":%" PRIu64 "},\n",
             now_ms,
-            state,
-            tx_count,
-            error_count,
-            last_tx_ms,
-            last_error_ms,
-            (int)last_error_code);
-    fprint_json_string(fp, message);
-    fputs("\n}\n", fp);
+            collector->rtos_online ? "true" : "false",
+            collector->heartbeat_ms,
+            stats->frame_pool.capacity,
+            stats->frame_pool.used,
+            stats->frame_pool.high_watermark,
+            stats->frame_pool.full_count,
+            stats->frame_pool.allocated,
+            stats->frame_pool.released,
+            stats->frame_pool.pending_reclaim,
+            stats->frame_pool.leaked_suspect);
+
+    write_ring_array(fp, "rx_rings", stats->rx_rings);
+    fputs(",\n", fp);
+    write_ring_array(fp, "tx_rings", stats->tx_rings);
+    fputs(",\n", fp);
+
+    fprintf(fp,
+            "  \"pending_bitmap\":{\"rx\":\"0x%02X\",\"tx\":\"0x%02X\"},\n"
+            "  \"mailbox\":{\"rx_doorbell_count\":%" PRIu64
+            ",\"tx_doorbell_count\":%" PRIu64
+            ",\"notify_fail_count\":%" PRIu64
+            ",\"periodic_drain_count\":%" PRIu64 "},\n"
+            "  \"integrity\":{\"descriptor_crc_error_count\":%" PRIu64
+            ",\"epoch_mismatch_count\":0,\"cache_sync_error_count\":%" PRIu64 "},\n"
+            "  \"reclaim\":{\"heartbeat_consumed\":%" PRIu64
+            ",\"invalid_frame_reclaimed\":%" PRIu64
+            ",\"no_route_reclaimed\":%" PRIu64
+            ",\"ttl_expired_reclaimed\":%" PRIu64
+            ",\"epoch_mismatch_reclaimed\":%" PRIu64
+            ",\"reclaim_ring_used\":%" PRIu64
+            ",\"reclaim_ack_count\":%" PRIu64 "}\n"
+            "}\n",
+            stats->rx_pending_bits,
+            stats->tx_pending_bits,
+            stats->mailbox.rx_doorbell_count,
+            stats->mailbox.tx_doorbell_count,
+            stats->mailbox.notify_fail_count,
+            stats->mailbox.periodic_drain_count,
+            stats->descriptor_crc_error_count,
+            stats->cache_sync_error_count,
+            stats->reclaim_reason_count[PUT_SHM_RECLAIM_REASON_HEARTBEAT_CONSUMED],
+            stats->reclaim_reason_count[PUT_SHM_RECLAIM_REASON_INVALID_FRAME],
+            stats->reclaim_reason_count[PUT_SHM_RECLAIM_REASON_NO_ROUTE],
+            stats->reclaim_reason_count[PUT_SHM_RECLAIM_REASON_TTL_EXPIRED],
+            stats->reclaim_reason_count[PUT_SHM_RECLAIM_REASON_EPOCH_MISMATCH],
+            stats->reclaim_ring_used,
+            stats->reclaim_ack_count);
 
     return ferror(fp) ? -1 : 0;
 }
 
-static int write_can_status_json(FILE *fp, const status_collector_t *collector, uint64_t now_ms)
+static int write_route_status_json(FILE *fp, const status_collector_t *collector, uint64_t now_ms)
 {
     (void)collector;
-
     fprintf(fp,
             "{\n"
             "  \"updated_at_ms\":%" PRIu64 ",\n"
             "  \"state\":\"unknown\",\n"
-            "  \"bus_state\":\"unknown\",\n"
-            "  \"tx_fail_count\":0,\n"
-            "  \"bus_error_count\":0,\n"
-            "  \"message\":\"RTOS CAN status feedback is not connected in linux_app first version\"\n"
+            "  \"route_table\":{\"version\":0,\"epoch\":0,\"source\":\"unknown\",\"active_entries\":0},\n"
+            "  \"priority_queues\":[],\n"
+            "  \"cid_stats\":{\"routed_frames\":0,\"heartbeat_consumed\":0,\"no_route\":0,\"invalid_cid\":0,\"reserved_cid\":0,\"broadcast_frames\":0},\n"
+            "  \"drop_reasons\":{\"invalid_length\":0,\"invalid_type\":0,\"ttl_expired\":0,\"frame_pool_full\":0,\"rx_ring_full\":0,\"tx_ring_full\":0,\"target_interface_offline\":0,\"auth_failed\":0,\"integrity_failed\":0,\"replay_dropped\":0},\n"
+            "  \"latency\":{\"rx_ring_to_tx_ring_max_ms\":0,\"rx_ring_to_tx_ring_avg_ms\":0,\"linux_egress_max_ms\":0,\"end_to_end_max_ms\":0}\n"
             "}\n",
             now_ms);
-
     return ferror(fp) ? -1 : 0;
 }
 
@@ -366,7 +451,7 @@ static int write_atomic_json(const status_collector_t *collector,
     }
 
     fp = fopen(tmp_path, "w");
-    if (fp == NULL) {
+    if (fp == 0) {
         return -1;
     }
 
@@ -403,7 +488,7 @@ static void append_event_jsonl_locked(status_collector_t *collector,
     FILE *fp;
     const status_module_snapshot_t *module;
 
-    if ((collector == NULL) || !collector->enabled || (module_id >= STATUS_MODULE_COUNT)) {
+    if ((collector == 0) || !collector->enabled || (module_id >= STATUS_MODULE_COUNT)) {
         return;
     }
 
@@ -418,26 +503,30 @@ static void append_event_jsonl_locked(status_collector_t *collector,
     }
 
     fp = fopen(path, "a");
-    if (fp == NULL) {
+    if (fp == 0) {
         return;
     }
 
     fprintf(fp,
-            "{\"time_ms\":%" PRIu64 ",\"level\":\"warn\",\"source\":\"linux_app\","
-            "\"module\":",
+            "{\"timestamp_ms\":%" PRIu64 ",\"level\":\"warn\",\"source\":\"adapter\",\"message\":",
             now_ms);
-    fprint_json_string(fp, module->name);
-    fputs(",\"event\":\"pipeline_error\",\"stage\":", fp);
-    fprint_json_string(fp, stage);
-    fprintf(fp, ",\"error_code\":%d,\"message\":", (int)err);
-    fprint_json_string(fp, module->last_error_message);
+    fprint_json_string(fp, "pipeline error");
+    fputs(",\"detail\":", fp);
+    char detail[STATUS_COLLECTOR_TEXT_MAX * 2u];
+    (void)snprintf(detail,
+                   sizeof(detail),
+                   "module=%s stage=%s error=%d",
+                   module->name,
+                   (stage == 0) ? "unknown" : stage,
+                   (int)err);
+    fprint_json_string(fp, detail);
     fputs("}\n", fp);
     (void)fclose(fp);
 }
 
 void status_collector_init(status_collector_t *collector, const char *status_dir, bool enabled)
 {
-    if (collector == NULL) {
+    if (collector == 0) {
         return;
     }
 
@@ -445,14 +534,14 @@ void status_collector_init(status_collector_t *collector, const char *status_dir
     collector->enabled = enabled;
     copy_text(collector->status_dir,
               sizeof(collector->status_dir),
-              ((status_dir == NULL) || (status_dir[0] == '\0')) ? STATUS_COLLECTOR_DEFAULT_DIR : status_dir);
+              ((status_dir == 0) || (status_dir[0] == '\0')) ? STATUS_COLLECTOR_DEFAULT_DIR : status_dir);
     collector->updated_at_ms = now_monotonic_ms();
-    (void)pthread_mutex_init(&collector->mutex, NULL);
+    (void)pthread_mutex_init(&collector->mutex, 0);
 
     for (int i = 0; i < (int)STATUS_MODULE_COUNT; ++i) {
         status_module_snapshot_t *m = &collector->modules[i];
         copy_text(m->name, sizeof(m->name), status_module_name((status_module_id_t)i));
-        copy_text(m->protocol, sizeof(m->protocol), status_module_name((status_module_id_t)i));
+        copy_text(m->protocol, sizeof(m->protocol), status_module_display_protocol((status_module_id_t)i));
         m->implemented = false;
         m->enabled = false;
         m->last_error_code = UNIFIED_OK;
@@ -462,7 +551,7 @@ void status_collector_init(status_collector_t *collector, const char *status_dir
 
 void status_collector_destroy(status_collector_t *collector)
 {
-    if (collector == NULL) {
+    if (collector == 0) {
         return;
     }
 
@@ -478,7 +567,7 @@ void status_collector_configure_module(status_collector_t *collector,
 {
     status_module_snapshot_t *m;
 
-    if ((collector == NULL) || (module_id >= STATUS_MODULE_COUNT)) {
+    if ((collector == 0) || (module_id >= STATUS_MODULE_COUNT)) {
         return;
     }
 
@@ -486,14 +575,15 @@ void status_collector_configure_module(status_collector_t *collector,
     m = &collector->modules[module_id];
     m->implemented = implemented;
     m->enabled = enabled;
-    copy_text(m->protocol, sizeof(m->protocol), protocol);
+    copy_text(m->protocol, sizeof(m->protocol),
+              (protocol == 0) ? status_module_display_protocol(module_id) : protocol);
     copy_text(m->detail, sizeof(m->detail), detail);
     (void)pthread_mutex_unlock(&collector->mutex);
 }
 
 void status_collector_mark_running(status_collector_t *collector, status_module_id_t module_id)
 {
-    if ((collector == NULL) || (module_id >= STATUS_MODULE_COUNT)) {
+    if ((collector == 0) || (module_id >= STATUS_MODULE_COUNT)) {
         return;
     }
 
@@ -508,7 +598,7 @@ void status_collector_mark_stopped(status_collector_t *collector,
                                    status_module_id_t module_id,
                                    const char *reason)
 {
-    if ((collector == NULL) || (module_id >= STATUS_MODULE_COUNT)) {
+    if ((collector == 0) || (module_id >= STATUS_MODULE_COUNT)) {
         return;
     }
 
@@ -527,33 +617,35 @@ void status_collector_record_rx(status_collector_t *collector, status_module_id_
     uint64_t now_ms;
     status_module_snapshot_t *m;
 
-    if ((collector == NULL) || (module_id >= STATUS_MODULE_COUNT)) {
+    if ((collector == 0) || (module_id >= STATUS_MODULE_COUNT)) {
         return;
     }
 
     now_ms = now_monotonic_ms();
     (void)pthread_mutex_lock(&collector->mutex);
     m = &collector->modules[module_id];
-    m->rx_count++;
+    m->rx_frames++;
     m->rx_bytes += (uint64_t)bytes;
-    m->last_seen_ms = now_ms;
+    m->last_rx_ms = now_ms;
+    m->last_error_message[0] = '\0';
     collector->updated_at_ms = now_ms;
     (void)pthread_mutex_unlock(&collector->mutex);
 }
 
-void status_collector_record_tx_ok(status_collector_t *collector, status_module_id_t module_id)
+void status_collector_record_tx_ok(status_collector_t *collector, status_module_id_t module_id, size_t bytes)
 {
     uint64_t now_ms;
     status_module_snapshot_t *m;
 
-    if ((collector == NULL) || (module_id >= STATUS_MODULE_COUNT)) {
+    if ((collector == 0) || (module_id >= STATUS_MODULE_COUNT)) {
         return;
     }
 
     now_ms = now_monotonic_ms();
     (void)pthread_mutex_lock(&collector->mutex);
     m = &collector->modules[module_id];
-    m->tx_count++;
+    m->tx_frames++;
+    m->tx_bytes += (uint64_t)bytes;
     m->last_tx_ms = now_ms;
     m->last_ipc_error_message[0] = '\0';
     collector->updated_at_ms = now_ms;
@@ -568,7 +660,7 @@ void status_collector_record_error(status_collector_t *collector,
     uint64_t now_ms;
     status_module_snapshot_t *m;
 
-    if ((collector == NULL) || (module_id >= STATUS_MODULE_COUNT)) {
+    if ((collector == 0) || (module_id >= STATUS_MODULE_COUNT)) {
         return;
     }
 
@@ -582,14 +674,24 @@ void status_collector_record_error(status_collector_t *collector,
     (void)snprintf(m->last_error_message,
                    sizeof(m->last_error_message),
                    "%s failed with error=%d",
-                   ((stage == NULL) || (stage[0] == '\0')) ? "unknown_stage" : stage,
+                   ((stage == 0) || (stage[0] == '\0')) ? "unknown_stage" : stage,
                    (int)err);
 
-    if ((stage != NULL) && (strstr(stage, "parse") != NULL)) {
-        m->parse_error_count++;
-    } else if ((stage != NULL) && (strcmp(stage, "frame_packer_pack") == 0)) {
-        m->pack_error_count++;
-    } else if ((stage != NULL) && (strcmp(stage, "ipc_to_rtos_send") == 0)) {
+    if ((stage != 0) && ((strstr(stage, "decode") != 0) || (strstr(stage, "parse") != 0))) {
+        m->decode_error_count++;
+    } else if ((stage != 0) && (strstr(stage, "fragment") != 0)) {
+        m->fragment_drop_count++;
+    } else if ((stage != 0) && (strstr(stage, "reassemble") != 0)) {
+        m->reassemble_timeout_count++;
+    } else if ((stage != 0) && (strstr(stage, "crc") != 0)) {
+        m->crc_error_count++;
+    } else if ((stage != 0) && (strstr(stage, "send") != 0)) {
+        m->send_fail_count++;
+    } else if ((stage != 0) && ((strstr(stage, "bind") != 0) || (strstr(stage, "socket") != 0))) {
+        m->interface_offline_count++;
+    }
+
+    if ((stage != 0) && (strstr(stage, "ipc") != 0)) {
         m->ipc_error_count++;
         m->last_ipc_error_ms = now_ms;
         m->last_ipc_error_code = err;
@@ -601,12 +703,30 @@ void status_collector_record_error(status_collector_t *collector,
     (void)pthread_mutex_unlock(&collector->mutex);
 }
 
+void status_collector_update_ipc_stats(status_collector_t *collector,
+                                       const linux_shm_ipc_stats_t *stats,
+                                       bool rtos_online,
+                                       uint64_t heartbeat_ms)
+{
+    if ((collector == 0) || (stats == 0)) {
+        return;
+    }
+
+    (void)pthread_mutex_lock(&collector->mutex);
+    collector->ipc_stats = *stats;
+    collector->ipc_stats_valid = true;
+    collector->rtos_online = rtos_online;
+    collector->heartbeat_ms = heartbeat_ms;
+    collector->updated_at_ms = now_monotonic_ms();
+    (void)pthread_mutex_unlock(&collector->mutex);
+}
+
 int status_collector_write_all(status_collector_t *collector)
 {
     uint64_t now_ms;
     int rc = 0;
 
-    if ((collector == NULL) || !collector->enabled) {
+    if ((collector == 0) || !collector->enabled) {
         return 0;
     }
 
@@ -619,7 +739,7 @@ int status_collector_write_all(status_collector_t *collector)
     if (write_atomic_json(collector, "ipc_status.json", write_ipc_status_json, now_ms) != 0) {
         rc = -1;
     }
-    if (write_atomic_json(collector, "can_status.json", write_can_status_json, now_ms) != 0) {
+    if (write_atomic_json(collector, "route_status.json", write_route_status_json, now_ms) != 0) {
         rc = -1;
     }
     (void)pthread_mutex_unlock(&collector->mutex);
