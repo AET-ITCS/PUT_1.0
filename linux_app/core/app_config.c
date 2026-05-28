@@ -135,6 +135,13 @@ void app_config_set_defaults(app_config_t *config)
                 sizeof(config->ethernet_bind_addr),
                 APP_CONFIG_ETHERNET_DEFAULT_BIND_ADDR);
     config->ethernet_port = (uint16_t)APP_CONFIG_ETHERNET_DEFAULT_PORT;
+    config->wifi_enabled = false;
+    config->wifi_udp_enabled = APP_CONFIG_WIFI_DEFAULT_UDP_ENABLED;
+    config->wifi_tcp_enabled = APP_CONFIG_WIFI_DEFAULT_TCP_ENABLED;
+    copy_string(config->wifi_bind_addr,
+                sizeof(config->wifi_bind_addr),
+                APP_CONFIG_WIFI_DEFAULT_BIND_ADDR);
+    config->wifi_port = (uint16_t)APP_CONFIG_WIFI_DEFAULT_PORT;
     config->bluetooth_enabled = false;
     config->bluetooth_channel = 1u;
     config->max_packets = 0u;
@@ -206,6 +213,46 @@ static unified_error_t apply_key_value(app_config_t *config,
                 return UNIFIED_ERR_INVALID_ARG;
             }
             config->ethernet_port = (uint16_t)u32_value;
+            return UNIFIED_OK;
+        }
+    } else if (strcmp(section, "wifi") == 0) {
+        if (strcmp(key, "enabled") == 0) {
+            if (parse_bool(value, &bool_value) != 0) {
+                return UNIFIED_ERR_INVALID_ARG;
+            }
+            config->wifi_enabled = bool_value;
+            return UNIFIED_OK;
+        }
+
+        if (strcmp(key, "udp_enabled") == 0) {
+            if (parse_bool(value, &bool_value) != 0) {
+                return UNIFIED_ERR_INVALID_ARG;
+            }
+            config->wifi_udp_enabled = bool_value;
+            return UNIFIED_OK;
+        }
+
+        if (strcmp(key, "tcp_enabled") == 0) {
+            if (parse_bool(value, &bool_value) != 0) {
+                return UNIFIED_ERR_INVALID_ARG;
+            }
+            config->wifi_tcp_enabled = bool_value;
+            return UNIFIED_OK;
+        }
+
+        if (strcmp(key, "bind_addr") == 0) {
+            if (value[0] == '\0') {
+                return UNIFIED_ERR_INVALID_ARG;
+            }
+            copy_string(config->wifi_bind_addr, sizeof(config->wifi_bind_addr), value);
+            return UNIFIED_OK;
+        }
+
+        if (strcmp(key, "port") == 0) {
+            if ((parse_u32(value, &u32_value) != 0) || (u32_value == 0u) || (u32_value > UINT16_MAX)) {
+                return UNIFIED_ERR_INVALID_ARG;
+            }
+            config->wifi_port = (uint16_t)u32_value;
             return UNIFIED_OK;
         }
     } else if (strcmp(section, "bluetooth") == 0) {
@@ -318,6 +365,15 @@ unified_error_t app_config_validate(const app_config_t *config)
             return UNIFIED_ERR_INVALID_ARG;
         }
         if (!config->ethernet_udp_enabled && !config->ethernet_tcp_enabled) {
+            return UNIFIED_ERR_INVALID_ARG;
+        }
+    }
+
+    if (config->wifi_enabled) {
+        if ((config->wifi_bind_addr[0] == '\0') || (config->wifi_port == 0u)) {
+            return UNIFIED_ERR_INVALID_ARG;
+        }
+        if (!config->wifi_udp_enabled && !config->wifi_tcp_enabled) {
             return UNIFIED_ERR_INVALID_ARG;
         }
     }

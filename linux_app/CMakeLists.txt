@@ -38,7 +38,7 @@ add_library(linux_app_core STATIC
     core/app_config.c
     core/status_collector.c
     adapters/ethernet_adapter.c
-    core/status_collector.c
+    adapters/wifi_adapter.c
 )
 target_include_directories(linux_app_core PUBLIC
     core
@@ -90,6 +90,13 @@ if(LINUX_APP_BUILD_TESTS)
         linux_app_core
     )
 
+    add_executable(wifi_adapter_test
+        test/wifi_adapter_test.c
+    )
+    target_link_libraries(wifi_adapter_test PRIVATE
+        linux_app_core
+    )
+
     add_executable(app_config_test
         test/app_config_test.c
     )
@@ -107,12 +114,14 @@ if(LINUX_APP_BUILD_TESTS)
     if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
         target_compile_options(linux_shm_ipc_test PRIVATE -Wall -Wextra)
         target_compile_options(ethernet_adapter_test PRIVATE -Wall -Wextra)
+        target_compile_options(wifi_adapter_test PRIVATE -Wall -Wextra)
         target_compile_options(app_config_test PRIVATE -Wall -Wextra)
         target_compile_options(status_collector_test PRIVATE -Wall -Wextra)
     endif()
 
     add_test(NAME linux_shm_ipc_test COMMAND linux_shm_ipc_test)
     add_test(NAME ethernet_adapter_test COMMAND ethernet_adapter_test)
+    add_test(NAME wifi_adapter_test COMMAND wifi_adapter_test)
     add_test(NAME app_config_test COMMAND app_config_test)
     add_test(NAME status_collector_test COMMAND status_collector_test)
 endif()

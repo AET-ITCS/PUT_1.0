@@ -18,6 +18,11 @@ extern "C" {
 #define APP_CONFIG_ETHERNET_DEFAULT_PORT 5000u
 #define APP_CONFIG_ETHERNET_DEFAULT_UDP_ENABLED true
 #define APP_CONFIG_ETHERNET_DEFAULT_TCP_ENABLED true
+#define APP_CONFIG_WIFI_BIND_ADDR_MAX 64u
+#define APP_CONFIG_WIFI_DEFAULT_BIND_ADDR "0.0.0.0"
+#define APP_CONFIG_WIFI_DEFAULT_PORT 5001u
+#define APP_CONFIG_WIFI_DEFAULT_UDP_ENABLED true
+#define APP_CONFIG_WIFI_DEFAULT_TCP_ENABLED true
 
 typedef struct {
     bool status_enabled;
@@ -28,6 +33,12 @@ typedef struct {
     bool ethernet_tcp_enabled;
     char ethernet_bind_addr[APP_CONFIG_ETHERNET_BIND_ADDR_MAX];
     uint16_t ethernet_port;
+
+    bool wifi_enabled;
+    bool wifi_udp_enabled;
+    bool wifi_tcp_enabled;
+    char wifi_bind_addr[APP_CONFIG_WIFI_BIND_ADDR_MAX];
+    uint16_t wifi_port;
 
     bool bluetooth_enabled;
     uint8_t bluetooth_channel;

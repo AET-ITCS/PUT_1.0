@@ -83,7 +83,7 @@ const char *status_module_display_protocol(status_module_id_t module_id)
     case STATUS_MODULE_ETHERNET:
         return "Ethernet UDP/TCP raw";
     case STATUS_MODULE_WIFI:
-        return "Wi-Fi";
+        return "Wi-Fi UDP/TCP raw";
     case STATUS_MODULE_BLUETOOTH:
         return "Bluetooth";
     case STATUS_MODULE_4G:
