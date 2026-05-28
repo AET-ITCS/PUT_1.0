@@ -128,6 +128,13 @@ void app_config_set_defaults(app_config_t *config)
     memset(config, 0, sizeof(*config));
     config->status_enabled = true;
     copy_string(config->status_dir, sizeof(config->status_dir), "/run/put/status");
+    config->can_enabled = false;
+    copy_string(config->can_ifname, sizeof(config->can_ifname), APP_CONFIG_CAN_DEFAULT_IFNAME);
+    config->can_bitrate = APP_CONFIG_CAN_DEFAULT_BITRATE;
+    config->can_rx_filter_id = APP_CONFIG_CAN_DEFAULT_RX_FILTER_ID;
+    config->can_rx_filter_mask = APP_CONFIG_CAN_DEFAULT_RX_FILTER_MASK;
+    config->can_extended_id = false;
+    config->can_reassembly_timeout_ms = APP_CONFIG_CAN_DEFAULT_REASSEMBLY_TIMEOUT_MS;
     config->ethernet_enabled = true;
     config->ethernet_udp_enabled = APP_CONFIG_ETHERNET_DEFAULT_UDP_ENABLED;
     config->ethernet_tcp_enabled = APP_CONFIG_ETHERNET_DEFAULT_TCP_ENABLED;
@@ -166,6 +173,62 @@ static unified_error_t apply_key_value(app_config_t *config,
                 return UNIFIED_ERR_INVALID_ARG;
             }
             copy_string(config->status_dir, sizeof(config->status_dir), value);
+            return UNIFIED_OK;
+        }
+    } else if (strcmp(section, "can") == 0) {
+        if (strcmp(key, "enabled") == 0) {
+            if (parse_bool(value, &bool_value) != 0) {
+                return UNIFIED_ERR_INVALID_ARG;
+            }
+            config->can_enabled = bool_value;
+            return UNIFIED_OK;
+        }
+
+        if (strcmp(key, "ifname") == 0) {
+            if (value[0] == '\0') {
+                return UNIFIED_ERR_INVALID_ARG;
+            }
+            copy_string(config->can_ifname, sizeof(config->can_ifname), value);
+            return UNIFIED_OK;
+        }
+
+        if (strcmp(key, "bitrate") == 0) {
+            if ((parse_u32(value, &u32_value) != 0) || (u32_value == 0u)) {
+                return UNIFIED_ERR_INVALID_ARG;
+            }
+            config->can_bitrate = u32_value;
+            return UNIFIED_OK;
+        }
+
+        if (strcmp(key, "rx_filter_id") == 0) {
+            if (parse_u32(value, &u32_value) != 0) {
+                return UNIFIED_ERR_INVALID_ARG;
+            }
+            config->can_rx_filter_id = u32_value;
+            return UNIFIED_OK;
+        }
+
+        if (strcmp(key, "rx_filter_mask") == 0) {
+            if (parse_u32(value, &u32_value) != 0) {
+                return UNIFIED_ERR_INVALID_ARG;
+            }
+            config->can_rx_filter_mask = u32_value;
+            return UNIFIED_OK;
+        }
+
+        if (strcmp(key, "extended_id") == 0) {
+            if (parse_bool(value, &bool_value) != 0) {
+                return UNIFIED_ERR_INVALID_ARG;
+            }
+            config->can_extended_id = bool_value;
+            return UNIFIED_OK;
+        }
+
+        if (strcmp(key, "reassembly_timeout_ms") == 0) {
+            if (parse_u32(value, &u32_value) != 0) {
+                return UNIFIED_ERR_INVALID_ARG;
+            }
+            config->can_reassembly_timeout_ms = u32_value;
             return UNIFIED_OK;
         }
     } else if (strcmp(section, "ethernet") == 0) {
@@ -305,12 +368,26 @@ unified_error_t app_config_load_file(app_config_t *config, const char *path)
 
 unified_error_t app_config_validate(const app_config_t *config)
 {
+    uint32_t can_id_max;
+
     if (config == NULL) {
         return UNIFIED_ERR_NULL;
     }
 
     if (config->status_enabled && (config->status_dir[0] == '\0')) {
         return UNIFIED_ERR_INVALID_ARG;
+    }
+
+    if (config->can_enabled) {
+        can_id_max = config->can_extended_id ? 0x1FFFFFFFu : 0x7FFu;
+        if ((config->can_ifname[0] == '\0') ||
+            (config->can_bitrate == 0u) ||
+            (config->can_rx_filter_id > can_id_max) ||
+            (config->can_rx_filter_mask > can_id_max) ||
+            (config->can_reassembly_timeout_ms < 100u) ||
+            (config->can_reassembly_timeout_ms > 5000u)) {
+            return UNIFIED_ERR_INVALID_ARG;
+        }
     }
 
     if (config->ethernet_enabled) {
