@@ -687,7 +687,12 @@ void status_collector_record_error(status_collector_t *collector,
         m->crc_error_count++;
     } else if ((stage != 0) && (strstr(stage, "send") != 0)) {
         m->send_fail_count++;
-    } else if ((stage != 0) && ((strstr(stage, "bind") != 0) || (strstr(stage, "socket") != 0))) {
+    } else if ((stage != 0) &&
+               ((strstr(stage, "bind") != 0) ||
+                (strstr(stage, "socket") != 0) ||
+                (strstr(stage, "offline") != 0) ||
+                (strstr(stage, "disabled") != 0) ||
+                (strstr(stage, "adapter_missing") != 0))) {
         m->interface_offline_count++;
     }
 

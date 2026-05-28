@@ -131,6 +131,7 @@ void app_config_set_defaults(app_config_t *config)
     config->can_enabled = false;
     copy_string(config->can_ifname, sizeof(config->can_ifname), APP_CONFIG_CAN_DEFAULT_IFNAME);
     config->can_bitrate = APP_CONFIG_CAN_DEFAULT_BITRATE;
+    config->can_tx_can_id = APP_CONFIG_CAN_DEFAULT_TX_CAN_ID;
     config->can_rx_filter_id = APP_CONFIG_CAN_DEFAULT_RX_FILTER_ID;
     config->can_rx_filter_mask = APP_CONFIG_CAN_DEFAULT_RX_FILTER_MASK;
     config->can_extended_id = false;
@@ -212,6 +213,14 @@ static unified_error_t apply_key_value(app_config_t *config,
                 return UNIFIED_ERR_INVALID_ARG;
             }
             config->can_rx_filter_id = u32_value;
+            return UNIFIED_OK;
+        }
+
+        if (strcmp(key, "tx_can_id") == 0) {
+            if (parse_u32(value, &u32_value) != 0) {
+                return UNIFIED_ERR_INVALID_ARG;
+            }
+            config->can_tx_can_id = u32_value;
             return UNIFIED_OK;
         }
 
@@ -429,6 +438,7 @@ unified_error_t app_config_validate(const app_config_t *config)
         can_id_max = config->can_extended_id ? 0x1FFFFFFFu : 0x7FFu;
         if ((config->can_ifname[0] == '\0') ||
             (config->can_bitrate == 0u) ||
+            (config->can_tx_can_id > can_id_max) ||
             (config->can_rx_filter_id > can_id_max) ||
             (config->can_rx_filter_mask > can_id_max) ||
             (config->can_reassembly_timeout_ms < 100u) ||

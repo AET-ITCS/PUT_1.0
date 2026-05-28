@@ -21,6 +21,7 @@ static int test_default_ethernet_config(void)
     CHECK(!config.can_enabled);
     CHECK(strcmp(config.can_ifname, "can0") == 0);
     CHECK(config.can_bitrate == 500000u);
+    CHECK(config.can_tx_can_id == 0x321u);
     CHECK(config.can_rx_filter_id == 0x320u);
     CHECK(config.can_rx_filter_mask == 0x7FFu);
     CHECK(!config.can_extended_id);
@@ -52,6 +53,7 @@ static int test_load_can_config(void)
     fputs("enabled = true\n", fp);
     fputs("ifname = \"vcan0\"\n", fp);
     fputs("bitrate = 250000\n", fp);
+    fputs("tx_can_id = 0x123457\n", fp);
     fputs("rx_filter_id = 0x123456\n", fp);
     fputs("rx_filter_mask = 0x1FFFFFFF\n", fp);
     fputs("extended_id = true\n", fp);
@@ -63,6 +65,7 @@ static int test_load_can_config(void)
     CHECK(config.can_enabled);
     CHECK(strcmp(config.can_ifname, "vcan0") == 0);
     CHECK(config.can_bitrate == 250000u);
+    CHECK(config.can_tx_can_id == 0x123457u);
     CHECK(config.can_rx_filter_id == 0x123456u);
     CHECK(config.can_rx_filter_mask == 0x1FFFFFFFu);
     CHECK(config.can_extended_id);
@@ -142,6 +145,11 @@ static int test_reject_invalid_can_config(void)
     app_config_set_defaults(&config);
     config.can_enabled = true;
     config.can_rx_filter_id = 0x800u;
+    CHECK(app_config_validate(&config) == UNIFIED_ERR_INVALID_ARG);
+
+    app_config_set_defaults(&config);
+    config.can_enabled = true;
+    config.can_tx_can_id = 0x800u;
     CHECK(app_config_validate(&config) == UNIFIED_ERR_INVALID_ARG);
 
     app_config_set_defaults(&config);

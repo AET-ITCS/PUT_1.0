@@ -21,6 +21,7 @@ extern "C" {
 #define APP_CONFIG_CAN_IFNAME_MAX 32u
 #define APP_CONFIG_CAN_DEFAULT_IFNAME "can0"
 #define APP_CONFIG_CAN_DEFAULT_BITRATE 500000u
+#define APP_CONFIG_CAN_DEFAULT_TX_CAN_ID 0x321u
 #define APP_CONFIG_CAN_DEFAULT_RX_FILTER_ID 0x320u
 #define APP_CONFIG_CAN_DEFAULT_RX_FILTER_MASK 0x7FFu
 #define APP_CONFIG_CAN_DEFAULT_REASSEMBLY_TIMEOUT_MS 500u
@@ -37,6 +38,7 @@ typedef struct {
     bool can_enabled;
     char can_ifname[APP_CONFIG_CAN_IFNAME_MAX];
     uint32_t can_bitrate;
+    uint32_t can_tx_can_id;
     uint32_t can_rx_filter_id;
     uint32_t can_rx_filter_mask;
     bool can_extended_id;

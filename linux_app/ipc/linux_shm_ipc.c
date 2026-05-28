@@ -1572,3 +1572,17 @@ void linux_shm_ipc_get_stats(const linux_shm_ipc_t *ipc,
     read_seq = ipc->region->reclaim_ring.consumer.read_seq;
     out_stats->reclaim_ring_used = ring_used(write_seq, read_seq);
 }
+
+/**
+ * @brief 记录一次 Linux 出口周期兜底 drain。
+ *
+ * @param ipc Linux 侧 IPC 上下文。
+ */
+void linux_shm_ipc_record_periodic_drain(linux_shm_ipc_t *ipc)
+{
+    if ((ipc == 0) || !is_context_initialized(ipc) || !ipc->initialized) {
+        return;
+    }
+
+    ipc->stats.mailbox.periodic_drain_count++;
+}

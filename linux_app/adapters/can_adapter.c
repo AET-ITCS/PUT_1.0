@@ -287,10 +287,32 @@ void can_adapter_config_set_defaults(can_adapter_config_t *config)
     config->enabled = false;
     (void)snprintf(config->ifname, sizeof(config->ifname), "%s", CAN_ADAPTER_DEFAULT_IFNAME);
     config->bitrate = CAN_ADAPTER_DEFAULT_BITRATE;
+    config->tx_can_id = CAN_ADAPTER_DEFAULT_TX_CAN_ID;
     config->rx_filter_id = CAN_ADAPTER_DEFAULT_RX_FILTER_ID;
     config->rx_filter_mask = CAN_ADAPTER_DEFAULT_RX_FILTER_MASK;
     config->extended_id = false;
     config->reassembly_timeout_ms = CAN_ADAPTER_DEFAULT_REASSEMBLY_TIMEOUT_MS;
+}
+
+void can_tx_context_init(can_tx_context_t *ctx, uint32_t tx_can_id, bool extended_id)
+{
+    if (ctx == 0) {
+        return;
+    }
+
+    memset(ctx, 0, sizeof(*ctx));
+    ctx->tx_can_id = tx_can_id;
+    ctx->extended_id = extended_id;
+    ctx->socket_fd = -1;
+}
+
+void can_tx_context_set_socket(can_tx_context_t *ctx, int socket_fd)
+{
+    if (ctx == 0) {
+        return;
+    }
+
+    ctx->socket_fd = socket_fd;
 }
 
 unified_error_t can_adapter_decode_anymsg(const uint8_t *input,
@@ -651,17 +673,122 @@ static int can_fragment_tx(void *ctx,
                            const anymsg_buffer_t *msg,
                            adapter_tx_packet_list_t *out_packets)
 {
-    (void)ctx;
-    (void)msg;
-    (void)out_packets;
-    return -1;
+    static can_tx_context_t fallback_ctx;
+    static bool fallback_initialized = false;
+    can_tx_context_t *tx_ctx;
+    uint8_t data_frame_count;
+    uint16_t crc;
+    uint16_t msg_len;
+    canid_t can_id;
+    uint8_t session_id;
+
+    if ((msg == 0) || (msg->data == 0) || (out_packets == 0) ||
+        (msg->len < ANYMSG_HEADER_SIZE) ||
+        (msg->len > PUT_SHM_FRAME_POOL_BLOCK_SIZE)) {
+        return -1;
+    }
+
+    if (!fallback_initialized) {
+        can_tx_context_init(&fallback_ctx, CAN_ADAPTER_DEFAULT_TX_CAN_ID, false);
+        fallback_initialized = true;
+    }
+
+    tx_ctx = (ctx == 0) ? &fallback_ctx : (can_tx_context_t *)ctx;
+    msg_len = (uint16_t)msg->len;
+    data_frame_count = expected_data_frame_count(msg_len);
+    if (((size_t)data_frame_count + 1u) > CAN_ADAPTER_TX_MAX_PACKETS) {
+        return -1;
+    }
+
+    crc = unified_crc16_ccitt_false(msg->data, msg->len);
+    session_id = tx_ctx->next_session_id++;
+    can_id = (canid_t)(tx_ctx->tx_can_id & (tx_ctx->extended_id ? CAN_EFF_MASK : CAN_SFF_MASK));
+    if (tx_ctx->extended_id) {
+        can_id |= CAN_EFF_FLAG;
+    }
+
+    memset(tx_ctx->frames, 0, sizeof(tx_ctx->frames));
+    memset(tx_ctx->packets, 0, sizeof(tx_ctx->packets));
+
+    tx_ctx->frames[0].can_id = can_id;
+    tx_ctx->frames[0].can_dlc = CAN_ADAPTER_CLASSIC_DLC;
+    tx_ctx->frames[0].data[0] = CAN_ADAPTER_FRAME_KIND_SOF;
+    tx_ctx->frames[0].data[1] = session_id;
+    tx_ctx->frames[0].data[2] = (uint8_t)(msg_len & 0xFFu);
+    tx_ctx->frames[0].data[3] = (uint8_t)((msg_len >> 8u) & 0xFFu);
+    tx_ctx->frames[0].data[4] = (uint8_t)(crc & 0xFFu);
+    tx_ctx->frames[0].data[5] = (uint8_t)((crc >> 8u) & 0xFFu);
+    tx_ctx->frames[0].data[6] = ((msg_len % CAN_ADAPTER_DATA_PAYLOAD_SIZE) == 0u) ? 0u : 1u;
+    tx_ctx->frames[0].data[7] = data_frame_count;
+
+    tx_ctx->packets[0].data = (const uint8_t *)&tx_ctx->frames[0];
+    tx_ctx->packets[0].len = sizeof(struct can_frame);
+
+    for (uint8_t seq = 0u; seq < data_frame_count; ++seq) {
+        size_t offset;
+        size_t copy_len;
+        struct can_frame *frame;
+        adapter_tx_packet_t *packet;
+
+        offset = (size_t)seq * CAN_ADAPTER_DATA_PAYLOAD_SIZE;
+        copy_len = msg->len - offset;
+        if (copy_len > CAN_ADAPTER_DATA_PAYLOAD_SIZE) {
+            copy_len = CAN_ADAPTER_DATA_PAYLOAD_SIZE;
+        }
+
+        frame = &tx_ctx->frames[(size_t)seq + 1u];
+        frame->can_id = can_id;
+        frame->can_dlc = CAN_ADAPTER_CLASSIC_DLC;
+        frame->data[0] = CAN_ADAPTER_FRAME_KIND_DATA;
+        frame->data[1] = session_id;
+        frame->data[2] = seq;
+        memcpy(&frame->data[3], msg->data + offset, copy_len);
+
+        packet = &tx_ctx->packets[(size_t)seq + 1u];
+        packet->data = (const uint8_t *)frame;
+        packet->len = sizeof(struct can_frame);
+    }
+
+    out_packets->packets = tx_ctx->packets;
+    out_packets->count = (size_t)data_frame_count + 1u;
+    return 0;
 }
 
 static int can_send(void *ctx, const adapter_tx_packet_t *packet)
 {
-    (void)ctx;
-    (void)packet;
-    return -1;
+    can_tx_context_t *tx_ctx;
+    int fd;
+    ssize_t sent;
+
+    if ((packet == 0) || (packet->data == 0) || (packet->len != sizeof(struct can_frame))) {
+        return -1;
+    }
+
+    tx_ctx = (can_tx_context_t *)ctx;
+    fd = (tx_ctx == 0) ? -1 : tx_ctx->socket_fd;
+    if (fd < 0) {
+        (void)pthread_mutex_lock(&g_can_state.lock);
+        fd = g_can_state.socket_fd;
+        (void)pthread_mutex_unlock(&g_can_state.lock);
+    }
+    if (fd < 0) {
+        record_error(&g_can_state.status, g_can_state.config.collector,
+                     "can_send_offline", UNIFIED_ERR_IPC_OFFLINE);
+        return -1;
+    }
+
+    sent = write(fd, packet->data, packet->len);
+    if (sent != (ssize_t)packet->len) {
+        record_error(&g_can_state.status, g_can_state.config.collector,
+                     "can_send", UNIFIED_ERR_INVALID_ARG);
+        return -1;
+    }
+
+    g_can_state.status.tx_frames++;
+    g_can_state.status.tx_bytes += (uint64_t)packet->len;
+    g_can_state.status.last_tx_ms = now_monotonic_ms();
+    g_can_state.status.updated_at_ms = g_can_state.status.last_tx_ms;
+    return 0;
 }
 
 static int can_status(void *ctx, void *out_status)
@@ -962,7 +1089,8 @@ static int validate_config(const can_adapter_config_t *config)
         return -1;
     }
 
-    if (!can_id_is_valid(config->rx_filter_id, config->extended_id) ||
+    if (!can_id_is_valid(config->tx_can_id, config->extended_id) ||
+        !can_id_is_valid(config->rx_filter_id, config->extended_id) ||
         !can_id_is_valid(config->rx_filter_mask, config->extended_id)) {
         return -1;
     }

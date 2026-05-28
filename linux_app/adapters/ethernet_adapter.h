@@ -51,7 +51,15 @@ typedef struct {
     size_t buffered_len;
 } ethernet_tcp_stream_context_t;
 
+typedef struct {
+    uint16_t port;
+    int udp_socket_fd;
+} ethernet_tx_context_t;
+
 extern physical_interface_adapter_t ethernet_adapter;
+
+void ethernet_tx_context_init(ethernet_tx_context_t *ctx, uint16_t port);
+void ethernet_tx_context_destroy(ethernet_tx_context_t *ctx);
 
 unified_error_t ethernet_adapter_decode_datagram(const uint8_t *input,
                                                  size_t input_len,

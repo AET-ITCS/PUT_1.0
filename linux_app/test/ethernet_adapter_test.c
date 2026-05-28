@@ -1,7 +1,12 @@
 #include "ethernet_adapter.h"
 
+#include <arpa/inet.h>
+#include <netinet/in.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/socket.h>
+#include <sys/time.h>
+#include <unistd.h>
 
 #include "anymsg_frame.h"
 #include "shared_memory_ipc.h"
@@ -304,6 +309,60 @@ static int test_tcp_stream_invalid_length_is_counted(void)
     return 0;
 }
 
+static int test_udp_tx_uses_destination_cid_ipv4(void)
+{
+    ethernet_tx_context_t tx_ctx;
+    anymsg_buffer_t msg;
+    adapter_tx_packet_t packet;
+    uint8_t frame[PUT_SHM_FRAME_POOL_BLOCK_SIZE + 1u];
+    uint8_t received[PUT_SHM_FRAME_POOL_BLOCK_SIZE + 1u];
+    anymsg_header_t *header;
+    struct sockaddr_in bind_addr;
+    struct timeval timeout;
+    socklen_t bind_len;
+    ssize_t received_len;
+    int recv_fd;
+    uint16_t port;
+    size_t frame_len;
+
+    recv_fd = socket(AF_INET, SOCK_DGRAM, 0);
+    CHECK(recv_fd >= 0);
+
+    timeout.tv_sec = 1;
+    timeout.tv_usec = 0;
+    CHECK(setsockopt(recv_fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) == 0);
+
+    memset(&bind_addr, 0, sizeof(bind_addr));
+    bind_addr.sin_family = AF_INET;
+    bind_addr.sin_port = 0;
+    CHECK(inet_pton(AF_INET, "127.0.0.1", &bind_addr.sin_addr) == 1);
+    CHECK(bind(recv_fd, (const struct sockaddr *)&bind_addr, sizeof(bind_addr)) == 0);
+    bind_len = (socklen_t)sizeof(bind_addr);
+    CHECK(getsockname(recv_fd, (struct sockaddr *)&bind_addr, &bind_len) == 0);
+    port = ntohs(bind_addr.sin_port);
+
+    frame_len = make_anymsg(frame, 4u, 0x40u, 0x40u);
+    header = (anymsg_header_t *)frame;
+    header->destination_cid[0] = 127u;
+    header->destination_cid[1] = 0u;
+    header->destination_cid[2] = 0u;
+    header->destination_cid[3] = 1u;
+    msg.data = frame;
+    msg.len = frame_len;
+    memset(&packet, 0, sizeof(packet));
+    ethernet_tx_context_init(&tx_ctx, port);
+    CHECK(ethernet_adapter.encapsulate(&tx_ctx, &msg, &packet) == 0);
+    CHECK(ethernet_adapter.send(&tx_ctx, &packet) == 0);
+
+    received_len = recvfrom(recv_fd, received, sizeof(received), 0, 0, 0);
+    CHECK(received_len == (ssize_t)frame_len);
+    CHECK(memcmp(received, frame, frame_len) == 0);
+
+    ethernet_tx_context_destroy(&tx_ctx);
+    (void)close(recv_fd);
+    return 0;
+}
+
 int main(void)
 {
     if (test_valid_udp_anymsg_enters_ethernet_rx_ring() != 0) {
@@ -328,6 +387,9 @@ int main(void)
         return 1;
     }
     if (test_tcp_stream_invalid_length_is_counted() != 0) {
+        return 1;
+    }
+    if (test_udp_tx_uses_destination_cid_ipv4() != 0) {
         return 1;
     }
 

@@ -18,6 +18,7 @@ extern "C" {
 #define CAN_ADAPTER_IFNAME_MAX 32u
 #define CAN_ADAPTER_DEFAULT_IFNAME "can0"
 #define CAN_ADAPTER_DEFAULT_BITRATE 500000u
+#define CAN_ADAPTER_DEFAULT_TX_CAN_ID 0x321u
 #define CAN_ADAPTER_DEFAULT_RX_FILTER_ID 0x320u
 #define CAN_ADAPTER_DEFAULT_RX_FILTER_MASK 0x7FFu
 #define CAN_ADAPTER_DEFAULT_REASSEMBLY_TIMEOUT_MS 500u
@@ -28,6 +29,9 @@ extern "C" {
 #define CAN_ADAPTER_FRAME_KIND_DATA 0xD0u
 #define CAN_ADAPTER_CLASSIC_DLC 8u
 #define CAN_ADAPTER_DATA_PAYLOAD_SIZE 5u
+#define CAN_ADAPTER_TX_MAX_PACKETS \
+    (1u + ((PUT_SHM_FRAME_POOL_BLOCK_SIZE + CAN_ADAPTER_DATA_PAYLOAD_SIZE - 1u) / \
+           CAN_ADAPTER_DATA_PAYLOAD_SIZE))
 #define CAN_ADAPTER_REASSEMBLY_MAX_SESSIONS 8u
 #define CAN_ADAPTER_REASSEMBLY_BITMAP_SIZE 16u
 
@@ -35,6 +39,7 @@ typedef struct {
     bool enabled;
     char ifname[CAN_ADAPTER_IFNAME_MAX];
     uint32_t bitrate; /* Expected externally preconfigured SocketCAN bitrate. */
+    uint32_t tx_can_id;
     uint32_t rx_filter_id;
     uint32_t rx_filter_mask;
     bool extended_id;
@@ -102,9 +107,20 @@ typedef struct {
     can_reassembly_session_t sessions[CAN_ADAPTER_REASSEMBLY_MAX_SESSIONS];
 } can_reassembly_context_t;
 
+typedef struct {
+    uint32_t tx_can_id;
+    bool extended_id;
+    uint8_t next_session_id;
+    int socket_fd;
+    struct can_frame frames[CAN_ADAPTER_TX_MAX_PACKETS];
+    adapter_tx_packet_t packets[CAN_ADAPTER_TX_MAX_PACKETS];
+} can_tx_context_t;
+
 extern physical_interface_adapter_t can_adapter;
 
 void can_adapter_config_set_defaults(can_adapter_config_t *config);
+void can_tx_context_init(can_tx_context_t *ctx, uint32_t tx_can_id, bool extended_id);
+void can_tx_context_set_socket(can_tx_context_t *ctx, int socket_fd);
 unified_error_t can_adapter_decode_anymsg(const uint8_t *input,
                                           size_t input_len,
                                           adapter_rx_result_t *out);

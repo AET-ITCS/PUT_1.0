@@ -295,6 +295,12 @@ unified_error_t linux_shm_dequeue_reclaim_descriptor(linux_shm_ipc_t *ipc,
  */
 void linux_shm_ipc_get_stats(const linux_shm_ipc_t *ipc,
                              linux_shm_ipc_stats_t *out_stats);
+/**
+ * @brief 记录一次 Linux 出口周期兜底 drain。
+ *
+ * @param ipc Linux 侧 IPC 上下文。
+ */
+void linux_shm_ipc_record_periodic_drain(linux_shm_ipc_t *ipc);
 
 #ifdef __cplusplus
 }

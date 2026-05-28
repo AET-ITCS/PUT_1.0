@@ -49,6 +49,29 @@ static uint16_t read_le16(const uint8_t bytes[2])
     return (uint16_t)((uint16_t)bytes[0] | ((uint16_t)bytes[1] << 8u));
 }
 
+void ethernet_tx_context_init(ethernet_tx_context_t *ctx, uint16_t port)
+{
+    if (ctx == 0) {
+        return;
+    }
+
+    memset(ctx, 0, sizeof(*ctx));
+    ctx->port = (port == 0u) ? (uint16_t)ETHERNET_ADAPTER_DEFAULT_PORT : port;
+    ctx->udp_socket_fd = -1;
+}
+
+void ethernet_tx_context_destroy(ethernet_tx_context_t *ctx)
+{
+    if (ctx == 0) {
+        return;
+    }
+
+    if (ctx->udp_socket_fd >= 0) {
+        (void)close(ctx->udp_socket_fd);
+        ctx->udp_socket_fd = -1;
+    }
+}
+
 static put_shm_interface_t route_hint_from_destination_cid(const uint8_t cid[ANYMSG_CID_LENGTH])
 {
     switch (anymsg_cid_segment_from_first_byte(cid[0])) {
@@ -159,9 +182,45 @@ static int ethernet_fragment_tx(void *ctx,
 
 static int ethernet_send(void *ctx, const adapter_tx_packet_t *packet)
 {
-    (void)ctx;
-    (void)packet;
-    return -1;
+    static ethernet_tx_context_t fallback_ctx = {
+        .port = ETHERNET_ADAPTER_DEFAULT_PORT,
+        .udp_socket_fd = -1,
+    };
+    ethernet_tx_context_t *tx_ctx;
+    const anymsg_header_t *header;
+    struct sockaddr_in peer_addr;
+    ssize_t sent;
+
+    if ((packet == 0) || (packet->data == 0) ||
+        (packet->len < ANYMSG_HEADER_SIZE) ||
+        (packet->len > PUT_SHM_FRAME_POOL_BLOCK_SIZE)) {
+        return -1;
+    }
+
+    tx_ctx = (ctx == 0) ? &fallback_ctx : (ethernet_tx_context_t *)ctx;
+    if (tx_ctx->port == 0u) {
+        tx_ctx->port = (uint16_t)ETHERNET_ADAPTER_DEFAULT_PORT;
+    }
+    if (tx_ctx->udp_socket_fd < 0) {
+        tx_ctx->udp_socket_fd = socket(AF_INET, SOCK_DGRAM, 0);
+        if (tx_ctx->udp_socket_fd < 0) {
+            return -1;
+        }
+    }
+
+    header = (const anymsg_header_t *)packet->data;
+    memset(&peer_addr, 0, sizeof(peer_addr));
+    peer_addr.sin_family = AF_INET;
+    peer_addr.sin_port = htons(tx_ctx->port);
+    memcpy(&peer_addr.sin_addr.s_addr, header->destination_cid, ANYMSG_CID_LENGTH);
+
+    sent = sendto(tx_ctx->udp_socket_fd,
+                  packet->data,
+                  packet->len,
+                  0,
+                  (const struct sockaddr *)&peer_addr,
+                  sizeof(peer_addr));
+    return (sent == (ssize_t)packet->len) ? 0 : -1;
 }
 
 static int ethernet_status(void *ctx, void *out_status)

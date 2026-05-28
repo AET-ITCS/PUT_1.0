@@ -51,7 +51,15 @@ typedef struct {
     size_t buffered_len;
 } wifi_tcp_stream_context_t;
 
+typedef struct {
+    uint16_t port;
+    int udp_socket_fd;
+} wifi_tx_context_t;
+
 extern physical_interface_adapter_t wifi_adapter;
+
+void wifi_tx_context_init(wifi_tx_context_t *ctx, uint16_t port);
+void wifi_tx_context_destroy(wifi_tx_context_t *ctx);
 
 unified_error_t wifi_adapter_decode_datagram(const uint8_t *input,
                                                  size_t input_len,

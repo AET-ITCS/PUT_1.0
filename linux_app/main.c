@@ -12,6 +12,7 @@
 
 #include "app_config.h"
 #include "can_adapter.h"
+#include "egress_manager.h"
 #include "ethernet_adapter.h"
 #include "linux_shm_ipc.h"
 #include "status_collector.h"
@@ -115,6 +116,24 @@ static void configure_status_modules(status_collector_t *collector, const app_co
                                       config->wifi_enabled,
                                       "Wi-Fi UDP/TCP raw",
                                       "Wi-Fi UDP datagram or TCP stream carries complete anyMSG; RX to Linux SHM v2");
+    status_collector_configure_module(collector,
+                                      STATUS_MODULE_BLUETOOTH,
+                                      true,
+                                      config->bluetooth_enabled,
+                                      "Bluetooth RFCOMM",
+                                      "Bluetooth egress is observable; physical adapter binding is pending");
+    status_collector_configure_module(collector,
+                                      STATUS_MODULE_4G,
+                                      true,
+                                      false,
+                                      "4G",
+                                      "4G egress placeholder is observable and releases TX frames");
+    status_collector_configure_module(collector,
+                                      STATUS_MODULE_RS485,
+                                      true,
+                                      false,
+                                      "RS485",
+                                      "RS485 egress placeholder is observable and releases TX frames");
 }
 
 static uint32_t make_linux_epoch(void)
@@ -163,7 +182,13 @@ int main(int argc, char **argv)
     unified_error_t err;
     linux_shm_ipc_t ipc;
     status_collector_t collector;
+    egress_manager_t egress_manager;
+    egress_manager_config_t egress_config;
+    can_tx_context_t can_tx_context;
+    ethernet_tx_context_t ethernet_tx_context;
+    wifi_tx_context_t wifi_tx_context;
     uint32_t linux_epoch;
+    bool egress_started = false;
     bool can_started = false;
     bool ethernet_udp_started = false;
     bool ethernet_tcp_started = false;
@@ -207,6 +232,11 @@ int main(int argc, char **argv)
 
     status_collector_init(&collector, config.status_dir, config.status_enabled);
     configure_status_modules(&collector, &config);
+    egress_manager_init(&egress_manager);
+    memset(&egress_config, 0, sizeof(egress_config));
+    can_tx_context_init(&can_tx_context, config.can_tx_can_id, config.can_extended_id);
+    ethernet_tx_context_init(&ethernet_tx_context, config.ethernet_port);
+    wifi_tx_context_init(&wifi_tx_context, config.wifi_port);
 
     linux_epoch = make_linux_epoch();
     err = linux_shm_ipc_map(&ipc, 0u, PUT_SHM_REGION_SIZE, NULL);
@@ -217,6 +247,9 @@ int main(int argc, char **argv)
                                       "ipc_map",
                                       err);
         (void)status_collector_write_all(&collector);
+        egress_manager_destroy(&egress_manager);
+        ethernet_tx_context_destroy(&ethernet_tx_context);
+        wifi_tx_context_destroy(&wifi_tx_context);
         status_collector_destroy(&collector);
         return EXIT_FAILURE;
     }
@@ -230,9 +263,46 @@ int main(int argc, char **argv)
                                       err);
         (void)status_collector_write_all(&collector);
         linux_shm_ipc_unmap(&ipc);
+        egress_manager_destroy(&egress_manager);
+        ethernet_tx_context_destroy(&ethernet_tx_context);
+        wifi_tx_context_destroy(&wifi_tx_context);
         status_collector_destroy(&collector);
         return EXIT_FAILURE;
     }
+
+    egress_config.ipc = &ipc;
+    egress_config.collector = &collector;
+    egress_config.linux_epoch = linux_epoch;
+    egress_config.worker_budget = EGRESS_WORKER_DEFAULT_BUDGET;
+    egress_config.periodic_drain_ms = EGRESS_MANAGER_DEFAULT_PERIODIC_DRAIN_MS;
+    egress_config.adapters[PUT_SHM_INTERFACE_CAN] = &can_adapter;
+    egress_config.adapter_contexts[PUT_SHM_INTERFACE_CAN] = &can_tx_context;
+    egress_config.enabled[PUT_SHM_INTERFACE_CAN] = config.can_enabled;
+    egress_config.adapters[PUT_SHM_INTERFACE_ETHERNET] = &ethernet_adapter;
+    egress_config.adapter_contexts[PUT_SHM_INTERFACE_ETHERNET] = &ethernet_tx_context;
+    egress_config.enabled[PUT_SHM_INTERFACE_ETHERNET] = config.ethernet_enabled;
+    egress_config.adapters[PUT_SHM_INTERFACE_WIFI] = &wifi_adapter;
+    egress_config.adapter_contexts[PUT_SHM_INTERFACE_WIFI] = &wifi_tx_context;
+    egress_config.enabled[PUT_SHM_INTERFACE_WIFI] = config.wifi_enabled;
+    egress_config.enabled[PUT_SHM_INTERFACE_BLUETOOTH] = config.bluetooth_enabled;
+    egress_config.enabled[PUT_SHM_INTERFACE_4G] = false;
+    egress_config.enabled[PUT_SHM_INTERFACE_RS485] = false;
+    err = egress_manager_start(&egress_manager, &egress_config);
+    if (err != UNIFIED_OK) {
+        fprintf(stderr, "failed to start linux egress manager: error=%d\n", (int)err);
+        status_collector_record_error(&collector,
+                                      STATUS_MODULE_ETHERNET,
+                                      "egress_start",
+                                      err);
+        (void)status_collector_write_all(&collector);
+        linux_shm_ipc_unmap(&ipc);
+        egress_manager_destroy(&egress_manager);
+        ethernet_tx_context_destroy(&ethernet_tx_context);
+        wifi_tx_context_destroy(&wifi_tx_context);
+        status_collector_destroy(&collector);
+        return EXIT_FAILURE;
+    }
+    egress_started = true;
 
     if (config.can_enabled) {
         can_adapter_config_t can_config;
@@ -241,6 +311,7 @@ int main(int argc, char **argv)
         can_config.enabled = true;
         (void)snprintf(can_config.ifname, sizeof(can_config.ifname), "%s", config.can_ifname);
         can_config.bitrate = config.can_bitrate;
+        can_config.tx_can_id = config.can_tx_can_id;
         can_config.rx_filter_id = config.can_rx_filter_id;
         can_config.rx_filter_mask = config.can_rx_filter_mask;
         can_config.extended_id = config.can_extended_id;
@@ -257,9 +328,10 @@ int main(int argc, char **argv)
             g_should_stop = 1;
         } else {
             can_started = true;
-            printf("linux_app: CAN RX listening on %s, expected externally configured bitrate=%u, linux_epoch=%u\n",
+            printf("linux_app: CAN RX listening on %s, expected externally configured bitrate=%u, tx_can_id=0x%X, linux_epoch=%u\n",
                    config.can_ifname,
                    (unsigned)config.can_bitrate,
+                   (unsigned)config.can_tx_can_id,
                    linux_epoch);
         }
     }
@@ -397,6 +469,10 @@ int main(int argc, char **argv)
         sleep_one_second();
     }
 
+    if (egress_started) {
+        egress_manager_stop(&egress_manager);
+    }
+
     if (ethernet_udp_started) {
         ethernet_udp_server_stop();
     }
@@ -420,7 +496,10 @@ int main(int argc, char **argv)
         (void)status_collector_write_all(&collector);
     }
 
+    egress_manager_destroy(&egress_manager);
     linux_shm_ipc_unmap(&ipc);
+    ethernet_tx_context_destroy(&ethernet_tx_context);
+    wifi_tx_context_destroy(&wifi_tx_context);
     status_collector_destroy(&collector);
     return exit_code;
 }

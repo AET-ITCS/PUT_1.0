@@ -413,24 +413,59 @@ static int test_reassembly_session_lifecycle(void)
     return 0;
 }
 
-static int test_tx_callbacks_are_placeholders(void)
+static int test_fragment_tx_generates_sof_and_data_frames(void)
 {
     uint8_t frame[PUT_SHM_FRAME_POOL_BLOCK_SIZE + 1u];
     anymsg_buffer_t msg;
     adapter_tx_packet_t packet;
     adapter_tx_packet_list_t packets;
+    can_tx_context_t tx_ctx;
+    const struct can_frame *sof;
+    const struct can_frame *data0;
+    const struct can_frame *data1;
+    uint16_t expected_crc;
     size_t frame_len;
 
-    frame_len = make_anymsg(frame, 0u, 0x20u, 0x40u);
+    frame_len = make_anymsg(frame, 7u, 0x20u, 0x40u);
     msg.data = frame;
     msg.len = frame_len;
     memset(&packet, 0, sizeof(packet));
     memset(&packets, 0, sizeof(packets));
+    can_tx_context_init(&tx_ctx, 0x321u, false);
 
     CHECK(can_adapter.get_mtu(NULL) == CAN_ADAPTER_DATA_PAYLOAD_SIZE);
-    CHECK(can_adapter.encapsulate(NULL, &msg, &packet) != 0);
-    CHECK(can_adapter.fragment_tx(NULL, &msg, &packets) != 0);
-    CHECK(can_adapter.send(NULL, &packet) != 0);
+    CHECK(can_adapter.encapsulate(&tx_ctx, &msg, &packet) != 0);
+    CHECK(can_adapter.fragment_tx(&tx_ctx, &msg, &packets) == 0);
+    CHECK(packets.count == (1u + ((frame_len + CAN_ADAPTER_DATA_PAYLOAD_SIZE - 1u) /
+                                  CAN_ADAPTER_DATA_PAYLOAD_SIZE)));
+    CHECK(packets.count >= 3u);
+    CHECK(packets.packets[0].len == sizeof(struct can_frame));
+    CHECK(packets.packets[1].len == sizeof(struct can_frame));
+
+    sof = (const struct can_frame *)packets.packets[0].data;
+    data0 = (const struct can_frame *)packets.packets[1].data;
+    data1 = (const struct can_frame *)packets.packets[2].data;
+    expected_crc = unified_crc16_ccitt_false(frame, frame_len);
+    CHECK(sof->can_id == 0x321u);
+    CHECK(sof->can_dlc == CAN_ADAPTER_CLASSIC_DLC);
+    CHECK(sof->data[0] == CAN_ADAPTER_FRAME_KIND_SOF);
+    CHECK(sof->data[1] == 0u);
+    CHECK((uint16_t)(sof->data[2] | ((uint16_t)sof->data[3] << 8u)) == frame_len);
+    CHECK((uint16_t)(sof->data[4] | ((uint16_t)sof->data[5] << 8u)) == expected_crc);
+    CHECK(sof->data[6] == (((frame_len % CAN_ADAPTER_DATA_PAYLOAD_SIZE) == 0u) ? 0u : 1u));
+    CHECK(sof->data[7] == (uint8_t)((frame_len + CAN_ADAPTER_DATA_PAYLOAD_SIZE - 1u) /
+                                    CAN_ADAPTER_DATA_PAYLOAD_SIZE));
+    CHECK(data0->data[0] == CAN_ADAPTER_FRAME_KIND_DATA);
+    CHECK(data0->data[1] == sof->data[1]);
+    CHECK(data0->data[2] == 0u);
+    CHECK(memcmp(&data0->data[3], frame, CAN_ADAPTER_DATA_PAYLOAD_SIZE) == 0);
+    CHECK(data1->data[0] == CAN_ADAPTER_FRAME_KIND_DATA);
+    CHECK(data1->data[1] == sof->data[1]);
+    CHECK(data1->data[2] == 1u);
+    CHECK(memcmp(&data1->data[3],
+                 frame + CAN_ADAPTER_DATA_PAYLOAD_SIZE,
+                 CAN_ADAPTER_DATA_PAYLOAD_SIZE) == 0);
+    CHECK(can_adapter.send(&tx_ctx, &packets.packets[0]) != 0);
     return 0;
 }
 
@@ -457,7 +492,7 @@ int main(void)
     if (test_reassembly_session_lifecycle() != 0) {
         return 1;
     }
-    if (test_tx_callbacks_are_placeholders() != 0) {
+    if (test_fragment_tx_generates_sof_and_data_frames() != 0) {
         return 1;
     }
 

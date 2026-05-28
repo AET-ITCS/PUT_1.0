@@ -37,12 +37,15 @@ target_compile_definitions(linux_shm_ipc PRIVATE
 add_library(linux_app_core STATIC
     core/app_config.c
     core/status_collector.c
+    egress/egress_manager.c
+    egress/egress_worker.c
     adapters/can_adapter.c
     adapters/ethernet_adapter.c
     adapters/wifi_adapter.c
 )
 target_include_directories(linux_app_core PUBLIC
     core
+    egress
     adapters
     ipc
     ../common/include
@@ -119,6 +122,13 @@ if(LINUX_APP_BUILD_TESTS)
         linux_app_core
     )
 
+    add_executable(egress_worker_test
+        test/egress_worker_test.c
+    )
+    target_link_libraries(egress_worker_test PRIVATE
+        linux_app_core
+    )
+
     if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
         target_compile_options(linux_shm_ipc_test PRIVATE -Wall -Wextra)
         target_compile_options(ethernet_adapter_test PRIVATE -Wall -Wextra)
@@ -126,6 +136,7 @@ if(LINUX_APP_BUILD_TESTS)
         target_compile_options(wifi_adapter_test PRIVATE -Wall -Wextra)
         target_compile_options(app_config_test PRIVATE -Wall -Wextra)
         target_compile_options(status_collector_test PRIVATE -Wall -Wextra)
+        target_compile_options(egress_worker_test PRIVATE -Wall -Wextra)
     endif()
 
     add_test(NAME linux_shm_ipc_test COMMAND linux_shm_ipc_test)
@@ -134,4 +145,5 @@ if(LINUX_APP_BUILD_TESTS)
     add_test(NAME wifi_adapter_test COMMAND wifi_adapter_test)
     add_test(NAME app_config_test COMMAND app_config_test)
     add_test(NAME status_collector_test COMMAND status_collector_test)
+    add_test(NAME egress_worker_test COMMAND egress_worker_test)
 endif()
