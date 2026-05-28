@@ -55,27 +55,27 @@ Vue3 监控页面
 
 后端：
 
-| 项目 | 方案 |
-| --- | --- |
-| 语言 | Rust |
-| Web 框架 | Axum |
-| 异步运行时 | Tokio |
-| JSON 序列化 | Serde |
-| HTTP 中间件 | tower-http |
-| 日志 | tracing |
-| 目标平台 | Milk-V Duo 256M 大核 Linux |
-| 交叉编译目标 | `riscv64gc-unknown-linux-musl` |
-| 发布形式 | `put-webd` 单个静态后端可执行文件 |
+| 项目         | 方案                              |
+| ------------ | --------------------------------- |
+| 语言         | Rust                              |
+| Web 框架     | Axum                              |
+| 异步运行时   | Tokio                             |
+| JSON 序列化  | Serde                             |
+| HTTP 中间件  | tower-http                        |
+| 日志         | tracing                           |
+| 目标平台     | Milk-V Duo 256M 大核 Linux        |
+| 交叉编译目标 | `riscv64gc-unknown-linux-musl`    |
+| 发布形式     | `put-webd` 单个静态后端可执行文件 |
 
 前端：
 
-| 项目 | 方案 |
-| --- | --- |
-| 框架 | Vue3 |
-| 构建工具 | Vite |
-| 语言 | TypeScript 优先，普通 JavaScript 可作为第一版简化 |
-| 发布形式 | 外置 `dist/` 静态文件 |
-| 部署方式 | Rust 后端托管 `dist/` |
+| 项目     | 方案                                              |
+| -------- | ------------------------------------------------- |
+| 框架     | Vue3                                              |
+| 构建工具 | Vite                                              |
+| 语言     | TypeScript 优先，普通 JavaScript 可作为第一版简化 |
+| 发布形式 | 外置 `dist/` 静态文件                             |
+| 部署方式 | Rust 后端托管 `dist/`                             |
 
 完整 Web 部署包含：
 
@@ -174,14 +174,14 @@ Vue3 前端负责展示：
                          │
 ┌────────────────────────┴────────────────────────┐
 │                 linux_app 大核程序              │
-│  接入适配 / 出口适配 / 共享内存 / 状态 / 日志    │
+│  接入适配 / 出口适配 / 共享内存 / 状态 / 日志   │
 │  └── 写入 /run/put/status/ 和 /var/log/put/     │
 └────────────────────────┬────────────────────────┘
                          │
                          v
 ┌────────────────────────────────────────────────┐
-│        共享内存 v2 + FreeRTOS 小核路由调度      │
-│ Frame Pool / Descriptor Ring / Pending Bitmap   │
+│        共享内存 v2 + FreeRTOS 小核路由调度     │
+│ Frame Pool / Descriptor Ring / Pending Bitmap  │
 └────────────────────────────────────────────────┘
 ```
 
@@ -224,15 +224,15 @@ web/
 
 ### 6.1 Web 后端直接读取的数据
 
-| 数据 | 来源 |
-| --- | --- |
-| CPU 使用率 | `/proc/stat` |
-| 内存占用 | `/proc/meminfo` |
-| 系统运行时间 | `/proc/uptime` |
-| 网络接口和流量 | `/proc/net/dev`、`/sys/class/net` |
-| 磁盘空间 | `statvfs` 或 `/proc/mounts` |
-| USB、串口、网络设备存在性 | `/dev`、`/sys` |
-| Web 后端日志 | `/var/log/put/web.log` |
+| 数据                      | 来源                              |
+| ------------------------- | --------------------------------- |
+| CPU 使用率                | `/proc/stat`                      |
+| 内存占用                  | `/proc/meminfo`                   |
+| 系统运行时间              | `/proc/uptime`                    |
+| 网络接口和流量            | `/proc/net/dev`、`/sys/class/net` |
+| 磁盘空间                  | `statvfs` 或 `/proc/mounts`       |
+| USB、串口、网络设备存在性 | `/dev`、`/sys`                    |
+| Web 后端日志              | `/var/log/put/web.log`            |
 
 ### 6.2 linux_app 写入的业务快照
 
@@ -284,14 +284,14 @@ web/
 
 模块名称固定为：
 
-| 名称 | 含义 |
-| --- | --- |
-| `can` | CAN 接口 |
-| `ethernet` | 以太网接口 |
-| `wifi` | Wi-Fi 接口 |
-| `bluetooth` | 蓝牙接口 |
-| `4g` | 4G 蜂窝接口 |
-| `rs485` | RS485 接口 |
+| 名称        | 含义        |
+| ----------- | ----------- |
+| `can`       | CAN 接口    |
+| `ethernet`  | 以太网接口  |
+| `wifi`      | Wi-Fi 接口  |
+| `bluetooth` | 蓝牙接口    |
+| `4g`        | 4G 蜂窝接口 |
+| `rs485`     | RS485 接口  |
 
 ### 6.4 IPC 状态快照示例
 
@@ -502,9 +502,9 @@ web/
 
 参数：
 
-| 参数 | 默认 | 说明 |
-| --- | ---: | --- |
-| `limit` | 50 | 返回最近事件数量，范围 `1~500` |
+| 参数    | 默认 | 说明                           |
+| ------- | ---: | ------------------------------ |
+| `limit` |   50 | 返回最近事件数量，范围 `1~500` |
 
 数据来源：
 
@@ -518,13 +518,13 @@ web/
 
 参数：
 
-| 参数 | 默认 | 说明 |
-| --- | --- | --- |
-| `source` | `linux_app` | `linux_app`、`web`、`system`、`ipc`、`router`、`adapter` |
-| `level` | 空 | 日志等级过滤 |
-| `keyword` | 空 | 关键字过滤 |
-| `cursor` | 空 | 分页游标 |
-| `limit` | `200` | 返回行数上限，范围 `1~500` |
+| 参数      | 默认        | 说明                                                     |
+| --------- | ----------- | -------------------------------------------------------- |
+| `source`  | `linux_app` | `linux_app`、`web`、`system`、`ipc`、`router`、`adapter` |
+| `level`   | 空          | 日志等级过滤                                             |
+| `keyword` | 空          | 关键字过滤                                               |
+| `cursor`  | 空          | 分页游标                                                 |
+| `limit`   | `200`       | 返回行数上限，范围 `1~500`                               |
 
 示例：
 
@@ -573,30 +573,30 @@ log_sources = ["linux_app", "web", "system", "ipc", "router", "adapter"]
 
 默认值：
 
-| 配置 | 默认值 |
-| --- | --- |
-| `bind_addr` | `0.0.0.0:8080` |
-| `static_dir` | `/opt/put/web/dist` |
-| `status_dir` | `/run/put/status` |
-| `log_dir` | `/var/log/put` |
-| `readonly` | `true` |
-| `snapshot_stale_ms` | `5000` |
-| `log_sources` | `linux_app, web, system, ipc, router, adapter` |
+| 配置                | 默认值                                         |
+| ------------------- | ---------------------------------------------- |
+| `bind_addr`         | `0.0.0.0:8080`                                 |
+| `static_dir`        | `/opt/put/web/dist`                            |
+| `status_dir`        | `/run/put/status`                              |
+| `log_dir`           | `/var/log/put`                                 |
+| `readonly`          | `true`                                         |
+| `snapshot_stale_ms` | `5000`                                         |
+| `log_sources`       | `linux_app, web, system, ipc, router, adapter` |
 
 `bind_addr = "0.0.0.0:8080"` 仅适用于可信局域网或已有防火墙限制的环境。
 
 ### 8.3 错误处理
 
-| 场景 | API 行为 |
-| --- | --- |
-| 状态快照不存在 | 返回 `unknown`，HTTP 200 |
-| 状态快照过期 | 返回 `stale`，HTTP 200 |
+| 场景               | API 行为                           |
+| ------------------ | ---------------------------------- |
+| 状态快照不存在     | 返回 `unknown`，HTTP 200           |
+| 状态快照过期       | 返回 `stale`，HTTP 200             |
 | 状态快照 JSON 损坏 | 返回 `unknown`，事件中记录解析错误 |
-| 日志文件不存在 | 返回空日志列表，HTTP 200 |
-| 非法日志源 | HTTP 400 |
-| `/proc` 读取失败 | 对应资源字段标记 `unknown` |
-| 配置文件不存在 | 使用默认配置启动 |
-| `dist/` 不存在 | API 仍可用，访问页面返回 404 |
+| 日志文件不存在     | 返回空日志列表，HTTP 200           |
+| 非法日志源         | HTTP 400                           |
+| `/proc` 读取失败   | 对应资源字段标记 `unknown`         |
+| 配置文件不存在     | 使用默认配置启动                   |
+| `dist/` 不存在     | API 仍可用，访问页面返回 404       |
 
 ### 8.4 日志
 
@@ -715,15 +715,15 @@ Vue3 App
 
 推荐刷新周期：
 
-| 数据 | 周期 |
-| --- | ---: |
-| `/api/health` | 5s |
-| `/api/modules` | 1s |
-| `/api/resources` | 2s |
-| `/api/ipc-status` | 1s |
-| `/api/route-status` | 1s |
-| `/api/events` | 3s |
-| `/api/logs` | 用户主动刷新或 5s |
+| 数据                |              周期 |
+| ------------------- | ----------------: |
+| `/api/health`       |                5s |
+| `/api/modules`      |                1s |
+| `/api/resources`    |                2s |
+| `/api/ipc-status`   |                1s |
+| `/api/route-status` |                1s |
+| `/api/events`       |                3s |
+| `/api/logs`         | 用户主动刷新或 5s |
 
 ---
 

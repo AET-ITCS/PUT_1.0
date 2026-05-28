@@ -90,11 +90,11 @@ Linux 大核出口层
         ↓
 ┌─ 共享内存 IPC ────────────────────────────────────────────────┐
 │ Frame Pool + RX Descriptor Rings + Pending Bitmap             │
-│ Mailbox Doorbell only wakes peer; it never carries payload     │
+│ Mailbox Doorbell only wakes peer; it never carries payload    │
 └───────────────────────────────────────────────────────────────┘
         ↓
 ┌─ FreeRTOS 小核路由调度层 ─────────────────────────────────────┐
-│ anyMSG header check / heartbeat / CID route / priority queue   │
+│ anyMSG header check / heartbeat / CID route / priority queue  │
 └───────────────────────────────────────────────────────────────┘
         ↓
 ┌─ 共享内存 IPC ────────────────────────────────────────────────┐
@@ -102,7 +102,7 @@ Linux 大核出口层
 └───────────────────────────────────────────────────────────────┘
         ↓
 ┌─ Linux 大核出口层 ────────────────────────────────────────────┐
-│ encapsulate / fragment_tx / send through target interface      │
+│ encapsulate / fragment_tx / send through target interface     │
 └───────────────────────────────────────────────────────────────┘
         ↓
 ┌─ 目标设备 ────────────────────────────────────────────────────┐
@@ -110,7 +110,7 @@ Linux 大核出口层
 └───────────────────────────────────────────────────────────────┘
 
 ┌─ Web 监控旁路 ────────────────────────────────────────────────┐
-│ 读取 /run/put/status/ 状态快照和 /var/log/put/ 日志            │
+│ 读取 /run/put/status/ 状态快照和 /var/log/put/ 日志           │
 └───────────────────────────────────────────────────────────────┘
 ```
 

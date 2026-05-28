@@ -6,7 +6,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-#include "ethernet_adapter.h"
+#include "wifi_adapter.h"
 #include "shared_memory_ipc.h"
 
 #define CHECK(condition)                                                            \
@@ -35,7 +35,7 @@ static size_t make_anymsg(uint8_t *buffer)
     write_le16(header->msg_length, ANYMSG_HEADER_SIZE);
     header->retries = 1u;
     header->destination_cid[0] = 0x20u;
-    header->source_cid[0] = 0x40u;
+    header->source_cid[0] = 0x60u;
     write_le16(header->payload_length, 0u);
     header->type = ANYMSG_TYPE_RAW_CAN;
     return ANYMSG_HEADER_SIZE;
@@ -84,7 +84,7 @@ static int test_status_snapshots_include_modules_and_ipc(void)
     status_collector_t collector;
     linux_shm_ipc_t ipc;
     linux_shm_ipc_stats_t stats;
-    ethernet_rx_context_t ctx;
+    wifi_rx_context_t ctx;
     uint8_t frame[PUT_SHM_FRAME_POOL_BLOCK_SIZE];
     size_t frame_len;
 
@@ -101,12 +101,12 @@ static int test_status_snapshots_include_modules_and_ipc(void)
                                           "planned");
     }
     status_collector_configure_module(&collector,
-                                      STATUS_MODULE_ETHERNET,
+                                      STATUS_MODULE_WIFI,
                                       true,
                                       true,
-                                      "Ethernet UDP/TCP raw",
+                                      "Wi-Fi UDP/TCP raw",
                                       "test");
-    status_collector_mark_running(&collector, STATUS_MODULE_ETHERNET);
+    status_collector_mark_running(&collector, STATUS_MODULE_WIFI);
 
     linux_shm_ipc_init(&ipc);
     CHECK(linux_shm_ipc_format_region(&ipc, &g_region, 77u, 0u, NULL) == UNIFIED_OK);
@@ -115,7 +115,7 @@ static int test_status_snapshots_include_modules_and_ipc(void)
     ctx.collector = &collector;
     ctx.linux_epoch = 77u;
     frame_len = make_anymsg(frame);
-    CHECK(ethernet_adapter_handle_datagram(&ctx, frame, frame_len) == UNIFIED_OK);
+    CHECK(wifi_adapter_handle_datagram(&ctx, frame, frame_len) == UNIFIED_OK);
 
     linux_shm_ipc_get_stats(&ipc, &stats);
     status_collector_update_ipc_stats(&collector, &stats, false, 0u);
@@ -127,6 +127,7 @@ static int test_status_snapshots_include_modules_and_ipc(void)
     CHECK(strstr(modules_json, "\"name\":\"ethernet\"") != NULL);
     CHECK(strstr(modules_json, "\"name\":\"can\"") != NULL);
     CHECK(strstr(modules_json, "\"name\":\"wifi\"") != NULL);
+    CHECK(strstr(modules_json, "\"name\":\"wifi\",\"status\":\"online\"") != NULL);
     CHECK(strstr(modules_json, "\"name\":\"bluetooth\"") != NULL);
     CHECK(strstr(modules_json, "\"name\":\"4g\"") != NULL);
     CHECK(strstr(modules_json, "\"name\":\"rs485\"") != NULL);
@@ -139,7 +140,7 @@ static int test_status_snapshots_include_modules_and_ipc(void)
     CHECK(ipc_json != NULL);
     CHECK(strstr(ipc_json, "\"frame_pool\"") != NULL);
     CHECK(strstr(ipc_json, "\"rx_rings\"") != NULL);
-    CHECK(strstr(ipc_json, "\"interface\":\"ethernet\"") != NULL);
+    CHECK(strstr(ipc_json, "\"interface\":\"wifi\"") != NULL);
     CHECK(strstr(ipc_json, "\"pending_bitmap\"") != NULL);
     CHECK(strstr(ipc_json, "\"used\":1") != NULL);
     free(ipc_json);
