@@ -32,6 +32,17 @@ add_library(rtos_firmware_core STATIC
     bsp/pinmux.c
     bsp/interrupt.c
     can/rtos_can.c
+    mailbox/rtos_mailbox_event.c
+    mailbox/rtos_mailbox_isr.c
+    mailbox/rtos_mailbox_port.c
+    monitor/rtos_endpoint_heartbeat.c
+    monitor/rtos_monitor.c
+    queue/rtos_priority_queue.c
+    router/rtos_router_adapter.c
+    router/rtos_router_core.c
+    router/rtos_router_policy.c
+    router/rtos_router_table.c
+    tasks/rtos_task_placeholders.c
     watchdog/rtos_watchdog.c
 )
 
@@ -39,6 +50,11 @@ target_include_directories(rtos_firmware_core PUBLIC
     include
     bsp
     can
+    mailbox
+    monitor
+    queue
+    router
+    tasks
     watchdog
     "${PROJECT_ROOT}/common/include"
 )
@@ -59,6 +75,20 @@ if(RTOS_FIRMWARE_BUILD_TESTS AND NOT CMAKE_CROSSCOMPILING)
 
     target_link_libraries(rtos_shm_ipc_test PRIVATE rtos_firmware_ipc)
     add_test(NAME rtos_shm_ipc COMMAND rtos_shm_ipc_test)
+
+    add_executable(rtos_priority_queue_test
+        test/rtos_priority_queue_test.c
+    )
+
+    target_link_libraries(rtos_priority_queue_test PRIVATE rtos_firmware_core)
+    add_test(NAME rtos_priority_queue COMMAND rtos_priority_queue_test)
+
+    add_executable(rtos_router_core_test
+        test/rtos_router_core_test.c
+    )
+
+    target_link_libraries(rtos_router_core_test PRIVATE rtos_firmware_core)
+    add_test(NAME rtos_router_core COMMAND rtos_router_core_test)
 endif()
 
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
@@ -71,5 +101,13 @@ if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
 
     if(TARGET rtos_shm_ipc_test)
         target_compile_options(rtos_shm_ipc_test PRIVATE -Wall -Wextra)
+    endif()
+
+    if(TARGET rtos_priority_queue_test)
+        target_compile_options(rtos_priority_queue_test PRIVATE -Wall -Wextra)
+    endif()
+
+    if(TARGET rtos_router_core_test)
+        target_compile_options(rtos_router_core_test PRIVATE -Wall -Wextra)
     endif()
 endif()

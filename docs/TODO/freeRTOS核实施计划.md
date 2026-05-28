@@ -58,13 +58,13 @@
 
 建议新增或整理的模块边界：
 
-- [ ] `rtos_firmware/router/`：CID 路由、route table、route epoch、路由策略、drop reason 映射。
-- [ ] `rtos_firmware/queue/`：四级 priority 本地队列、队列水位线、驱逐策略。
-- [ ] `rtos_firmware/tasks/`：IPC Event、Router Scheduler、TX Writer、Heartbeat、Recovery、Statistics、Error Monitor 的 task 入口或 host mock 调度入口。
-- [ ] `rtos_firmware/mailbox/`：Mailbox ISR、Doorbell port、event wakeup 抽象。
-- [ ] `rtos_firmware/monitor/` 或并入 `tasks/`：端心跳表、Linux heartbeat、错误监控、统计快照。
-- [ ] 继续复用 `rtos_firmware/ipc/`，不得在路由层重写 descriptor ring、pending bitmap、CRC、cache 同步和 notify 发布。
-- [ ] 将新增正式模块接入 `rtos_firmware/CMakeLists.txt`，新增 host 单测统一放入 `rtos_firmware/test/`。
+- [x] `rtos_firmware/router/`：CID 路由、route table、route epoch、路由策略、drop reason 映射。
+- [x] `rtos_firmware/queue/`：四级 priority 本地队列、队列水位线、驱逐策略。
+- [x] `rtos_firmware/tasks/`：IPC Event、Router Scheduler、TX Writer、Heartbeat、Recovery、Statistics、Error Monitor 的 task 入口或 host mock 调度入口。
+- [x] `rtos_firmware/mailbox/`：Mailbox ISR、Doorbell port、event wakeup 抽象。
+- [x] `rtos_firmware/monitor/` 或并入 `tasks/`：端心跳表、Linux heartbeat、错误监控、统计快照。
+- [x] 继续复用 `rtos_firmware/ipc/`，不得在路由层重写 descriptor ring、pending bitmap、CRC、cache 同步和 notify 发布。
+- [x] 将新增正式模块接入 `rtos_firmware/CMakeLists.txt`，新增 host 单测统一放入 `rtos_firmware/test/`。
 
 建议文件架构：
 
@@ -131,21 +131,21 @@ rtos_firmware/
 
 架构约束：
 
-- [ ] 已有文件优先原地演进；新增文件按上面的目录归属落位。
-- [ ] `ipc/` 只提供共享内存 descriptor 搬运能力，不放业务路由策略。
-- [ ] `router/` 和 `queue/` 不直接调用平台 cache、atomic 或 mailbox API。
+- [x] 已有文件优先原地演进；新增文件按上面的目录归属落位。
+- [x] `ipc/` 只提供共享内存 descriptor 搬运能力，不放业务路由策略。
+- [x] `router/` 和 `queue/` 不直接调用平台 cache、atomic 或 mailbox API。
 - [ ] `tasks/` 负责调度编排，可以连接 `ipc/`、`router/`、`queue/`、`monitor/` 和 `mailbox/`。
-- [ ] `monitor/` 不阻塞路由主流程，高频计数先本地累加。
-- [ ] `test/` 中新增 host 单测与阶段任务同名对应，避免继续把正式验收放到 `freertos/`。
+- [x] `monitor/` 不阻塞路由主流程，高频计数先本地累加。
+- [x] `test/` 中新增 host 单测与阶段任务同名对应，避免继续把正式验收放到 `freertos/`。
 
 内部接口规划：
 
-- [ ] 定义 `rtos_route_input_t` 或等价内部类型，表示经过 IPC 适配后的可信路由输入，不携带共享内存指针，不执行 Frame Pool 所有权操作。
-- [ ] 定义 `rtos_route_output_t` 或等价内部类型，表示 TX / reclaim 输出、目标接口、priority、drop reason、latency。
-- [ ] 定义 TX sink adapter：mock 阶段写测试队列，真实阶段调用 `rtos_shm_ipc_enqueue_tx_descriptor()`。
-- [ ] 定义 reclaim sink adapter：mock 阶段写测试队列，真实阶段调用 `rtos_shm_ipc_reclaim_frame()`。
-- [ ] 定义 route table snapshot，至少包含 `route_version`、`active_route_epoch`、CID 段到目标接口映射和 CRC/有效性状态。
-- [ ] 定义 heartbeat/error/recovery/statistics snapshot，用于 host 测试和后续共享状态区同步。
+- [x] 定义 `rtos_route_input_t` 或等价内部类型，表示经过 IPC 适配后的可信路由输入，不携带共享内存指针，不执行 Frame Pool 所有权操作。
+- [x] 定义 `rtos_route_output_t` 或等价内部类型，表示 TX / reclaim 输出、目标接口、priority、drop reason、latency。
+- [x] 定义 TX sink adapter：mock 阶段写测试队列，真实阶段调用 `rtos_shm_ipc_enqueue_tx_descriptor()`。
+- [x] 定义 reclaim sink adapter：mock 阶段写测试队列，真实阶段调用 `rtos_shm_ipc_reclaim_frame()`。
+- [x] 定义 route table snapshot，至少包含 `route_version`、`active_route_epoch`、CID 段到目标接口映射和 CRC/有效性状态。
+- [x] 定义 heartbeat/error/recovery/statistics snapshot，用于 host 测试和后续共享状态区同步。
 
 验收标准：
 
@@ -200,43 +200,43 @@ P0 保持原则：
 
 迁移与模块化：
 
-- [ ] 评估 `freertos/router_core` 已有逻辑，按 `rtos_firmware` 风格迁入或重建到正式模块中。
-- [ ] 将正式路由核心接入 `rtos_firmware/CMakeLists.txt`，新增 `rtos_firmware/test/rtos_router_*_test.c`。
-- [ ] 保持 route input 与 `put_shm_descriptor_t` 解耦；第一阶段不访问 Frame Pool 指针。
-- [ ] 保持 TX / reclaim 输出可替换为 mock sink。
-- [ ] 使用统一时间源抽象，供 TTL、heartbeat、latency、Recovery 测试使用。
+- [x] 评估 `freertos/router_core` 已有逻辑，按 `rtos_firmware` 风格迁入或重建到正式模块中。
+- [x] 将正式路由核心接入 `rtos_firmware/CMakeLists.txt`，新增 `rtos_firmware/test/rtos_router_*_test.c`。
+- [x] 保持 route input 与 `put_shm_descriptor_t` 解耦；第一阶段不访问 Frame Pool 指针。
+- [x] 保持 TX / reclaim 输出可替换为 mock sink。
+- [x] 使用统一时间源抽象，供 TTL、heartbeat、latency、Recovery 测试使用。
 
 CID 路由规则：
 
-- [ ] 使用 `anymsg_frame.h` 中定义的 CID 地址段作为路由依据。
-- [ ] `destination_cid[0]` 在 `0x20 ~ 0x3F` 时路由到 CAN。
-- [ ] `destination_cid[0]` 在 `0x40 ~ 0x5F` 时路由到 Ethernet。
-- [ ] `destination_cid[0]` 在 `0x60 ~ 0x7F` 时路由到 Wi-Fi。
-- [ ] `destination_cid[0]` 在 `0x80 ~ 0x9F` 时路由到 Bluetooth。
-- [ ] `destination_cid[0]` 在 `0xA0 ~ 0xBF` 时路由到 4G。
-- [ ] `destination_cid[0]` 在 `0xC0 ~ 0xDF` 时路由到 RS485。
-- [ ] `0x00 ~ 0x1F` 和 `0xE0 ~ 0xFF` 作为保留地址，不进入 Router Scheduler。
-- [ ] 当前 anyMSG 未定义广播 CID，小核不自行扩展广播语义，统一按 `NO_ROUTE` 处理。
+- [x] 使用 `anymsg_frame.h` 中定义的 CID 地址段作为路由依据。
+- [x] `destination_cid[0]` 在 `0x20 ~ 0x3F` 时路由到 CAN。
+- [x] `destination_cid[0]` 在 `0x40 ~ 0x5F` 时路由到 Ethernet。
+- [x] `destination_cid[0]` 在 `0x60 ~ 0x7F` 时路由到 Wi-Fi。
+- [x] `destination_cid[0]` 在 `0x80 ~ 0x9F` 时路由到 Bluetooth。
+- [x] `destination_cid[0]` 在 `0xA0 ~ 0xBF` 时路由到 4G。
+- [x] `destination_cid[0]` 在 `0xC0 ~ 0xDF` 时路由到 RS485。
+- [x] `0x00 ~ 0x1F` 和 `0xE0 ~ 0xFF` 作为保留地址，不进入 Router Scheduler。
+- [x] 当前 anyMSG 未定义广播 CID，小核不自行扩展广播语义，统一按 `NO_ROUTE` 处理。
 
 Priority 队列与调度：
 
-- [ ] 实现 priority 0/1/2/3 四级本地队列，数值越小优先级越高。
-- [ ] priority 超出 0..3 时按非法输入处理。
-- [ ] 实现严格优先级 + 配额防饥饿调度。
-- [ ] 默认配额：priority 0 每轮 16 帧，priority 1 每轮 12 帧，priority 2 每轮 8 帧，priority 3 每轮 4 帧。
-- [ ] 本地队列项保存 `frame_id`、source ring/interface、priority、enqueue time、retry count、`route_epoch_seen`。
-- [ ] 本地队列满时优先驱逐 priority 3，再 priority 2，再 priority 1；priority 0 仅在全局降级或 epoch/recovery 异常时丢弃。
-- [ ] priority 0/1 预留策略作为配置项预留，第一版可先通过队列驱逐和测试断言体现。
+- [x] 实现 priority 0/1/2/3 四级本地队列，数值越小优先级越高。
+- [x] priority 超出 0..3 时按非法输入处理。
+- [x] 实现严格优先级 + 配额防饥饿调度。
+- [x] 默认配额：priority 0 每轮 16 帧，priority 1 每轮 12 帧，priority 2 每轮 8 帧，priority 3 每轮 4 帧。
+- [x] 本地队列项保存 `frame_id`、source ring/interface、priority、enqueue time、retry count、`route_epoch_seen`。
+- [x] 本地队列满时优先驱逐 priority 3，再 priority 2，再 priority 1；priority 0 仅在全局降级或 epoch/recovery 异常时丢弃。
+- [x] priority 0/1 预留策略作为配置项预留，第一版可先通过队列驱逐和测试断言体现。
 
 TTL、epoch、trust 和 anyMSG 基础状态：
 
-- [ ] route input 入队前检查 epoch。
-- [ ] route input 入队前检查 TTL。
-- [ ] 写 TX sink 前再次检查 TTL。
-- [ ] `ttl == 0` 表示不启用过期检查。
-- [ ] 鉴权失败、完整性失败、重放失败的输入不得进入调度队列。
-- [ ] 非法 anyMSG header、非法 CID、非法 type 统一走丢弃统计和 mock reclaim。
-- [ ] descriptor 级 CRC、Frame Pool 边界和 ring 接口一致性校验不在 P1 重做，由 P2 IPC 适配层和 `rtos_shm_ipc_*` API 承担。
+- [x] route input 入队前检查 epoch。
+- [x] route input 入队前检查 TTL。
+- [x] 写 TX sink 前再次检查 TTL。
+- [x] `ttl == 0` 表示不启用过期检查。
+- [x] 鉴权失败、完整性失败、重放失败的输入不得进入调度队列。
+- [x] 非法 anyMSG header、非法 CID、非法 type 统一走丢弃统计和 mock reclaim。
+- [x] descriptor 级 CRC、Frame Pool 边界和 ring 接口一致性校验不在 P1 重做，由 P2 IPC 适配层和 `rtos_shm_ipc_*` API 承担。
 
 Drop/reclaim 映射：
 
@@ -465,29 +465,29 @@ P4 验收标准：
 
 新增测试落位：
 
-- [ ] 新增正式路由核心测试放入 `rtos_firmware/test/`。
+- [x] 新增正式路由核心测试放入 `rtos_firmware/test/`。
 - [ ] 新增 IPC 适配和闭环测试放入 `rtos_firmware/test/` 或跨库 host test 目录。
-- [ ] 不继续扩展 `freertos/router_core/test` 作为正式验收入口。
-- [ ] 保留并持续运行 `rtos_firmware/test/rtos_shm_ipc_test.c`。
-- [ ] 保留并持续运行 `linux_app/test/linux_shm_ipc_test.c`。
+- [x] 不继续扩展 `freertos/router_core/test` 作为正式验收入口。
+- [x] 保留并持续运行 `rtos_firmware/test/rtos_shm_ipc_test.c`。
+- [x] 保留并持续运行 `linux_app/test/linux_shm_ipc_test.c`。
 
 P1 测试：
 
-- [ ] CID 首字节路由到 CAN / Ethernet / Wi-Fi / Bluetooth / 4G / RS485。
-- [ ] 保留 CID、未定义广播 CID、无路由进入 drop / mock reclaim。
-- [ ] priority 0/1 优先，priority 2/3 不长期饿死。
-- [ ] 非法 priority 不进入调度队列。
-- [ ] TTL 过期不进入 TX mock。
-- [ ] `ttl == 0` 不触发 TTL 过期。
-- [ ] epoch mismatch 不进入 TX mock。
-- [ ] auth failed、integrity failed、replay dropped 不进入 TX mock。
-- [ ] invalid anyMSG 不进入 TX mock。
-- [ ] `type = 0x00` 心跳更新端在线表，不进入 TX mock。
-- [ ] gateway CID 未配置时心跳不更新端在线表。
-- [ ] 本地队列满时按优先级丢弃并写 mock reclaim。
-- [ ] TX mock 拥塞时按 priority 策略重试或丢弃。
+- [x] CID 首字节路由到 CAN / Ethernet / Wi-Fi / Bluetooth / 4G / RS485。
+- [x] 保留 CID、未定义广播 CID、无路由进入 drop / mock reclaim。
+- [x] priority 0/1 优先，priority 2/3 不长期饿死。
+- [x] 非法 priority 不进入调度队列。
+- [x] TTL 过期不进入 TX mock。
+- [x] `ttl == 0` 不触发 TTL 过期。
+- [x] epoch mismatch 不进入 TX mock。
+- [x] auth failed、integrity failed、replay dropped 不进入 TX mock。
+- [x] invalid anyMSG 不进入 TX mock。
+- [x] `type = 0x00` 心跳更新端在线表，不进入 TX mock。
+- [x] gateway CID 未配置时心跳不更新端在线表。
+- [x] 本地队列满时按优先级丢弃并写 mock reclaim。
+- [x] TX mock 拥塞时按 priority 策略重试或丢弃。
 - [ ] Recovery 清理本地队列引用并写 mock reclaim。
-- [ ] 统计计数与实际处理路径一致。
+- [x] 统计计数与实际处理路径一致。
 
 P2 测试：
 
