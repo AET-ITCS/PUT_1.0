@@ -81,7 +81,7 @@ const char *status_module_display_protocol(status_module_id_t module_id)
     case STATUS_MODULE_CAN:
         return "CAN";
     case STATUS_MODULE_ETHERNET:
-        return "Ethernet UDP raw";
+        return "Ethernet UDP/TCP raw";
     case STATUS_MODULE_WIFI:
         return "Wi-Fi";
     case STATUS_MODULE_BLUETOOTH:

@@ -25,10 +25,22 @@ typedef struct {
     pthread_t thread;
     bool running;
     ethernet_udp_config_t config;
-} ethernet_server_state_t;
+} ethernet_udp_server_state_t;
 
-static ethernet_server_state_t g_ethernet_server = {
+typedef struct {
+    int listen_fd;
+    pthread_t thread;
+    bool running;
+    ethernet_tcp_config_t config;
+} ethernet_tcp_server_state_t;
+
+static ethernet_udp_server_state_t g_ethernet_udp_server = {
     .socket_fd = -1,
+    .running = false,
+};
+
+static ethernet_tcp_server_state_t g_ethernet_tcp_server = {
+    .listen_fd = -1,
     .running = false,
 };
 
@@ -165,7 +177,7 @@ static int ethernet_status(void *ctx, void *out_status)
     memset(status, 0, sizeof(*status));
     status->name = "ethernet";
     status->interface_id = (uint8_t)PUT_SHM_INTERFACE_ETHERNET;
-    status->state = g_ethernet_server.running ? "online" : "offline";
+    status->state = (g_ethernet_udp_server.running || g_ethernet_tcp_server.running) ? "online" : "offline";
     return 0;
 }
 
@@ -306,13 +318,113 @@ unified_error_t ethernet_adapter_handle_datagram(ethernet_rx_context_t *ctx,
     return UNIFIED_OK;
 }
 
+
+void ethernet_tcp_stream_init(ethernet_tcp_stream_context_t *stream_ctx,
+                              const ethernet_rx_context_t *rx_ctx)
+{
+    if (stream_ctx == 0) {
+        return;
+    }
+
+    memset(stream_ctx, 0, sizeof(*stream_ctx));
+    if (rx_ctx != 0) {
+        stream_ctx->rx_ctx = *rx_ctx;
+    }
+}
+
+static void record_tcp_stream_decode_error(const ethernet_tcp_stream_context_t *stream_ctx,
+                                           unified_error_t err)
+{
+    if ((stream_ctx != 0) && (stream_ctx->rx_ctx.collector != 0)) {
+        status_collector_record_error(stream_ctx->rx_ctx.collector,
+                                      STATUS_MODULE_ETHERNET,
+                                      "ethernet_tcp_decode",
+                                      err);
+    }
+}
+
+unified_error_t ethernet_adapter_handle_tcp_bytes(ethernet_tcp_stream_context_t *stream_ctx,
+                                                  const uint8_t *input,
+                                                  size_t input_len)
+{
+    size_t input_offset;
+
+    if (stream_ctx == 0) {
+        return UNIFIED_ERR_NULL;
+    }
+
+    if (input_len == 0u) {
+        return UNIFIED_OK;
+    }
+
+    if (input == 0) {
+        return UNIFIED_ERR_NULL;
+    }
+
+    input_offset = 0u;
+    while (input_offset < input_len) {
+        uint16_t msg_length;
+        size_t bytes_needed;
+        size_t bytes_available;
+        size_t bytes_to_copy;
+        unified_error_t err;
+
+        if (stream_ctx->buffered_len < ANYMSG_LENGTH_FIELD_LENGTH) {
+            bytes_needed = ANYMSG_LENGTH_FIELD_LENGTH - stream_ctx->buffered_len;
+            bytes_available = input_len - input_offset;
+            bytes_to_copy = (bytes_available < bytes_needed) ? bytes_available : bytes_needed;
+            memcpy(stream_ctx->buffer + stream_ctx->buffered_len,
+                   input + input_offset,
+                   bytes_to_copy);
+            stream_ctx->buffered_len += bytes_to_copy;
+            input_offset += bytes_to_copy;
+
+            if (stream_ctx->buffered_len < ANYMSG_LENGTH_FIELD_LENGTH) {
+                continue;
+            }
+        }
+
+        msg_length = read_le16(stream_ctx->buffer);
+        if ((msg_length < ANYMSG_HEADER_SIZE) || (msg_length > PUT_SHM_FRAME_POOL_BLOCK_SIZE)) {
+            stream_ctx->buffered_len = 0u;
+            record_tcp_stream_decode_error(stream_ctx, UNIFIED_ERR_LENGTH);
+            return UNIFIED_ERR_LENGTH;
+        }
+
+        bytes_needed = (size_t)msg_length - stream_ctx->buffered_len;
+        bytes_available = input_len - input_offset;
+        bytes_to_copy = (bytes_available < bytes_needed) ? bytes_available : bytes_needed;
+        if (bytes_to_copy > 0u) {
+            memcpy(stream_ctx->buffer + stream_ctx->buffered_len,
+                   input + input_offset,
+                   bytes_to_copy);
+            stream_ctx->buffered_len += bytes_to_copy;
+            input_offset += bytes_to_copy;
+        }
+
+        if (stream_ctx->buffered_len < (size_t)msg_length) {
+            continue;
+        }
+
+        err = ethernet_adapter_handle_datagram(&stream_ctx->rx_ctx,
+                                               stream_ctx->buffer,
+                                               (size_t)msg_length);
+        stream_ctx->buffered_len = 0u;
+        if (err != UNIFIED_OK) {
+            return err;
+        }
+    }
+
+    return UNIFIED_OK;
+}
+
 static void *ethernet_udp_thread(void *arg)
 {
-    ethernet_server_state_t *server;
+    ethernet_udp_server_state_t *server;
     ethernet_rx_context_t rx_ctx;
     uint8_t buffer[ETHERNET_RX_BUFFER_SIZE];
 
-    server = (ethernet_server_state_t *)arg;
+    server = (ethernet_udp_server_state_t *)arg;
     rx_ctx.ipc = server->config.ipc;
     rx_ctx.collector = server->config.collector;
     rx_ctx.linux_epoch = server->config.linux_epoch;
@@ -350,7 +462,7 @@ static void *ethernet_udp_thread(void *arg)
         (void)ethernet_adapter_handle_datagram(&rx_ctx, buffer, (size_t)received);
     }
 
-    if (rx_ctx.collector != 0) {
+    if ((rx_ctx.collector != 0) && !g_ethernet_tcp_server.running) {
         status_collector_mark_stopped(rx_ctx.collector, STATUS_MODULE_ETHERNET, "ethernet udp stopped");
     }
 
@@ -367,16 +479,16 @@ int ethernet_udp_server_start(const ethernet_udp_config_t *config)
         return -1;
     }
 
-    if (g_ethernet_server.running) {
+    if (g_ethernet_udp_server.running) {
         return 0;
     }
 
-    memset(&g_ethernet_server, 0, sizeof(g_ethernet_server));
-    g_ethernet_server.socket_fd = -1;
-    g_ethernet_server.config = *config;
+    memset(&g_ethernet_udp_server, 0, sizeof(g_ethernet_udp_server));
+    g_ethernet_udp_server.socket_fd = -1;
+    g_ethernet_udp_server.config = *config;
 
-    g_ethernet_server.socket_fd = socket(AF_INET, SOCK_DGRAM, 0);
-    if (g_ethernet_server.socket_fd < 0) {
+    g_ethernet_udp_server.socket_fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (g_ethernet_udp_server.socket_fd < 0) {
         if (config->collector != 0) {
             status_collector_record_error(config->collector,
                                           STATUS_MODULE_ETHERNET,
@@ -387,7 +499,7 @@ int ethernet_udp_server_start(const ethernet_udp_config_t *config)
     }
 
     reuse = 1;
-    (void)setsockopt(g_ethernet_server.socket_fd,
+    (void)setsockopt(g_ethernet_udp_server.socket_fd,
                      SOL_SOCKET,
                      SO_REUSEADDR,
                      &reuse,
@@ -395,7 +507,7 @@ int ethernet_udp_server_start(const ethernet_udp_config_t *config)
 
     timeout.tv_sec = 1;
     timeout.tv_usec = 0;
-    (void)setsockopt(g_ethernet_server.socket_fd,
+    (void)setsockopt(g_ethernet_udp_server.socket_fd,
                      SOL_SOCKET,
                      SO_RCVTIMEO,
                      &timeout,
@@ -405,8 +517,8 @@ int ethernet_udp_server_start(const ethernet_udp_config_t *config)
     bind_addr.sin_family = AF_INET;
     bind_addr.sin_port = htons(config->port);
     if (inet_pton(AF_INET, config->bind_addr, &bind_addr.sin_addr) != 1) {
-        (void)close(g_ethernet_server.socket_fd);
-        g_ethernet_server.socket_fd = -1;
+        (void)close(g_ethernet_udp_server.socket_fd);
+        g_ethernet_udp_server.socket_fd = -1;
         if (config->collector != 0) {
             status_collector_record_error(config->collector,
                                           STATUS_MODULE_ETHERNET,
@@ -416,11 +528,11 @@ int ethernet_udp_server_start(const ethernet_udp_config_t *config)
         return -1;
     }
 
-    if (bind(g_ethernet_server.socket_fd,
+    if (bind(g_ethernet_udp_server.socket_fd,
              (const struct sockaddr *)&bind_addr,
              sizeof(bind_addr)) != 0) {
-        (void)close(g_ethernet_server.socket_fd);
-        g_ethernet_server.socket_fd = -1;
+        (void)close(g_ethernet_udp_server.socket_fd);
+        g_ethernet_udp_server.socket_fd = -1;
         if (config->collector != 0) {
             status_collector_record_error(config->collector,
                                           STATUS_MODULE_ETHERNET,
@@ -430,14 +542,14 @@ int ethernet_udp_server_start(const ethernet_udp_config_t *config)
         return -1;
     }
 
-    g_ethernet_server.running = true;
-    if (pthread_create(&g_ethernet_server.thread,
+    g_ethernet_udp_server.running = true;
+    if (pthread_create(&g_ethernet_udp_server.thread,
                        0,
                        ethernet_udp_thread,
-                       &g_ethernet_server) != 0) {
-        g_ethernet_server.running = false;
-        (void)close(g_ethernet_server.socket_fd);
-        g_ethernet_server.socket_fd = -1;
+                       &g_ethernet_udp_server) != 0) {
+        g_ethernet_udp_server.running = false;
+        (void)close(g_ethernet_udp_server.socket_fd);
+        g_ethernet_udp_server.socket_fd = -1;
         if (config->collector != 0) {
             status_collector_record_error(config->collector,
                                           STATUS_MODULE_ETHERNET,
@@ -452,16 +564,226 @@ int ethernet_udp_server_start(const ethernet_udp_config_t *config)
 
 void ethernet_udp_server_stop(void)
 {
-    if (!g_ethernet_server.running) {
+    if (!g_ethernet_udp_server.running) {
         return;
     }
 
-    g_ethernet_server.running = false;
-    if (g_ethernet_server.socket_fd >= 0) {
-        (void)close(g_ethernet_server.socket_fd);
+    g_ethernet_udp_server.running = false;
+    if (g_ethernet_udp_server.socket_fd >= 0) {
+        (void)close(g_ethernet_udp_server.socket_fd);
     }
-    (void)pthread_join(g_ethernet_server.thread, 0);
-    g_ethernet_server.socket_fd = -1;
+    (void)pthread_join(g_ethernet_udp_server.thread, 0);
+    g_ethernet_udp_server.socket_fd = -1;
+}
+
+
+static void configure_recv_timeout(int fd)
+{
+    struct timeval timeout;
+
+    timeout.tv_sec = 1;
+    timeout.tv_usec = 0;
+    (void)setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+}
+
+static void handle_tcp_client(ethernet_tcp_server_state_t *server, int client_fd)
+{
+    ethernet_rx_context_t rx_ctx;
+    ethernet_tcp_stream_context_t stream_ctx;
+    uint8_t buffer[ETHERNET_RX_BUFFER_SIZE];
+
+    rx_ctx.ipc = server->config.ipc;
+    rx_ctx.collector = server->config.collector;
+    rx_ctx.linux_epoch = server->config.linux_epoch;
+    ethernet_tcp_stream_init(&stream_ctx, &rx_ctx);
+    configure_recv_timeout(client_fd);
+
+    while (server->running) {
+        ssize_t received;
+
+        received = recv(client_fd, buffer, sizeof(buffer), 0);
+        if (received == 0) {
+            break;
+        }
+        if (received < 0) {
+            if ((errno == EAGAIN) || (errno == EWOULDBLOCK) || (errno == EINTR)) {
+                continue;
+            }
+            if (server->running && (rx_ctx.collector != 0)) {
+                status_collector_record_error(rx_ctx.collector,
+                                              STATUS_MODULE_ETHERNET,
+                                              "ethernet_tcp_recv",
+                                              UNIFIED_ERR_INVALID_ARG);
+            }
+            break;
+        }
+
+        if (ethernet_adapter_handle_tcp_bytes(&stream_ctx, buffer, (size_t)received) != UNIFIED_OK) {
+            break;
+        }
+    }
+
+    (void)close(client_fd);
+}
+
+static void *ethernet_tcp_thread(void *arg)
+{
+    ethernet_tcp_server_state_t *server;
+    ethernet_rx_context_t rx_ctx;
+
+    server = (ethernet_tcp_server_state_t *)arg;
+    rx_ctx.ipc = server->config.ipc;
+    rx_ctx.collector = server->config.collector;
+    rx_ctx.linux_epoch = server->config.linux_epoch;
+
+    if (rx_ctx.collector != 0) {
+        status_collector_mark_running(rx_ctx.collector, STATUS_MODULE_ETHERNET);
+    }
+
+    while (server->running) {
+        int client_fd;
+        struct sockaddr_in peer_addr;
+        socklen_t peer_len;
+
+        peer_len = (socklen_t)sizeof(peer_addr);
+        memset(&peer_addr, 0, sizeof(peer_addr));
+        client_fd = accept(server->listen_fd, (struct sockaddr *)&peer_addr, &peer_len);
+        if (client_fd < 0) {
+            if ((errno == EAGAIN) || (errno == EWOULDBLOCK) || (errno == EINTR)) {
+                continue;
+            }
+            if (server->running && (rx_ctx.collector != 0)) {
+                status_collector_record_error(rx_ctx.collector,
+                                              STATUS_MODULE_ETHERNET,
+                                              "ethernet_tcp_accept",
+                                              UNIFIED_ERR_INVALID_ARG);
+            }
+            continue;
+        }
+
+        handle_tcp_client(server, client_fd);
+    }
+
+    if ((rx_ctx.collector != 0) && !g_ethernet_udp_server.running) {
+        status_collector_mark_stopped(rx_ctx.collector, STATUS_MODULE_ETHERNET, "ethernet tcp stopped");
+    }
+
+    return 0;
+}
+
+int ethernet_tcp_server_start(const ethernet_tcp_config_t *config)
+{
+    struct sockaddr_in bind_addr;
+    int reuse;
+    int backlog;
+
+    if ((config == 0) || (config->ipc == 0)) {
+        return -1;
+    }
+
+    if (g_ethernet_tcp_server.running) {
+        return 0;
+    }
+
+    memset(&g_ethernet_tcp_server, 0, sizeof(g_ethernet_tcp_server));
+    g_ethernet_tcp_server.listen_fd = -1;
+    g_ethernet_tcp_server.config = *config;
+
+    g_ethernet_tcp_server.listen_fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (g_ethernet_tcp_server.listen_fd < 0) {
+        if (config->collector != 0) {
+            status_collector_record_error(config->collector,
+                                          STATUS_MODULE_ETHERNET,
+                                          "ethernet_tcp_socket",
+                                          UNIFIED_ERR_IPC_NOT_READY);
+        }
+        return -1;
+    }
+
+    reuse = 1;
+    (void)setsockopt(g_ethernet_tcp_server.listen_fd,
+                     SOL_SOCKET,
+                     SO_REUSEADDR,
+                     &reuse,
+                     sizeof(reuse));
+    configure_recv_timeout(g_ethernet_tcp_server.listen_fd);
+
+    memset(&bind_addr, 0, sizeof(bind_addr));
+    bind_addr.sin_family = AF_INET;
+    bind_addr.sin_port = htons(config->port);
+    if (inet_pton(AF_INET, config->bind_addr, &bind_addr.sin_addr) != 1) {
+        (void)close(g_ethernet_tcp_server.listen_fd);
+        g_ethernet_tcp_server.listen_fd = -1;
+        if (config->collector != 0) {
+            status_collector_record_error(config->collector,
+                                          STATUS_MODULE_ETHERNET,
+                                          "ethernet_tcp_bind_addr",
+                                          UNIFIED_ERR_INVALID_ARG);
+        }
+        return -1;
+    }
+
+    if (bind(g_ethernet_tcp_server.listen_fd,
+             (const struct sockaddr *)&bind_addr,
+             sizeof(bind_addr)) != 0) {
+        (void)close(g_ethernet_tcp_server.listen_fd);
+        g_ethernet_tcp_server.listen_fd = -1;
+        if (config->collector != 0) {
+            status_collector_record_error(config->collector,
+                                          STATUS_MODULE_ETHERNET,
+                                          "ethernet_tcp_bind",
+                                          UNIFIED_ERR_IPC_NOT_READY);
+        }
+        return -1;
+    }
+
+    backlog = (config->listen_backlog == 0u) ?
+        (int)ETHERNET_ADAPTER_DEFAULT_TCP_BACKLOG : (int)config->listen_backlog;
+    if (listen(g_ethernet_tcp_server.listen_fd, backlog) != 0) {
+        (void)close(g_ethernet_tcp_server.listen_fd);
+        g_ethernet_tcp_server.listen_fd = -1;
+        if (config->collector != 0) {
+            status_collector_record_error(config->collector,
+                                          STATUS_MODULE_ETHERNET,
+                                          "ethernet_tcp_listen",
+                                          UNIFIED_ERR_IPC_NOT_READY);
+        }
+        return -1;
+    }
+
+    g_ethernet_tcp_server.running = true;
+    if (pthread_create(&g_ethernet_tcp_server.thread,
+                       0,
+                       ethernet_tcp_thread,
+                       &g_ethernet_tcp_server) != 0) {
+        g_ethernet_tcp_server.running = false;
+        (void)close(g_ethernet_tcp_server.listen_fd);
+        g_ethernet_tcp_server.listen_fd = -1;
+        if (config->collector != 0) {
+            status_collector_record_error(config->collector,
+                                          STATUS_MODULE_ETHERNET,
+                                          "ethernet_tcp_pthread_create",
+                                          UNIFIED_ERR_IPC_NOT_READY);
+        }
+        return -1;
+    }
+
+    return 0;
+}
+
+void ethernet_tcp_server_stop(void)
+{
+    if (!g_ethernet_tcp_server.running) {
+        return;
+    }
+
+    g_ethernet_tcp_server.running = false;
+    if (g_ethernet_tcp_server.listen_fd >= 0) {
+        (void)shutdown(g_ethernet_tcp_server.listen_fd, SHUT_RDWR);
+        (void)close(g_ethernet_tcp_server.listen_fd);
+    }
+    (void)pthread_join(g_ethernet_tcp_server.thread, 0);
+    g_ethernet_tcp_server.listen_fd = -1;
 }
 
 physical_interface_adapter_t ethernet_adapter = {

@@ -104,7 +104,7 @@ static int test_status_snapshots_include_modules_and_ipc(void)
                                       STATUS_MODULE_ETHERNET,
                                       true,
                                       true,
-                                      "Ethernet UDP raw",
+                                      "Ethernet UDP/TCP raw",
                                       "test");
     status_collector_mark_running(&collector, STATUS_MODULE_ETHERNET);
 

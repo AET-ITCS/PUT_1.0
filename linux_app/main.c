@@ -98,8 +98,8 @@ static void configure_status_modules(status_collector_t *collector, const app_co
                                       STATUS_MODULE_ETHERNET,
                                       true,
                                       config->ethernet_enabled,
-                                      "Ethernet UDP raw",
-                                      "UDP datagram carries one complete anyMSG; RX to Linux SHM v2");
+                                      "Ethernet UDP/TCP raw",
+                                      "UDP datagram or TCP stream carries complete anyMSG; RX to Linux SHM v2");
 }
 
 static uint32_t make_linux_epoch(void)
@@ -149,7 +149,8 @@ int main(int argc, char **argv)
     linux_shm_ipc_t ipc;
     status_collector_t collector;
     uint32_t linux_epoch;
-    bool ethernet_started = false;
+    bool ethernet_udp_started = false;
+    bool ethernet_tcp_started = false;
     int exit_code = EXIT_SUCCESS;
 
     if (find_config_arg(argc, argv, &config_path, &config_explicit) != 0) {
@@ -215,21 +216,21 @@ int main(int argc, char **argv)
         return EXIT_FAILURE;
     }
 
-    if (config.ethernet_enabled) {
-        ethernet_udp_config_t ethernet_config;
+    if (config.ethernet_enabled && config.ethernet_udp_enabled) {
+        ethernet_udp_config_t ethernet_udp_config;
 
-        memset(&ethernet_config, 0, sizeof(ethernet_config));
-        ethernet_config.enabled = config.ethernet_enabled;
-        (void)snprintf(ethernet_config.bind_addr,
-                       sizeof(ethernet_config.bind_addr),
+        memset(&ethernet_udp_config, 0, sizeof(ethernet_udp_config));
+        ethernet_udp_config.enabled = true;
+        (void)snprintf(ethernet_udp_config.bind_addr,
+                       sizeof(ethernet_udp_config.bind_addr),
                        "%s",
                        config.ethernet_bind_addr);
-        ethernet_config.port = config.ethernet_port;
-        ethernet_config.ipc = &ipc;
-        ethernet_config.collector = &collector;
-        ethernet_config.linux_epoch = linux_epoch;
+        ethernet_udp_config.port = config.ethernet_port;
+        ethernet_udp_config.ipc = &ipc;
+        ethernet_udp_config.collector = &collector;
+        ethernet_udp_config.linux_epoch = linux_epoch;
 
-        if (ethernet_udp_server_start(&ethernet_config) != 0) {
+        if (ethernet_udp_server_start(&ethernet_udp_config) != 0) {
             fprintf(stderr,
                     "failed to start ethernet UDP RX service on %s:%u\n",
                     config.ethernet_bind_addr,
@@ -237,8 +238,39 @@ int main(int argc, char **argv)
             exit_code = EXIT_FAILURE;
             g_should_stop = 1;
         } else {
-            ethernet_started = true;
+            ethernet_udp_started = true;
             printf("linux_app: Ethernet UDP RX listening on %s:%u, linux_epoch=%u\n",
+                   config.ethernet_bind_addr,
+                   (unsigned)config.ethernet_port,
+                   linux_epoch);
+        }
+    }
+
+    if (!g_should_stop && config.ethernet_enabled && config.ethernet_tcp_enabled) {
+        ethernet_tcp_config_t ethernet_tcp_config;
+
+        memset(&ethernet_tcp_config, 0, sizeof(ethernet_tcp_config));
+        ethernet_tcp_config.enabled = true;
+        (void)snprintf(ethernet_tcp_config.bind_addr,
+                       sizeof(ethernet_tcp_config.bind_addr),
+                       "%s",
+                       config.ethernet_bind_addr);
+        ethernet_tcp_config.port = config.ethernet_port;
+        ethernet_tcp_config.listen_backlog = ETHERNET_ADAPTER_DEFAULT_TCP_BACKLOG;
+        ethernet_tcp_config.ipc = &ipc;
+        ethernet_tcp_config.collector = &collector;
+        ethernet_tcp_config.linux_epoch = linux_epoch;
+
+        if (ethernet_tcp_server_start(&ethernet_tcp_config) != 0) {
+            fprintf(stderr,
+                    "failed to start ethernet TCP RX service on %s:%u\n",
+                    config.ethernet_bind_addr,
+                    (unsigned)config.ethernet_port);
+            exit_code = EXIT_FAILURE;
+            g_should_stop = 1;
+        } else {
+            ethernet_tcp_started = true;
+            printf("linux_app: Ethernet TCP RX listening on %s:%u, linux_epoch=%u\n",
                    config.ethernet_bind_addr,
                    (unsigned)config.ethernet_port,
                    linux_epoch);
@@ -256,8 +288,11 @@ int main(int argc, char **argv)
         sleep_one_second();
     }
 
-    if (ethernet_started) {
+    if (ethernet_udp_started) {
         ethernet_udp_server_stop();
+    }
+    if (ethernet_tcp_started) {
+        ethernet_tcp_server_stop();
     }
 
     {

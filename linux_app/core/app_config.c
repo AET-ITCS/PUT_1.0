@@ -129,6 +129,8 @@ void app_config_set_defaults(app_config_t *config)
     config->status_enabled = true;
     copy_string(config->status_dir, sizeof(config->status_dir), "/run/put/status");
     config->ethernet_enabled = true;
+    config->ethernet_udp_enabled = APP_CONFIG_ETHERNET_DEFAULT_UDP_ENABLED;
+    config->ethernet_tcp_enabled = APP_CONFIG_ETHERNET_DEFAULT_TCP_ENABLED;
     copy_string(config->ethernet_bind_addr,
                 sizeof(config->ethernet_bind_addr),
                 APP_CONFIG_ETHERNET_DEFAULT_BIND_ADDR);
@@ -172,6 +174,22 @@ static unified_error_t apply_key_value(app_config_t *config,
                 return UNIFIED_ERR_INVALID_ARG;
             }
             config->ethernet_enabled = bool_value;
+            return UNIFIED_OK;
+        }
+
+        if (strcmp(key, "udp_enabled") == 0) {
+            if (parse_bool(value, &bool_value) != 0) {
+                return UNIFIED_ERR_INVALID_ARG;
+            }
+            config->ethernet_udp_enabled = bool_value;
+            return UNIFIED_OK;
+        }
+
+        if (strcmp(key, "tcp_enabled") == 0) {
+            if (parse_bool(value, &bool_value) != 0) {
+                return UNIFIED_ERR_INVALID_ARG;
+            }
+            config->ethernet_tcp_enabled = bool_value;
             return UNIFIED_OK;
         }
 
@@ -295,9 +313,13 @@ unified_error_t app_config_validate(const app_config_t *config)
         return UNIFIED_ERR_INVALID_ARG;
     }
 
-    if (config->ethernet_enabled &&
-        ((config->ethernet_bind_addr[0] == '\0') || (config->ethernet_port == 0u))) {
-        return UNIFIED_ERR_INVALID_ARG;
+    if (config->ethernet_enabled) {
+        if ((config->ethernet_bind_addr[0] == '\0') || (config->ethernet_port == 0u)) {
+            return UNIFIED_ERR_INVALID_ARG;
+        }
+        if (!config->ethernet_udp_enabled && !config->ethernet_tcp_enabled) {
+            return UNIFIED_ERR_INVALID_ARG;
+        }
     }
 
     if (config->bluetooth_enabled && (config->bluetooth_channel == 0u)) {
