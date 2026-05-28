@@ -1,0 +1,10 @@
+{
+  "clangd.path": "nix",
+  "clangd.arguments": [
+    "develop",
+    "--command",
+    "clangd",
+    "--background-index",
+    "--query-driver=/nix/store/*/bin/gcc,/nix/store/*/bin/g++,/nix/store/*/bin/riscv64-unknown-linux-gnu-gcc,/nix/store/*/bin/riscv64-unknown-linux-gnu-g++,/nix/store/*/bin/riscv64-none-elf-gcc,/nix/store/*/bin/riscv64-none-elf-g++"
+  ]
+}

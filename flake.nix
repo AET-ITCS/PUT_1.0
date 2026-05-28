@@ -152,6 +152,16 @@
 
             # ── Set up Rust cross-compilation targets & Cargo config ──
             shellHook = ''
+              _put_shell_stdout_redirected=0
+              case "$-" in
+                *i*) ;;
+                *)
+                  _put_shell_stdout_redirected=1
+                  exec 3>&1
+                  exec 1>/dev/null
+                  ;;
+              esac
+
               echo ""
               echo "╔══════════════════════════════════════════════════════════╗"
               echo "║  Milk-V Duo 256M 多协议统一终端 开发环境              ║"
@@ -333,6 +343,11 @@
               echo ""
               echo "  环境就绪！Happy Hacking 🚀"
               echo ""
+
+              if [ "$_put_shell_stdout_redirected" -eq 1 ]; then
+                exec 1>&3
+                exec 3>&-
+              fi
             '';
           };
 

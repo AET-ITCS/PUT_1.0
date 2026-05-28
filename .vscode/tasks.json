@@ -1,0 +1,262 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "linux_app: configure (host)",
+      "type": "shell",
+      "command": "nix",
+      "args": [
+        "develop",
+        "--command",
+        "cmake",
+        "-S",
+        "linux_app",
+        "-B",
+        "build/linux_app-host"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [
+        "$gcc"
+      ],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      }
+    },
+    {
+      "label": "linux_app: compile (host)",
+      "type": "shell",
+      "command": "nix",
+      "args": [
+        "develop",
+        "--command",
+        "cmake",
+        "--build",
+        "build/linux_app-host"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "dependsOn": [
+        "linux_app: configure (host)"
+      ],
+      "dependsOrder": "sequence",
+      "group": "build",
+      "problemMatcher": [
+        "$gcc"
+      ],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      }
+    },
+    {
+      "label": "linux_app: configure (Duo RISC-V)",
+      "type": "shell",
+      "command": "nix",
+      "args": [
+        "develop",
+        "--command",
+        "cmake",
+        "-S",
+        "linux_app",
+        "-B",
+        "build/linux_app-duo",
+        "-DCMAKE_TOOLCHAIN_FILE=${workspaceFolder}/nix/riscv64-linux-toolchain.cmake"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [
+        "$gcc"
+      ],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      }
+    },
+    {
+      "label": "linux_app: compile (Duo RISC-V)",
+      "type": "shell",
+      "command": "nix",
+      "args": [
+        "develop",
+        "--command",
+        "cmake",
+        "--build",
+        "build/linux_app-duo"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "dependsOn": [
+        "linux_app: configure (Duo RISC-V)"
+      ],
+      "dependsOrder": "sequence",
+      "group": "build",
+      "problemMatcher": [
+        "$gcc"
+      ],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      }
+    },
+    {
+      "label": "rtos_firmware: configure (host)",
+      "type": "shell",
+      "command": "nix",
+      "args": [
+        "develop",
+        "--command",
+        "cmake",
+        "-S",
+        "rtos_firmware",
+        "-B",
+        "build/rtos_firmware-host"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [
+        "$gcc"
+      ],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      }
+    },
+    {
+      "label": "rtos_firmware: compile (host)",
+      "type": "shell",
+      "command": "nix",
+      "args": [
+        "develop",
+        "--command",
+        "cmake",
+        "--build",
+        "build/rtos_firmware-host"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "dependsOn": [
+        "rtos_firmware: configure (host)"
+      ],
+      "dependsOrder": "sequence",
+      "group": "build",
+      "problemMatcher": [
+        "$gcc"
+      ],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      }
+    },
+    {
+      "label": "rtos_firmware: configure (Duo RTOS)",
+      "type": "shell",
+      "command": "nix",
+      "args": [
+        "develop",
+        "--command",
+        "cmake",
+        "-S",
+        "rtos_firmware",
+        "-B",
+        "build/rtos_firmware-duo",
+        "-DCMAKE_TOOLCHAIN_FILE=${workspaceFolder}/nix/riscv64-elf-toolchain.cmake"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [
+        "$gcc"
+      ],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      }
+    },
+    {
+      "label": "rtos_firmware: compile (Duo RTOS)",
+      "type": "shell",
+      "command": "nix",
+      "args": [
+        "develop",
+        "--command",
+        "cmake",
+        "--build",
+        "build/rtos_firmware-duo"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "dependsOn": [
+        "rtos_firmware: configure (Duo RTOS)"
+      ],
+      "dependsOrder": "sequence",
+      "group": "build",
+      "problemMatcher": [
+        "$gcc"
+      ],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      }
+    },
+    {
+      "label": "clangd: refresh compile databases",
+      "type": "shell",
+      "command": "echo",
+      "args": [
+        "clangd compile databases refreshed."
+      ],
+      "dependsOn": [
+        "linux_app: configure (host)",
+        "rtos_firmware: configure (Duo RTOS)"
+      ],
+      "dependsOrder": "sequence",
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      }
+    },
+    {
+      "label": "all: build (host)",
+      "type": "shell",
+      "command": "echo",
+      "args": [
+        "Host build finished."
+      ],
+      "dependsOn": [
+        "linux_app: compile (host)",
+        "rtos_firmware: compile (host)"
+      ],
+      "dependsOrder": "sequence",
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "all: build (Duo)",
+      "type": "shell",
+      "command": "echo",
+      "args": [
+        "Duo build finished."
+      ],
+      "dependsOn": [
+        "linux_app: compile (Duo RISC-V)",
+        "rtos_firmware: compile (Duo RTOS)"
+      ],
+      "dependsOrder": "sequence",
+      "group": "build",
+      "problemMatcher": []
+    }
+  ]
+}

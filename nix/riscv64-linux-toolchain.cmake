@@ -5,30 +5,44 @@
 #   cmake -B build_linux -S linux_app \
 #         -DCMAKE_TOOLCHAIN_FILE=../nix/riscv64-linux-toolchain.cmake
 #
-# This file expects the Nix development environment to be active,
-# which exports $RISCV64_LINUX_CC pointing to the cross-compiler.
+# Prefer the compiler path exported by the Nix development shell. If it is not
+# present, fall back to a RISC-V Linux compiler available on PATH.
 
 # Target system
 set(CMAKE_SYSTEM_NAME Linux)
 set(CMAKE_SYSTEM_PROCESSOR riscv64)
 
 # Cross-compiler executables
-if(DEFINED ENV{RISCV64_LINUX_CC})
-    get_filename_component(TOOLCHAIN_DIR $ENV{RISCV64_LINUX_CC} DIRECTORY)
+set(RISCV64_LINUX_CC_PATH "")
 
-    set(CMAKE_C_COMPILER    "$ENV{RISCV64_LINUX_CC}")
-    set(CMAKE_CXX_COMPILER  "${TOOLCHAIN_DIR}/riscv64-unknown-linux-gnu-g++")
-    set(CMAKE_ASM_COMPILER  "${TOOLCHAIN_DIR}/riscv64-unknown-linux-gnu-gcc")
-    set(CMAKE_LINKER        "${TOOLCHAIN_DIR}/riscv64-unknown-linux-gnu-ld")
-    set(CMAKE_AR            "${TOOLCHAIN_DIR}/riscv64-unknown-linux-gnu-ar")
-    set(CMAKE_RANLIB        "${TOOLCHAIN_DIR}/riscv64-unknown-linux-gnu-ranlib")
-    set(CMAKE_OBJCOPY       "${TOOLCHAIN_DIR}/riscv64-unknown-linux-gnu-objcopy")
-    set(CMAKE_OBJDUMP       "${TOOLCHAIN_DIR}/riscv64-unknown-linux-gnu-objdump")
-    set(CMAKE_STRIP         "${TOOLCHAIN_DIR}/riscv64-unknown-linux-gnu-strip")
-    set(CMAKE_SIZE          "${TOOLCHAIN_DIR}/riscv64-unknown-linux-gnu-size")
+if(DEFINED ENV{RISCV64_LINUX_CC} AND NOT "$ENV{RISCV64_LINUX_CC}" STREQUAL "")
+    set(RISCV64_LINUX_CC_PATH "$ENV{RISCV64_LINUX_CC}")
 else()
-    message(FATAL_ERROR "RISCV64_LINUX_CC is not set! Use 'nix develop' to enter the Nix dev shell.")
+    find_program(RISCV64_LINUX_CC_PATH
+        NAMES
+            riscv64-unknown-linux-gnu-gcc
+            riscv64-linux-gnu-gcc
+    )
 endif()
+
+if(NOT RISCV64_LINUX_CC_PATH)
+    message(FATAL_ERROR "RISCV64_LINUX_CC is not set and no RISC-V Linux gcc was found on PATH. Use 'nix develop' or install riscv64-unknown-linux-gnu-gcc.")
+endif()
+
+get_filename_component(TOOLCHAIN_DIR "${RISCV64_LINUX_CC_PATH}" DIRECTORY)
+get_filename_component(TOOLCHAIN_PREFIX "${RISCV64_LINUX_CC_PATH}" NAME)
+string(REGEX REPLACE "gcc$" "" TOOLCHAIN_PREFIX "${TOOLCHAIN_PREFIX}")
+
+set(CMAKE_C_COMPILER    "${RISCV64_LINUX_CC_PATH}")
+set(CMAKE_CXX_COMPILER  "${TOOLCHAIN_DIR}/${TOOLCHAIN_PREFIX}g++")
+set(CMAKE_ASM_COMPILER  "${TOOLCHAIN_DIR}/${TOOLCHAIN_PREFIX}gcc")
+set(CMAKE_LINKER        "${TOOLCHAIN_DIR}/${TOOLCHAIN_PREFIX}ld")
+set(CMAKE_AR            "${TOOLCHAIN_DIR}/${TOOLCHAIN_PREFIX}ar")
+set(CMAKE_RANLIB        "${TOOLCHAIN_DIR}/${TOOLCHAIN_PREFIX}ranlib")
+set(CMAKE_OBJCOPY       "${TOOLCHAIN_DIR}/${TOOLCHAIN_PREFIX}objcopy")
+set(CMAKE_OBJDUMP       "${TOOLCHAIN_DIR}/${TOOLCHAIN_PREFIX}objdump")
+set(CMAKE_STRIP         "${TOOLCHAIN_DIR}/${TOOLCHAIN_PREFIX}strip")
+set(CMAKE_SIZE          "${TOOLCHAIN_DIR}/${TOOLCHAIN_PREFIX}size")
 
 # Search for programs in the build host directories
 set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)

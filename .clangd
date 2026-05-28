@@ -1,2 +1,14 @@
+If:
+  PathMatch: linux_app/.*
 CompileFlags:
-  CompilationDatabase: build/rtos_firmware
+  CompilationDatabase: build/linux_app-host
+---
+If:
+  PathMatch: rtos_firmware/.*
+CompileFlags:
+  CompilationDatabase: build/rtos_firmware-duo
+---
+If:
+  PathMatch: common/.*
+CompileFlags:
+  CompilationDatabase: build/linux_app-host

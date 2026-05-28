@@ -71,7 +71,9 @@ build_*/
 output/
 
 # IDE
-.vscode/
+.vscode/*
+!.vscode/tasks.json
+!.vscode/settings.json
 .idea/
 *.swp
 *.swo

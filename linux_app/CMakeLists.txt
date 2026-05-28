@@ -6,6 +6,7 @@ project(linux_app C)
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 find_package(Threads REQUIRED)
 
@@ -36,6 +37,7 @@ target_compile_definitions(linux_shm_ipc PRIVATE
 add_executable(linux_app
     main.c
     core/app_config.c
+    core/status_collector.c
 )
 
 target_include_directories(linux_app PRIVATE

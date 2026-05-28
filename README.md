@@ -19,6 +19,7 @@
 - [v1 原型与目标架构关系](#v1-原型与目标架构关系)
 - [开发阶段规划](#开发阶段规划)
 - [快速开始](#快速开始)
+- [部署/烧录到 Duo256M](#部署烧录到-duo256m)
 - [分支管理](#分支管理)
 - [项目亮点](#项目亮点)
 - [相关文档](#相关文档)
@@ -62,14 +63,14 @@ Linux 大核出口层
 
 ### 分层职责
 
-| 模块 | 运行位置 | 负责 | 不负责 |
-| ---- | -------- | ---- | ------ |
-| Linux 接入层 | Milk-V Duo 256M 大核 | 六类物理接口监听、解包、分片重组、完整 `anyMSG` 校验、写共享内存 RX Ring | 小核路由调度 |
-| 共享内存 IPC | 大小核共享 ABI | Frame Pool、Descriptor Ring、Pending Bitmap、cache 同步、Mailbox Doorbell | 解释业务 payload |
-| FreeRTOS 小核 | Milk-V Duo 256M 小核 | RX Ring drain、`anyMSG` 头部校验、心跳消费、CID 路由、优先级调度、写 TX Ring | 真实物理接口收发 |
-| Linux 出口层 | Milk-V Duo 256M 大核 | 读 TX Ring、目标协议封包、必要时分片、真实物理发送、释放帧资源 | 修改小核路由结果 |
-| Web 模块 | Linux 大核 | 只读展示模块状态、系统资源、日志和异常事件 | 直接读写共享内存或控制物理接口 |
-| C51 低功耗 | 外部或规划模块 | 上电、唤醒、低功耗控制 | 协议转换、路由调度、物理发送 |
+| 模块          | 运行位置             | 负责                                                                         | 不负责                         |
+| ------------- | -------------------- | ---------------------------------------------------------------------------- | ------------------------------ |
+| Linux 接入层  | Milk-V Duo 256M 大核 | 六类物理接口监听、解包、分片重组、完整 `anyMSG` 校验、写共享内存 RX Ring     | 小核路由调度                   |
+| 共享内存 IPC  | 大小核共享 ABI       | Frame Pool、Descriptor Ring、Pending Bitmap、cache 同步、Mailbox Doorbell    | 解释业务 payload               |
+| FreeRTOS 小核 | Milk-V Duo 256M 小核 | RX Ring drain、`anyMSG` 头部校验、心跳消费、CID 路由、优先级调度、写 TX Ring | 真实物理接口收发               |
+| Linux 出口层  | Milk-V Duo 256M 大核 | 读 TX Ring、目标协议封包、必要时分片、真实物理发送、释放帧资源               | 修改小核路由结果               |
+| Web 模块      | Linux 大核           | 只读展示模块状态、系统资源、日志和异常事件                                   | 直接读写共享内存或控制物理接口 |
+| C51 低功耗    | 外部或规划模块       | 上电、唤醒、低功耗控制                                                       | 协议转换、路由调度、物理发送   |
 
 ### 系统模块全景
 
@@ -143,18 +144,18 @@ Linux 大核出口层
 
 ## 硬件平台
 
-| 组件 | 说明 |
-| ---- | ---- |
-| 主控板 | Milk-V Duo 256M，大核 Linux + 小核 FreeRTOS |
-| CAN | 外接 CAN 收发器或底板 CAN 接口 |
-| Ethernet | 底板 RJ45 接口 |
-| Wi-Fi | USB Wi-Fi 模块或蓝牙/Wi-Fi 二合一模块 |
-| Bluetooth | USB 蓝牙模块或蓝牙/Wi-Fi 二合一模块 |
-| 4G | USB 4G 模块 |
-| RS485 | 底板 RS485 接口 |
+| 组件       | 说明                                                               |
+| ---------- | ------------------------------------------------------------------ |
+| 主控板     | Milk-V Duo 256M，大核 Linux + 小核 FreeRTOS                        |
+| CAN        | 外接 CAN 收发器或底板 CAN 接口                                     |
+| Ethernet   | 底板 RJ45 接口                                                     |
+| Wi-Fi      | USB Wi-Fi 模块或蓝牙/Wi-Fi 二合一模块                              |
+| Bluetooth  | USB 蓝牙模块或蓝牙/Wi-Fi 二合一模块                                |
+| 4G         | USB 4G 模块                                                        |
+| RS485      | 底板 RS485 接口                                                    |
 | 低功耗管理 | C51 单片机、电源控制电路、唤醒检测电路，当前作为规划或外部配套模块 |
-| 状态指示 | LED 状态指示灯 |
-| 外壳 | 黑盒封装，保留必要接口 |
+| 状态指示   | LED 状态指示灯                                                     |
+| 外壳       | 黑盒封装，保留必要接口                                             |
 
 ---
 
@@ -343,14 +344,14 @@ payload         可变   业务负载
 
 CID 地址首字节用于区分设备或接口地址段：
 
-| 地址首字节 | 地址段 |
-| ---------- | ------ |
-| `0x20 ~ 0x3F` | CAN 设备地址段 |
-| `0x40 ~ 0x5F` | 以太网设备地址段 |
-| `0x60 ~ 0x7F` | Wi-Fi 设备地址段 |
-| `0x80 ~ 0x9F` | 蓝牙设备地址段 |
+| 地址首字节    | 地址段            |
+| ------------- | ----------------- |
+| `0x20 ~ 0x3F` | CAN 设备地址段    |
+| `0x40 ~ 0x5F` | 以太网设备地址段  |
+| `0x60 ~ 0x7F` | Wi-Fi 设备地址段  |
+| `0x80 ~ 0x9F` | 蓝牙设备地址段    |
 | `0xA0 ~ 0xBF` | 4G 蜂窝设备地址段 |
-| `0xC0 ~ 0xDF` | RS485 设备地址段 |
+| `0xC0 ~ 0xDF` | RS485 设备地址段  |
 
 `type` 只描述 payload 语义，不直接规定物理出口或转发策略。典型类型包括心跳、健康度、网络鉴权、Modbus、RAW_CAN、CAN_FD、UDS、J1939、CANopen 等。
 
@@ -450,14 +451,14 @@ Linux 协议适配层
 
 ## 开发阶段规划
 
-| 阶段 | 目标 | 主要产出 |
-| ---- | ---- | -------- |
-| 第一阶段 | 需求分析与总体设计 | 总体架构、anyMSG 帧定义、职责边界、文档体系 |
-| 第二阶段 | v1 原型和硬件验证 | 基础通信链路、共享内存 v1、CAN direct 原型、外设可用性确认 |
-| 第三阶段 | anyMSG 与接口适配层 | `anyMSG` 公共定义、六类物理接口适配器、分片重组策略 |
-| 第四阶段 | 共享内存 v2 | Frame Pool、Descriptor RX/TX Ring、Pending Bitmap、Mailbox Doorbell、reclaim ring |
-| 第五阶段 | 小核路由调度 | CID 路由、心跳消费、优先级队列、防饥饿调度、异常统计 |
-| 第六阶段 | Web 监控与整机集成 | 只读状态接口、前端展示、日志与事件、低功耗配套、样机封装 |
+| 阶段     | 目标                | 主要产出                                                                          |
+| -------- | ------------------- | --------------------------------------------------------------------------------- |
+| 第一阶段 | 需求分析与总体设计  | 总体架构、anyMSG 帧定义、职责边界、文档体系                                       |
+| 第二阶段 | v1 原型和硬件验证   | 基础通信链路、共享内存 v1、CAN direct 原型、外设可用性确认                        |
+| 第三阶段 | anyMSG 与接口适配层 | `anyMSG` 公共定义、六类物理接口适配器、分片重组策略                               |
+| 第四阶段 | 共享内存 v2         | Frame Pool、Descriptor RX/TX Ring、Pending Bitmap、Mailbox Doorbell、reclaim ring |
+| 第五阶段 | 小核路由调度        | CID 路由、心跳消费、优先级队列、防饥饿调度、异常统计                              |
+| 第六阶段 | Web 监控与整机集成  | 只读状态接口、前端展示、日志与事件、低功耗配套、样机封装                          |
 
 ---
 
@@ -487,31 +488,50 @@ nix develop
 
 ##### 提供的工具链
 
-| 类别 | 组件 | 用途 |
-| ---- | ---- | ---- |
-| 基础构建 | `cmake`, `make`, `gcc`, `gdb` | 本地编译与调试 |
-| RISC-V Linux 交叉编译 | `riscv64-unknown-linux-gnu-gcc` | 大核 Linux 应用编译 |
-| RISC-V musl 交叉编译 | `riscv64-unknown-linux-musl-gcc` | Web 后端静态链接 |
-| RISC-V 裸机交叉编译 | `riscv64-none-elf-gcc` | 小核 FreeRTOS 固件编译 |
-| ARM64 交叉编译 | `aarch64-linux-gnu-gcc` | 备选大核目标 |
-| Rust | `rustc`, `cargo`, `rustup` | Web 后端和 Rust 工具 |
-| Web 前端 | `node`, `npm` | Vue3 / Vite 构建 |
-| Python 工具 | `python3`, `pyserial` | 调试脚本运行 |
-| 代码分析 | `clang-tools`, `cppcheck`, `clippy`, `rustfmt` | 代码质量检查 |
+| 类别                  | 组件                                           | 用途                   |
+| --------------------- | ---------------------------------------------- | ---------------------- |
+| 基础构建              | `cmake`, `make`, `gcc`, `gdb`                  | 本地编译与调试         |
+| RISC-V Linux 交叉编译 | `riscv64-unknown-linux-gnu-gcc`                | 大核 Linux 应用编译    |
+| RISC-V musl 交叉编译  | `riscv64-unknown-linux-musl-gcc`               | Web 后端静态链接       |
+| RISC-V 裸机交叉编译   | `riscv64-none-elf-gcc`                         | 小核 FreeRTOS 固件编译 |
+| ARM64 交叉编译        | `aarch64-linux-gnu-gcc`                        | 备选大核目标           |
+| Rust                  | `rustc`, `cargo`, `rustup`                     | Web 后端和 Rust 工具   |
+| Web 前端              | `node`, `npm`                                  | Vue3 / Vite 构建       |
+| Python 工具           | `python3`, `pyserial`                          | 调试脚本运行           |
+| 代码分析              | `clang-tools`, `cppcheck`, `clippy`, `rustfmt` | 代码质量检查           |
 
 ##### CMake 交叉编译
 
 ```bash
 # 编译大核 Linux 程序
-cmake -B build_linux -S linux_app \
-      -DCMAKE_TOOLCHAIN_FILE=../nix/riscv64-linux-toolchain.cmake
-cmake --build build_linux
+cmake -S linux_app -B build/linux_app-duo \
+      -DCMAKE_TOOLCHAIN_FILE="$PWD/nix/riscv64-linux-toolchain.cmake"
+cmake --build build/linux_app-duo
 
 # 编译小核 FreeRTOS 固件
-cmake -B build_rtos -S rtos_firmware \
-      -DCMAKE_TOOLCHAIN_FILE=../nix/riscv64-elf-toolchain.cmake
-cmake --build build_rtos
+cmake -S rtos_firmware -B build/rtos_firmware-duo \
+      -DCMAKE_TOOLCHAIN_FILE="$PWD/nix/riscv64-elf-toolchain.cmake"
+cmake --build build/rtos_firmware-duo
 ```
+
+##### VS Code Tasks
+
+仓库提供 `.vscode/tasks.json`，VS Code 中可通过 `Terminal -> Run Task...` 或命令面板 `Tasks: Run Task` 执行。所有任务都会通过 `nix develop --command` 进入一致的工具链环境。
+
+| Task                                  | 输出目录                                    | 用途                                   |
+| ------------------------------------- | ------------------------------------------- | -------------------------------------- |
+| `linux_app: configure (host)`         | `build/linux_app-host/`                     | 配置大核应用 host 构建                 |
+| `linux_app: compile (host)`           | `build/linux_app-host/`                     | 编译 host 版本和测试程序               |
+| `linux_app: test (host)`              | `build/linux_app-host/`                     | 运行 `linux_shm_ipc_test`              |
+| `linux_app: configure (Duo RISC-V)`   | `build/linux_app-duo/`                      | 配置 Duo RISC-V 交叉编译               |
+| `linux_app: compile (Duo RISC-V)`     | `build/linux_app-duo/linux_app`             | 生成可部署到大核 Linux 的程序          |
+| `rtos_firmware: configure (host)`     | `build/rtos_firmware-host/`                 | 配置小核固件 host 构建                 |
+| `rtos_firmware: compile (host)`       | `build/rtos_firmware-host/`                 | 编译 host 版本和测试程序               |
+| `rtos_firmware: test (host)`          | `build/rtos_firmware-host/`                 | 运行 `rtos_shm_ipc`                    |
+| `rtos_firmware: configure (Duo RTOS)` | `build/rtos_firmware-duo/`                  | 配置 Duo 小核裸机交叉编译              |
+| `rtos_firmware: compile (Duo RTOS)`   | `build/rtos_firmware-duo/rtos_firmware.elf` | 生成小核固件 ELF 骨架                  |
+| `all: build (host)`                   | host 构建目录                               | 聚合编译大核和小核 host 版本           |
+| `all: build (Duo)`                    | Duo 构建目录                                | 聚合编译大核 Linux 程序和小核 RTOS ELF |
 
 ##### Rust 交叉编译
 
@@ -545,15 +565,15 @@ nix-shell            # nix-shell 兼容入口
 
 ##### 关键环境变量
 
-| 变量 | 说明 |
-| ---- | ---- |
-| `RISCV64_LINUX_CC` | RISC-V Linux C 编译器路径 |
-| `RISCV64_LINUX_MUSL_CC` | RISC-V Linux musl C 编译器路径 |
-| `RISCV64_ELF_CC` | RISC-V 裸机 C 编译器路径 |
-| `AARCH64_LINUX_CC` | ARM64 C 编译器路径 |
-| `RUST_TARGET_RISCV64_LINUX` | Rust RISC-V Linux target |
+| 变量                             | 说明                                |
+| -------------------------------- | ----------------------------------- |
+| `RISCV64_LINUX_CC`               | RISC-V Linux C 编译器路径           |
+| `RISCV64_LINUX_MUSL_CC`          | RISC-V Linux musl C 编译器路径      |
+| `RISCV64_ELF_CC`                 | RISC-V 裸机 C 编译器路径            |
+| `AARCH64_LINUX_CC`               | ARM64 C 编译器路径                  |
+| `RUST_TARGET_RISCV64_LINUX`      | Rust RISC-V Linux target            |
 | `RUST_TARGET_RISCV64_LINUX_MUSL` | Rust RISC-V Linux static Web target |
-| `RUST_TARGET_RISCV64_ELF` | Rust RISC-V bare-metal target |
+| `RUST_TARGET_RISCV64_ELF`        | Rust RISC-V bare-metal target       |
 
 #### 开发环境：传统方式（备选）
 
@@ -566,7 +586,7 @@ nix-shell            # nix-shell 兼容入口
 - Rust + `rustup`
 - Node.js / npm
 
-Milk-V Duo 官方 SDK 地址：https://github.com/milkv-duo/duo-buildroot-sdk
+Milk-V Duo 官方 SDK V2 地址：https://github.com/milkv-duo/duo-buildroot-sdk-v2
 
 ### 常用脚本
 
@@ -580,9 +600,86 @@ Milk-V Duo 官方 SDK 地址：https://github.com/milkv-duo/duo-buildroot-sdk
 # 编译 Web 前后端
 ./scripts/build_web.sh
 
-# 运行 Linux 应用侧测试
-./scripts/test_linux_app.sh
+# 运行 Linux 应用侧 host 测试
+cmake -S linux_app -B build/linux_app-host
+cmake --build build/linux_app-host
+ctest --test-dir build/linux_app-host --output-on-failure
+
+# 运行 FreeRTOS 小核侧 host 测试
+cmake -S rtos_firmware -B build/rtos_firmware-host
+cmake --build build/rtos_firmware-host
+ctest --test-dir build/rtos_firmware-host --output-on-failure
 ```
+
+---
+
+## 部署/烧录到 Duo256M
+
+本项目在 Duo256M 上分成两类产物：
+
+- `linux_app` 是大核 Linux 用户态程序，部署到开发板 rootfs 后直接运行。
+- `rtos_firmware.elf` 是小核 FreeRTOS 固件骨架和 SDK 集成输入，不能像 Linux 程序一样 `scp` 后直接运行。真实上板需要通过 Milk-V Duo Buildroot SDK 生成 `cvirtos.bin`，再随 `fip.bin` 或完整 SD 卡镜像一起烧录。
+
+### 部署大核 Linux 应用
+
+1. 在 VS Code 执行 `linux_app: compile (Duo RISC-V)`，或在 `nix develop` 中执行：
+
+   ```bash
+   cmake -S linux_app -B build/linux_app-duo \
+         -DCMAKE_TOOLCHAIN_FILE="$PWD/nix/riscv64-linux-toolchain.cmake"
+   cmake --build build/linux_app-duo
+   ```
+
+2. 通过 USB-NCM 或以太网连接 Duo256M。官方镜像默认启用 SSH 和 USB-NCM，USB 网络模式下常用地址为 `192.168.42.1`，用户为 `root`，默认密码为 `milkv`。
+
+3. 拷贝并运行大核程序：
+
+   ```bash
+   scp build/linux_app-duo/linux_app root@192.168.42.1:/root/put-linux-app
+   ssh root@192.168.42.1 'chmod +x /root/put-linux-app && /root/put-linux-app'
+   ```
+
+如果开发板 IP 或登录方式不同，请替换上面的 `root@192.168.42.1`。
+
+### 烧录小核 FreeRTOS 固件
+
+当前仓库的 `rtos_firmware: compile (Duo RTOS)` 会生成 `build/rtos_firmware-duo/rtos_firmware.elf`，用于验证本项目小核代码能被 RISC-V bare-metal 工具链编译。它还不是 Duo256M 启动链直接加载的 `cvirtos.bin`。
+
+真实烧录流程应在 Milk-V Duo Buildroot SDK 中完成：
+
+1. 获取 SDK V2。Duo256M 官方推荐使用支持 Duo256M / DuoS 的 Buildroot SDK V2。
+
+   ```bash
+   git clone https://github.com/milkv-duo/duo-buildroot-sdk-v2.git --depth=1
+   cd duo-buildroot-sdk-v2
+   ```
+
+2. 按 SDK 文档配置 Duo256M 目标，并启用 FreeRTOS 小核构建。目标名称以 SDK `./build.sh lunch` 输出为准；如果要运行本仓库生成的 RISC-V Linux 程序，应选择 Duo256M 的 RISC-V 大核镜像目标。
+
+3. 将本仓库 `rtos_firmware/` 中已经验证的业务逻辑集成到 SDK 的 FreeRTOS 工程入口。SDK 的小核模板通常位于 `freertos/` 下，构建后生成 `cvirtos.bin`。
+
+4. 用 SDK 构建完整镜像。SDK 会把 `cvirtos.bin` 作为小核固件打入启动镜像中的 `fip.bin`，并生成可烧录到 microSD 的 `.img`：
+
+   ```bash
+   ./build.sh
+   ```
+
+5. 将 SDK 输出的 `.img` 烧录到 microSD。推荐使用 balenaEtcher 或 Rufus；Linux 下也可使用 `dd`，但必须确认目标盘符，避免覆盖主机磁盘：
+
+   ```bash
+   lsblk
+   sudo dd if=out/<duo256m-image>.img of=/dev/sdX bs=4M status=progress conv=fsync
+   sync
+   ```
+
+6. 将 microSD 插入 Duo256M 并上电。Linux 大核会从 rootfs 启动；小核 FreeRTOS 固件随启动镜像加载。此后大核应用仍按上一节用 `scp` 部署到 rootfs。
+
+参考资料：
+
+- [Milk-V Duo RTOS Core](https://milkv.io/docs/duo/getting-started/rtoscore)
+- [Milk-V Duo Buildroot SDK](https://milkv.io/docs/duo/getting-started/buildroot-sdk)
+- [Milk-V Duo microSD 启动和烧录](https://milkv.io/docs/duo/getting-started/boot)
+- [milkv-duo-smallcore-freertos](https://github.com/milkv-duo/milkv-duo-smallcore-freertos/blob/main/README.md)
 
 ---
 
