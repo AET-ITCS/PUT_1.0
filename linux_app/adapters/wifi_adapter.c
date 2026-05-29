@@ -116,6 +116,41 @@ unified_error_t wifi_tx_context_set_default_peer(wifi_tx_context_t *ctx,
     return UNIFIED_OK;
 }
 
+int wifi_tx_context_add_peer(wifi_tx_context_t *ctx, const wifi_tx_peer_t *peer)
+{
+    if ((ctx == 0) || (peer == 0) ||
+        (anymsg_cid_segment_from_first_byte(peer->destination_cid[0]) !=
+         ANYMSG_CID_SEGMENT_WIFI) ||
+        (peer->ipv4_addr_be == 0u)) {
+        wifi_tx_context_record_error(ctx,
+                                     "wifi_peer_config",
+                                     UNIFIED_ERR_INVALID_ARG);
+        return -1;
+    }
+
+    for (size_t i = 0u; i < ctx->peer_count; ++i) {
+        if (memcmp(ctx->peers[i].destination_cid,
+                   peer->destination_cid,
+                   ANYMSG_CID_LENGTH) == 0) {
+            ctx->peers[i] = *peer;
+            wifi_tx_context_clear_error(ctx);
+            return 0;
+        }
+    }
+
+    if (ctx->peer_count >= WIFI_TX_PEER_MAX) {
+        wifi_tx_context_record_error(ctx,
+                                     "wifi_peer_config_full",
+                                     UNIFIED_ERR_LENGTH);
+        return -1;
+    }
+
+    ctx->peers[ctx->peer_count] = *peer;
+    ctx->peer_count++;
+    wifi_tx_context_clear_error(ctx);
+    return 0;
+}
+
 void wifi_tx_context_destroy(wifi_tx_context_t *ctx)
 {
     if (ctx == 0) {
@@ -126,6 +161,24 @@ void wifi_tx_context_destroy(wifi_tx_context_t *ctx)
         (void)close(ctx->udp_socket_fd);
         ctx->udp_socket_fd = -1;
     }
+}
+
+static const wifi_tx_peer_t *wifi_find_tx_peer(const wifi_tx_context_t *ctx,
+                                               const uint8_t destination_cid[ANYMSG_CID_LENGTH])
+{
+    if ((ctx == 0) || (destination_cid == 0)) {
+        return 0;
+    }
+
+    for (size_t i = 0u; i < ctx->peer_count; ++i) {
+        if (memcmp(ctx->peers[i].destination_cid,
+                   destination_cid,
+                   ANYMSG_CID_LENGTH) == 0) {
+            return &ctx->peers[i];
+        }
+    }
+
+    return 0;
 }
 
 static put_shm_interface_t route_hint_from_destination_cid(const uint8_t cid[ANYMSG_CID_LENGTH])
@@ -240,7 +293,13 @@ static int wifi_send(void *ctx, const adapter_tx_packet_t *packet)
 {
     wifi_tx_context_t *tx_ctx;
     const anymsg_header_t *header;
+    const wifi_tx_peer_t *peer;
     struct sockaddr_in peer_addr;
+    uint16_t msg_length;
+    uint16_t payload_length;
+    uint32_t peer_addr_be;
+    uint16_t peer_port;
+    unified_error_t err;
     ssize_t sent;
 
     tx_ctx = (ctx == 0) ? &g_wifi_fallback_tx_context : (wifi_tx_context_t *)ctx;
@@ -255,23 +314,44 @@ static int wifi_send(void *ctx, const adapter_tx_packet_t *packet)
         return -1;
     }
 
-    if (tx_ctx->port == 0u) {
-        tx_ctx->port = (uint16_t)WIFI_ADAPTER_DEFAULT_PORT;
-    }
     header = (const anymsg_header_t *)packet->data;
-    if (anymsg_cid_segment_from_first_byte(header->destination_cid[0]) !=
+    msg_length = read_le16(header->msg_length);
+    payload_length = read_le16(header->payload_length);
+    err = anymsg_validate_normalized_lengths(msg_length, payload_length, packet->len);
+    if (err != UNIFIED_OK) {
+        wifi_tx_context_record_error(tx_ctx, "wifi_send_length", err);
+        return -1;
+    }
+    err = anymsg_validate_header_static_fields(header);
+    if (err != UNIFIED_OK) {
+        wifi_tx_context_record_error(tx_ctx, "wifi_send_header", err);
+        return -1;
+    }
+    if (anymsg_cid_segment_from_first_byte(anymsg_destination_cid_first_byte(header)) !=
         ANYMSG_CID_SEGMENT_WIFI) {
         wifi_tx_context_record_error(tx_ctx,
                                      "wifi_send_bad_cid",
                                      UNIFIED_ERR_INVALID_ARG);
         return -1;
     }
-    if (!tx_ctx->default_peer_configured) {
+
+    if (tx_ctx->port == 0u) {
+        tx_ctx->port = (uint16_t)WIFI_ADAPTER_DEFAULT_PORT;
+    }
+    peer = wifi_find_tx_peer(tx_ctx, header->destination_cid);
+    if (peer != 0) {
+        peer_addr_be = peer->ipv4_addr_be;
+        peer_port = (peer->port == 0u) ? tx_ctx->port : peer->port;
+    } else if (tx_ctx->default_peer_configured) {
+        peer_addr_be = tx_ctx->default_peer_addr_be;
+        peer_port = tx_ctx->port;
+    } else {
         wifi_tx_context_record_error(tx_ctx,
                                      "wifi_send_no_peer",
                                      UNIFIED_ERR_IPC_OFFLINE);
         return -1;
     }
+
     if (tx_ctx->udp_socket_fd < 0) {
         tx_ctx->udp_socket_fd = socket(AF_INET, SOCK_DGRAM, 0);
         if (tx_ctx->udp_socket_fd < 0) {
@@ -284,8 +364,8 @@ static int wifi_send(void *ctx, const adapter_tx_packet_t *packet)
 
     memset(&peer_addr, 0, sizeof(peer_addr));
     peer_addr.sin_family = AF_INET;
-    peer_addr.sin_port = htons(tx_ctx->port);
-    peer_addr.sin_addr.s_addr = tx_ctx->default_peer_addr_be;
+    peer_addr.sin_port = htons(peer_port);
+    peer_addr.sin_addr.s_addr = peer_addr_be;
 
     sent = sendto(tx_ctx->udp_socket_fd,
                   packet->data,

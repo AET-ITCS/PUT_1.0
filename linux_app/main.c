@@ -237,6 +237,16 @@ int main(int argc, char **argv)
     can_tx_context_init(&can_tx_context, config.can_tx_can_id, config.can_extended_id);
     ethernet_tx_context_init(&ethernet_tx_context, config.ethernet_port);
     wifi_tx_context_init(&wifi_tx_context, config.wifi_port);
+    for (size_t i = 0u; i < config.wifi_tx_peer_count; ++i) {
+        if (wifi_tx_context_add_peer(&wifi_tx_context, &config.wifi_tx_peers[i]) != 0) {
+            fprintf(stderr, "invalid wifi tx peer at index %zu\n", i);
+            egress_manager_destroy(&egress_manager);
+            ethernet_tx_context_destroy(&ethernet_tx_context);
+            wifi_tx_context_destroy(&wifi_tx_context);
+            status_collector_destroy(&collector);
+            return EXIT_FAILURE;
+        }
+    }
 
     if (config.ethernet_tx_peer_addr[0] != '\0') {
         err = ethernet_tx_context_set_default_peer(&ethernet_tx_context,

@@ -19,6 +19,7 @@ extern "C" {
 #define WIFI_ADAPTER_DEFAULT_TCP_BACKLOG 4u
 #define WIFI_ADAPTER_DEFAULT_PRIORITY 2u
 #define WIFI_ADAPTER_DEFAULT_TTL 8u
+#define WIFI_TX_PEER_MAX 16u
 
 typedef struct {
     linux_shm_ipc_t *ipc;
@@ -52,12 +53,20 @@ typedef struct {
 } wifi_tcp_stream_context_t;
 
 typedef struct {
+    uint8_t destination_cid[ANYMSG_CID_LENGTH];
+    uint32_t ipv4_addr_be;
+    uint16_t port;
+} wifi_tx_peer_t;
+
+typedef struct {
     uint16_t port;
     int udp_socket_fd;
     bool default_peer_configured;
     uint32_t default_peer_addr_be;
     const char *last_tx_error_stage;
     unified_error_t last_tx_error;
+    wifi_tx_peer_t peers[WIFI_TX_PEER_MAX];
+    size_t peer_count;
 } wifi_tx_context_t;
 
 extern physical_interface_adapter_t wifi_adapter;
@@ -66,6 +75,7 @@ void wifi_tx_context_init(wifi_tx_context_t *ctx, uint16_t port);
 unified_error_t wifi_tx_context_set_default_peer(wifi_tx_context_t *ctx,
                                                  const char *ipv4,
                                                  uint16_t port);
+int wifi_tx_context_add_peer(wifi_tx_context_t *ctx, const wifi_tx_peer_t *peer);
 void wifi_tx_context_destroy(wifi_tx_context_t *ctx);
 
 unified_error_t wifi_adapter_decode_datagram(const uint8_t *input,

@@ -131,6 +131,79 @@ static bool is_valid_ipv4_address(const char *text)
     return inet_pton(AF_INET, text, &addr) == 1;
 }
 
+static int parse_wifi_cid(const char *text, uint8_t cid[ANYMSG_CID_LENGTH])
+{
+    uint32_t value;
+
+    if ((text == NULL) || (cid == NULL) || (parse_u32(text, &value) != 0)) {
+        return -1;
+    }
+
+    cid[0] = (uint8_t)((value >> 24u) & 0xFFu);
+    cid[1] = (uint8_t)((value >> 16u) & 0xFFu);
+    cid[2] = (uint8_t)((value >> 8u) & 0xFFu);
+    cid[3] = (uint8_t)(value & 0xFFu);
+
+    return (anymsg_cid_segment_from_first_byte(cid[0]) == ANYMSG_CID_SEGMENT_WIFI) ? 0 : -1;
+}
+
+static int parse_wifi_tx_peer(app_config_t *config, const char *value)
+{
+    char line[CONFIG_LINE_MAX];
+    char *cid_text;
+    char *ip_text;
+    char *port_text;
+    char *comma_a;
+    char *comma_b;
+    wifi_tx_peer_t peer;
+    struct in_addr addr;
+    uint32_t port_value;
+
+    if ((config == NULL) || (value == NULL) || (strlen(value) >= sizeof(line)) ||
+        (config->wifi_tx_peer_count >= WIFI_TX_PEER_MAX)) {
+        return -1;
+    }
+
+    copy_string(line, sizeof(line), value);
+    comma_a = strchr(line, ',');
+    if (comma_a == NULL) {
+        return -1;
+    }
+    *comma_a = '\0';
+
+    comma_b = strchr(comma_a + 1, ',');
+    if ((comma_b == NULL) || (strchr(comma_b + 1, ',') != NULL)) {
+        return -1;
+    }
+    *comma_b = '\0';
+
+    cid_text = trim(line);
+    ip_text = trim(comma_a + 1);
+    port_text = trim(comma_b + 1);
+    if ((cid_text == NULL) || (cid_text[0] == '\0') ||
+        (ip_text == NULL) || (ip_text[0] == '\0') ||
+        (port_text == NULL) || (port_text[0] == '\0')) {
+        return -1;
+    }
+
+    memset(&peer, 0, sizeof(peer));
+    if (parse_wifi_cid(cid_text, peer.destination_cid) != 0) {
+        return -1;
+    }
+    if ((inet_pton(AF_INET, ip_text, &addr) != 1) || (addr.s_addr == 0u)) {
+        return -1;
+    }
+    if ((parse_u32(port_text, &port_value) != 0) || (port_value > UINT16_MAX)) {
+        return -1;
+    }
+
+    peer.ipv4_addr_be = addr.s_addr;
+    peer.port = (uint16_t)port_value;
+    config->wifi_tx_peers[config->wifi_tx_peer_count] = peer;
+    config->wifi_tx_peer_count++;
+    return 0;
+}
+
 void app_config_set_defaults(app_config_t *config)
 {
     if (config == NULL) {
@@ -377,6 +450,13 @@ static unified_error_t apply_key_value(app_config_t *config,
             config->wifi_tx_peer_port = (uint16_t)u32_value;
             return UNIFIED_OK;
         }
+
+        if (strcmp(key, "tx_peer") == 0) {
+            if (parse_wifi_tx_peer(config, value) != 0) {
+                return UNIFIED_ERR_INVALID_ARG;
+            }
+            return UNIFIED_OK;
+        }
     } else if (strcmp(section, "bluetooth") == 0) {
         if (strcmp(key, "enabled") == 0) {
             if (parse_bool(value, &bool_value) != 0) {
@@ -524,6 +604,20 @@ unified_error_t app_config_validate(const app_config_t *config)
                 !is_valid_ipv4_address(config->wifi_tx_peer_addr)) {
                 return UNIFIED_ERR_INVALID_ARG;
             }
+        }
+    }
+
+    if (config->wifi_tx_peer_count > WIFI_TX_PEER_MAX) {
+        return UNIFIED_ERR_INVALID_ARG;
+    }
+    for (size_t i = 0u; i < config->wifi_tx_peer_count; ++i) {
+        const wifi_tx_peer_t *peer = &config->wifi_tx_peers[i];
+
+        if ((anymsg_cid_segment_from_first_byte(peer->destination_cid[0]) !=
+             ANYMSG_CID_SEGMENT_WIFI) ||
+            (peer->ipv4_addr_be == 0u) ||
+            ((peer->port == 0u) && (config->wifi_port == 0u))) {
+            return UNIFIED_ERR_INVALID_ARG;
         }
     }
 
