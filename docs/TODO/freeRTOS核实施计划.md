@@ -134,7 +134,7 @@ rtos_firmware/
 - [x] 已有文件优先原地演进；新增文件按上面的目录归属落位。
 - [x] `ipc/` 只提供共享内存 descriptor 搬运能力，不放业务路由策略。
 - [x] `router/` 和 `queue/` 不直接调用平台 cache、atomic 或 mailbox API。
-- [ ] `tasks/` 负责调度编排，可以连接 `ipc/`、`router/`、`queue/`、`monitor/` 和 `mailbox/`。
+- [x] `tasks/` 负责调度编排，可以连接 `ipc/`、`router/`、`queue/`、`monitor/` 和 `mailbox/`。
 - [x] `monitor/` 不阻塞路由主流程，高频计数先本地累加。
 - [x] `test/` 中新增 host 单测与阶段任务同名对应，避免继续把正式验收放到 `freertos/`。
 
@@ -265,50 +265,50 @@ P1 验收标准：
 
 Mailbox 与 IPC Event Task：
 
-- [ ] 新增 Mailbox ISR / Doorbell port 抽象；ISR 只清中断并唤醒 IPC Event Task。
-- [ ] Doorbell 只作为 empty -> non-empty 的唤醒信号，不作为队列计数。
-- [ ] IPC Event Task 被 Doorbell 或周期兜底调度唤醒后读取 RX pending bitmap 快照。
-- [ ] IPC Event Task 对 6 个接口执行 RX drain。
-- [ ] 默认每接口 RX drain budget 为 8，默认每轮总 budget 为 64。
-- [ ] Doorbell 丢失或 notify 失败时，周期 drain 仍能依靠 pending bitmap 和 ring read/write seq 兜底。
-- [ ] 路由层不得直接普通 RMW pending bitmap；pending bit 清除、二次检查和竞态处理继续通过 `rtos_shm_ipc_*` 或 IPC 内部 helper 完成。
+- [x] 新增 Mailbox ISR / Doorbell port 抽象；ISR 只清中断并唤醒 IPC Event Task。
+- [x] Doorbell 只作为 empty -> non-empty 的唤醒信号，不作为队列计数。
+- [x] IPC Event Task 被 Doorbell 或周期兜底调度唤醒后读取 RX pending bitmap 快照。
+- [x] IPC Event Task 对 6 个接口执行 RX drain。
+- [x] 默认每接口 RX drain budget 为 8，默认每轮总 budget 为 64。
+- [x] Doorbell 丢失或 notify 失败时，周期 drain 仍能依靠 pending bitmap 和 ring read/write seq 兜底。
+- [x] 路由层不得直接普通 RMW pending bitmap；pending bit 清除、二次检查和竞态处理继续通过 `rtos_shm_ipc_*` 或 IPC 内部 helper 完成。
 
 RX descriptor 到 route input：
 
-- [ ] IPC Event Task 使用 `rtos_shm_ipc_dequeue_rx_descriptor()` 从指定接口 RX ring 获取 descriptor。
-- [ ] 使用 `rtos_shm_ipc_get_frame_const()` 只读访问 Frame Pool 中的完整 anyMSG。
-- [ ] 校验 anyMSG normalized length、保留字段、CID、type。
-- [ ] descriptor 达到 `FRAME_REF_TRUSTED` 前，不读取不可信 `frame_id` 给路由层，不写 reclaim。
-- [ ] IPC API 返回 CRC、Frame Pool 边界、接口一致性等错误时，不把 descriptor 交给路由核心。
-- [ ] 将真实 descriptor、anyMSG header、可信状态转换为 P1 route input。
-- [ ] route input 入队时记录 `route_epoch_seen = active_route_epoch`。
+- [x] IPC Event Task 使用 `rtos_shm_ipc_dequeue_rx_descriptor()` 从指定接口 RX ring 获取 descriptor。
+- [x] 使用 `rtos_shm_ipc_get_frame_const()` 只读访问 Frame Pool 中的完整 anyMSG。
+- [x] 校验 anyMSG normalized length、保留字段、CID、type。
+- [x] descriptor 达到 `FRAME_REF_TRUSTED` 前，不读取不可信 `frame_id` 给路由层，不写 reclaim。
+- [x] IPC API 返回 CRC、Frame Pool 边界、接口一致性等错误时，不把 descriptor 交给路由核心。
+- [x] 将真实 descriptor、anyMSG header、可信状态转换为 P1 route input。
+- [x] route input 入队时记录 `route_epoch_seen = active_route_epoch`。
 
 Heartbeat 快速消费路径：
 
-- [ ] `type = 0x00` 的端到网关心跳帧在 IPC Event / Heartbeat 路径消费。
-- [ ] 合法心跳更新 endpoint heartbeat table。
-- [ ] 心跳消费后写 reclaim，reason 为 `PUT_SHM_RECLAIM_REASON_HEARTBEAT_CONSUMED`。
-- [ ] 心跳帧不进入 Router Scheduler，不写 TX Ring，不触发 TX Doorbell。
-- [ ] 小核不主动生成 `type = 0x01` 网关到端心跳。
+- [x] `type = 0x00` 的端到网关心跳帧在 IPC Event / Heartbeat 路径消费。
+- [x] 合法心跳更新 endpoint heartbeat table。
+- [x] 心跳消费后写 reclaim，reason 为 `PUT_SHM_RECLAIM_REASON_HEARTBEAT_CONSUMED`。
+- [x] 心跳帧不进入 Router Scheduler，不写 TX Ring，不触发 TX Doorbell。
+- [x] 小核不主动生成 `type = 0x01` 网关到端心跳。
 
 Router Scheduler：
 
-- [ ] 普通帧进入 Router Scheduler 本地 priority 队列。
-- [ ] Router Scheduler 出队前检查 TTL。
-- [ ] 出队前比较 `route_epoch_seen` 与当前 `active_route_epoch`。
-- [ ] route epoch 变化时重新查询 active route table，并更新目标接口。
-- [ ] 重新查询后无路由的帧写 reclaim，reason 为 `PUT_SHM_RECLAIM_REASON_NO_ROUTE`。
-- [ ] 已写入 TX Ring 的 descriptor 不回滚。
+- [x] 普通帧进入 Router Scheduler 本地 priority 队列。
+- [x] Router Scheduler 出队前检查 TTL。
+- [x] 出队前比较 `route_epoch_seen` 与当前 `active_route_epoch`。
+- [x] route epoch 变化时重新查询 active route table，并更新目标接口。
+- [x] 重新查询后无路由的帧写 reclaim，reason 为 `PUT_SHM_RECLAIM_REASON_NO_ROUTE`。
+- [x] 已写入 TX Ring 的 descriptor 不回滚。
 
 TX Writer 与 reclaim adapter：
 
-- [ ] TX Writer 从 Router Scheduler 获取待发送输出。
-- [ ] TX sink 真实实现调用 `rtos_shm_ipc_enqueue_tx_descriptor()`。
-- [ ] reclaim sink 真实实现调用 `rtos_shm_ipc_reclaim_frame()`。
-- [ ] TX descriptor 和 reclaim descriptor 只能引用 Linux 已发布给 RTOS 的 RX frame。
-- [ ] TX Ring 满时执行 bounded retry；重试耗尽后写 reclaim，公共 reason 为 `PUT_SHM_RECLAIM_REASON_QUEUE_FULL`。
-- [ ] reclaim ring 满时暂停继续消费 RX descriptor，进入 `DEGRADED_RECLAIM_FULL` 或等价状态。
-- [ ] reclaim ring 满期间冻结本地引用，等待 Linux drain 后进入补写流程。
+- [x] TX Writer 从 Router Scheduler 获取待发送输出。
+- [x] TX sink 真实实现调用 `rtos_shm_ipc_enqueue_tx_descriptor()`。
+- [x] reclaim sink 真实实现调用 `rtos_shm_ipc_reclaim_frame()`。
+- [x] TX descriptor 和 reclaim descriptor 只能引用 Linux 已发布给 RTOS 的 RX frame。
+- [x] TX Ring 满时执行 bounded retry；重试耗尽后写 reclaim，公共 reason 为 `PUT_SHM_RECLAIM_REASON_QUEUE_FULL`。
+- [x] reclaim ring 满时暂停继续消费 RX descriptor，进入 `DEGRADED_RECLAIM_FULL` 或等价状态。
+- [x] reclaim ring 满期间冻结本地引用，等待 Linux drain 后进入补写流程。
 
 P2 验收标准：
 
@@ -491,16 +491,16 @@ P1 测试：
 
 P2 测试：
 
-- [ ] RX Descriptor Ring drain 到正式路由核心。
-- [ ] Frame Pool 只读访问完整 anyMSG header。
-- [ ] TX Ring 写入目标接口 descriptor。
-- [ ] reclaim ring 写入公共 reclaim reason。
-- [ ] IPC API 返回 CRC / bounds / interface 错误时不进入路由核心。
-- [ ] Doorbell 失败后 descriptor 仍可通过 pending bitmap 和周期 drain 消费。
-- [ ] reclaim ring 满时暂停继续消费 RX descriptor。
-- [ ] Frame Pool 引用不在小核释放或清零。
-- [ ] route input 记录 `route_epoch_seen`。
-- [ ] route epoch 变化后出队前重新查路由。
+- [x] RX Descriptor Ring drain 到正式路由核心。
+- [x] Frame Pool 只读访问完整 anyMSG header。
+- [x] TX Ring 写入目标接口 descriptor。
+- [x] reclaim ring 写入公共 reclaim reason。
+- [x] IPC API 返回 CRC / bounds / interface 错误时不进入路由核心。
+- [x] Doorbell 失败后 descriptor 仍可通过 pending bitmap 和周期 drain 消费。
+- [x] reclaim ring 满时暂停继续消费 RX descriptor。
+- [x] Frame Pool 引用不在小核释放或清零。
+- [x] route input 记录 `route_epoch_seen`。
+- [x] route epoch 变化后出队前重新查路由。
 
 P3 测试：
 

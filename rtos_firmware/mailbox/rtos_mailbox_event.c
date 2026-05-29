@@ -1,14 +1,14 @@
 /**
  * @file rtos_mailbox_event.c
- * @brief P1 mailbox event 占位实现。
+ * @brief P2 host/mock mailbox event 实现。
  * @author Yukikaze
  */
 #include "rtos_mailbox.h"
 
 /**
- * @brief 触发 P1 mailbox event 占位信号。
+ * @brief 触发 P2 host/mock mailbox event 信号。
  *
- * @return UNIFIED_OK 表示占位操作成功。
+ * @return UNIFIED_OK 表示 host/mock 唤醒成功。
  */
 unified_error_t rtos_mailbox_event_signal(void)
 {

@@ -12,6 +12,7 @@
 #include "error_code.h"
 #include "rtos_endpoint_heartbeat.h"
 #include "rtos_priority_queue.h"
+#include "rtos_shm_ipc.h"
 #include "shared_memory_ipc.h"
 
 #ifdef __cplusplus
@@ -189,6 +190,12 @@ bool rtos_router_ttl_is_expired(uint32_t now_ms,
                                 uint8_t ttl_ms);
 
 unified_error_t rtos_router_adapter_p1_boundary_check(void);
+
+unified_error_t rtos_router_adapter_descriptor_to_input(
+    const rtos_shm_ipc_t *ipc,
+    const put_shm_descriptor_t *descriptor,
+    uint32_t now_ms,
+    rtos_route_input_t *out_input);
 
 #ifdef __cplusplus
 }

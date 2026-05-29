@@ -42,7 +42,7 @@ add_library(rtos_firmware_core STATIC
     router/rtos_router_core.c
     router/rtos_router_policy.c
     router/rtos_router_table.c
-    tasks/rtos_task_placeholders.c
+    tasks/rtos_tasks.c
     watchdog/rtos_watchdog.c
 )
 
@@ -89,6 +89,19 @@ if(RTOS_FIRMWARE_BUILD_TESTS AND NOT CMAKE_CROSSCOMPILING)
 
     target_link_libraries(rtos_router_core_test PRIVATE rtos_firmware_core)
     add_test(NAME rtos_router_core COMMAND rtos_router_core_test)
+
+    add_executable(rtos_ipc_adapter_test
+        test/rtos_ipc_adapter_test.c
+        "${PROJECT_ROOT}/linux_app/ipc/linux_shm_ipc.c"
+        "${PROJECT_ROOT}/linux_app/ipc/linux_shm_platform.c"
+    )
+
+    target_include_directories(rtos_ipc_adapter_test PRIVATE
+        "${PROJECT_ROOT}/linux_app/ipc"
+    )
+    target_compile_definitions(rtos_ipc_adapter_test PRIVATE _POSIX_C_SOURCE=200112L)
+    target_link_libraries(rtos_ipc_adapter_test PRIVATE rtos_firmware_core)
+    add_test(NAME rtos_ipc_adapter COMMAND rtos_ipc_adapter_test)
 endif()
 
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
@@ -109,5 +122,9 @@ if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
 
     if(TARGET rtos_router_core_test)
         target_compile_options(rtos_router_core_test PRIVATE -Wall -Wextra)
+    endif()
+
+    if(TARGET rtos_ipc_adapter_test)
+        target_compile_options(rtos_ipc_adapter_test PRIVATE -Wall -Wextra)
     endif()
 endif()

@@ -818,6 +818,40 @@ unified_error_t rtos_shm_ipc_dequeue_rx_descriptor(rtos_shm_ipc_t *ipc,
 }
 
 /**
+ * @brief 读取 RX pending bitmap 快照。
+ *
+ * @param ipc IPC 上下文。
+ * @param out_bits 输出 pending bitmap bits。
+ * @return UNIFIED_OK 表示成功，否则返回公共错误码。
+ */
+unified_error_t rtos_shm_ipc_get_rx_pending_snapshot(const rtos_shm_ipc_t *ipc,
+                                                     uint32_t *out_bits)
+{
+    unified_error_t op_result; /**< cache 同步操作结果。 */
+
+    if ((ipc == 0) || (out_bits == 0)) {
+        /* 参数为空时不能读取 pending 状态。 */
+        return UNIFIED_ERR_NULL;
+    }
+
+    if (!ipc->initialized || (ipc->region == 0)) {
+        /* attach 成功前禁止读共享内存。 */
+        return UNIFIED_ERR_IPC_NOT_READY;
+    }
+
+    op_result = call_cache_invalidate(&ipc->platform_ops,
+                                      &ipc->region->rx_pending_bitmap,
+                                      sizeof(ipc->region->rx_pending_bitmap));
+    if (op_result != UNIFIED_OK) {
+        /* pending bitmap 读取前需要同步 Linux 侧写入。 */
+        return op_result;
+    }
+
+    *out_bits = ipc->region->rx_pending_bitmap.bits;
+    return UNIFIED_OK;
+}
+
+/**
  * @brief 向指定物理接口 TX ring 写入一个 descriptor。
  *
  * @param ipc IPC 上下文。

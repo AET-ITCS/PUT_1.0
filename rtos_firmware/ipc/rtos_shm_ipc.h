@@ -63,6 +63,18 @@ unified_error_t rtos_shm_ipc_dequeue_rx_descriptor(rtos_shm_ipc_t *ipc,
                                                    put_shm_descriptor_t *out_descriptor);
 
 /**
+ * @brief 读取 RX pending bitmap 快照。
+ *
+ * 该 helper 只同步并读取 pending bitmap，不执行清位或普通读改写。
+ *
+ * @param ipc IPC 上下文。
+ * @param out_bits 输出 pending bitmap bits。
+ * @return UNIFIED_OK 表示成功，否则返回公共错误码。
+ */
+unified_error_t rtos_shm_ipc_get_rx_pending_snapshot(const rtos_shm_ipc_t *ipc,
+                                                     uint32_t *out_bits);
+
+/**
  * @brief 向指定物理接口 TX ring 写入一个 descriptor。
  *
  * @param ipc IPC 上下文。

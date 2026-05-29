@@ -6,6 +6,8 @@
 #ifndef RTOS_FIRMWARE_CONFIG_H
 #define RTOS_FIRMWARE_CONFIG_H
 
+#include "shared_memory_ipc.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -68,6 +70,21 @@ extern "C" {
 /** @brief P1 默认生效路由 epoch。 */
 #ifndef RTOS_FIRMWARE_ROUTE_EPOCH
 #define RTOS_FIRMWARE_ROUTE_EPOCH 1u
+#endif
+
+/** @brief P2 单接口默认 RX drain budget。 */
+#ifndef RTOS_FIRMWARE_RX_DRAIN_BUDGET_PER_INTERFACE
+#define RTOS_FIRMWARE_RX_DRAIN_BUDGET_PER_INTERFACE 8u
+#endif
+
+/** @brief P2 单轮所有接口默认 RX drain 总 budget。 */
+#ifndef RTOS_FIRMWARE_RX_DRAIN_BUDGET_TOTAL
+#define RTOS_FIRMWARE_RX_DRAIN_BUDGET_TOTAL 64u
+#endif
+
+/** @brief P2 reclaim ring 满时本地冻结的 reclaim 输出容量。 */
+#ifndef RTOS_FIRMWARE_PENDING_RECLAIM_CAPACITY
+#define RTOS_FIRMWARE_PENDING_RECLAIM_CAPACITY PUT_SHM_FRAME_POOL_BLOCK_COUNT
 #endif
 
 #ifdef __cplusplus
