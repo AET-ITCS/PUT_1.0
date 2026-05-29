@@ -418,15 +418,15 @@ P3 验收标准：
 
 Host 闭环：
 
-- [ ] Linux 使用 `linux_shm_frame_alloc()` 分配 Frame Pool block。
-- [ ] Linux 写入完整 anyMSG 后调用 `linux_shm_frame_commit_rx()` 发布 RX descriptor。
-- [ ] RTOS 使用 `rtos_shm_ipc_dequeue_rx_descriptor()` drain RX ring。
-- [ ] RTOS 路由成功时调用 `rtos_shm_ipc_enqueue_tx_descriptor()`。
-- [ ] Linux 使用 `linux_shm_dequeue_tx_descriptor()` 读取目标 TX descriptor 和只读 frame。
-- [ ] RTOS 消费或丢弃时调用 `rtos_shm_ipc_reclaim_frame()`。
-- [ ] Linux 使用 `linux_shm_dequeue_reclaim_descriptor()` ack reclaim 并最终释放 Frame Pool block。
-- [ ] 验证 RTOS 回写 TX/reclaim 只能引用 Linux 已发布给 RTOS 的 frame。
-- [ ] 长时间闭环后 Linux Frame Pool used 回落稳定，无持续增长疑似泄漏。
+- [x] Linux 使用 `linux_shm_frame_alloc()` 分配 Frame Pool block。
+- [x] Linux 写入完整 anyMSG 后调用 `linux_shm_frame_commit_rx()` 发布 RX descriptor。
+- [x] RTOS 使用 `rtos_shm_ipc_dequeue_rx_descriptor()` drain RX ring。
+- [x] RTOS 路由成功时调用 `rtos_shm_ipc_enqueue_tx_descriptor()`。
+- [x] Linux 使用 `linux_shm_dequeue_tx_descriptor()` 读取目标 TX descriptor 和只读 frame。
+- [x] RTOS 消费或丢弃时调用 `rtos_shm_ipc_reclaim_frame()`。
+- [x] Linux 使用 `linux_shm_dequeue_reclaim_descriptor()` ack reclaim 并最终释放 Frame Pool block。
+- [x] 验证 RTOS 回写 TX/reclaim 只能引用 Linux 已发布给 RTOS 的 frame。
+- [x] 长时间闭环后 Linux Frame Pool used 回落稳定，无持续增长疑似泄漏。
 
 板端联调：
 
@@ -516,14 +516,14 @@ P3 测试：
 
 P4 测试：
 
-- [ ] Linux `alloc + commit_rx`，RTOS drain/route，Linux `dequeue_tx`。
-- [ ] CAN RX 到 RS485 TX。
-- [ ] RS485 RX 到 CAN TX。
-- [ ] `type = 0x00` 心跳被 RTOS 消费，Linux 从 reclaim ring 回收。
-- [ ] 无路由、TTL 过期、epoch mismatch、invalid frame 进入 reclaim。
-- [ ] TX ring full 后 bounded retry 失败，最终 reclaim `PUT_SHM_RECLAIM_REASON_QUEUE_FULL`。
-- [ ] reclaim ring full 时 RTOS 暂停继续消费 RX。
-- [ ] 长时间闭环后 Linux Frame Pool `used` 回落稳定，无持续增长疑似泄漏。
+- [x] Linux `alloc + commit_rx`，RTOS drain/route，Linux `dequeue_tx`。
+- [x] CAN RX 到 RS485 TX。
+- [x] RS485 RX 到 CAN TX。
+- [x] `type = 0x00` 心跳被 RTOS 消费，Linux 从 reclaim ring 回收。
+- [x] 无路由、TTL 过期、epoch mismatch、invalid frame 进入 reclaim。
+- [x] TX ring full 后 bounded retry 失败，最终 reclaim `PUT_SHM_RECLAIM_REASON_QUEUE_FULL`。
+- [x] reclaim ring full 时 RTOS 暂停继续消费 RX。
+- [x] 长时间闭环后 Linux Frame Pool `used` 回落稳定，无持续增长疑似泄漏。
 
 ---
 

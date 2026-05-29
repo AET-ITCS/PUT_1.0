@@ -273,6 +273,7 @@ static unified_error_t rtos_tasks_reclaim_sink(const rtos_route_output_t *output
 {
     rtos_tasks_context_t *context;           /**< P2 task 上下文。 */
     rtos_tasks_frame_reference_t *reference; /**< 本地 frame 引用。 */
+    rtos_route_output_t reclaim_output;      /**< 带原始 RX 元数据的 reclaim 输出。 */
     unified_error_t result;                  /**< reclaim 写入结果。 */
 
     context = (rtos_tasks_context_t *)user_context;
@@ -289,13 +290,21 @@ static unified_error_t rtos_tasks_reclaim_sink(const rtos_route_output_t *output
         return UNIFIED_ERR_INVALID_ARG;
     }
 
+    reclaim_output = *output;
+    reclaim_output.source_interface =
+        (put_shm_interface_t)reference->descriptor.source_interface;
+    reclaim_output.target_interface =
+        (put_shm_interface_t)reference->descriptor.target_interface;
+    reclaim_output.epoch = reference->descriptor.epoch;
+    reclaim_output.flags = reference->descriptor.flags;
+
     result = rtos_shm_ipc_reclaim_frame(context->ipc,
-                                        output->frame_id,
-                                        output->reclaim_reason,
-                                        output->source_interface,
-                                        output->target_interface,
-                                        output->epoch,
-                                        output->flags);
+                                        reclaim_output.frame_id,
+                                        reclaim_output.reclaim_reason,
+                                        reclaim_output.source_interface,
+                                        reclaim_output.target_interface,
+                                        reclaim_output.epoch,
+                                        reclaim_output.flags);
     if (result == UNIFIED_OK) {
         context->statistics.reclaim_enqueue_count =
             context->statistics.reclaim_enqueue_count + 1u;
@@ -306,7 +315,7 @@ static unified_error_t rtos_tasks_reclaim_sink(const rtos_route_output_t *output
     if (result == UNIFIED_ERR_IPC_QUEUE_FULL) {
         context->statistics.reclaim_full_count =
             context->statistics.reclaim_full_count + 1u;
-        return store_pending_reclaim(context, output);
+        return store_pending_reclaim(context, &reclaim_output);
     }
 
     return result;

@@ -129,6 +129,19 @@ if(RTOS_FIRMWARE_BUILD_TESTS AND NOT CMAKE_CROSSCOMPILING)
     target_compile_definitions(rtos_recovery_test PRIVATE _POSIX_C_SOURCE=200112L)
     target_link_libraries(rtos_recovery_test PRIVATE rtos_firmware_core)
     add_test(NAME rtos_recovery COMMAND rtos_recovery_test)
+
+    add_executable(rtos_host_loop_test
+        test/rtos_host_loop_test.c
+        "${PROJECT_ROOT}/linux_app/ipc/linux_shm_ipc.c"
+        "${PROJECT_ROOT}/linux_app/ipc/linux_shm_platform.c"
+    )
+
+    target_include_directories(rtos_host_loop_test PRIVATE
+        "${PROJECT_ROOT}/linux_app/ipc"
+    )
+    target_compile_definitions(rtos_host_loop_test PRIVATE _POSIX_C_SOURCE=200112L)
+    target_link_libraries(rtos_host_loop_test PRIVATE rtos_firmware_core)
+    add_test(NAME rtos_host_loop COMMAND rtos_host_loop_test)
 endif()
 
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
@@ -165,5 +178,9 @@ if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
 
     if(TARGET rtos_recovery_test)
         target_compile_options(rtos_recovery_test PRIVATE -Wall -Wextra)
+    endif()
+
+    if(TARGET rtos_host_loop_test)
+        target_compile_options(rtos_host_loop_test PRIVATE -Wall -Wextra)
     endif()
 endif()
