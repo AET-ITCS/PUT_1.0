@@ -1,6 +1,6 @@
 /**
  * @file rtos_router_table.c
- * @brief P1 fixed CID route table.
+ * @brief P1 固定 CID 路由表实现。
  * @author Yukikaze
  */
 #include "rtos_router.h"
@@ -8,13 +8,21 @@
 #include <string.h>
 
 /**
- * @brief Return true when an interface value is one of the six ABI interfaces.
+ * @brief 判断接口值是否属于 ABI 固定的六类接口。
+ *
+ * @param interface_id 待检查接口。
+ * @return true 表示合法，false 表示非法。
  */
 static bool interface_is_valid(put_shm_interface_t interface_id)
 {
     return (uint8_t)interface_id < (uint8_t)PUT_SHM_INTERFACE_COUNT;
 }
 
+/**
+ * @brief 填充 P1 默认 CID 路由表。
+ *
+ * @param out_table 输出路由表快照。
+ */
 void rtos_router_route_table_default(rtos_route_table_snapshot_t *out_table)
 {
     if (out_table == 0) {
@@ -33,13 +41,21 @@ void rtos_router_route_table_default(rtos_route_table_snapshot_t *out_table)
     out_table->cid_segment_targets[ANYMSG_CID_SEGMENT_RS485] = PUT_SHM_INTERFACE_RS485;
 }
 
+/**
+ * @brief 按目的 CID 首字节查找目标接口。
+ *
+ * @param table 路由表快照。
+ * @param destination_cid_first_byte 目的 CID 首字节。
+ * @param out_interface 输出目标接口。
+ * @return UNIFIED_OK 表示找到路由，否则返回公共错误码。
+ */
 unified_error_t rtos_router_route_table_lookup(
     const rtos_route_table_snapshot_t *table,
     uint8_t destination_cid_first_byte,
     put_shm_interface_t *out_interface)
 {
-    anymsg_cid_segment_t segment;       /**< CID segment parsed from first byte. */
-    put_shm_interface_t target_interface; /**< Configured route target. */
+    anymsg_cid_segment_t segment;       /**< 从首字节解析出的 CID 段。 */
+    put_shm_interface_t target_interface; /**< 路由表中配置的目标接口。 */
 
     if ((table == 0) || (out_interface == 0)) {
         return UNIFIED_ERR_NULL;

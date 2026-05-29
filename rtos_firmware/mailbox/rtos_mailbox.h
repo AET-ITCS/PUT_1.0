@@ -1,6 +1,6 @@
 /**
  * @file rtos_mailbox.h
- * @brief P1 mailbox/doorbell placeholder API.
+ * @brief P1 mailbox/doorbell 占位接口。
  * @author Yukikaze
  */
 #ifndef RTOS_MAILBOX_H

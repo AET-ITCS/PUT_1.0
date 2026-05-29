@@ -1,6 +1,6 @@
 /**
  * @file rtos_priority_queue_test.c
- * @brief P1 priority queue host tests.
+ * @brief P1 优先级队列主机端测试。
  * @author Yukikaze
  */
 #include "rtos_priority_queue.h"
@@ -18,13 +18,18 @@
     } while (0)
 
 /**
- * @brief Build a minimal queue item.
+ * @brief 构造一个最小队列项。
+ *
+ * @param frame_id 帧 ID。
+ * @param priority 优先级。
+ * @param enqueue_time_ms 入队时间。
+ * @return 构造完成的队列项。
  */
 static rtos_priority_queue_item_t make_item(uint32_t frame_id,
                                             uint8_t priority,
                                             uint32_t enqueue_time_ms)
 {
-    rtos_priority_queue_item_t item; /**< Queue item under construction. */
+    rtos_priority_queue_item_t item; /**< 正在构造的队列项。 */
 
     (void)memset(&item, 0, sizeof(item));
     item.frame_id = frame_id;
@@ -37,13 +42,15 @@ static rtos_priority_queue_item_t make_item(uint32_t frame_id,
 }
 
 /**
- * @brief Verify strict priority with quota anti-starvation.
+ * @brief 验证严格优先级和配额防饥饿调度。
+ *
+ * @return 0 表示测试通过，非 0 表示失败。
  */
 static int test_quota_dequeue_order(void)
 {
-    rtos_priority_queue_t queue;          /**< Queue under test. */
-    rtos_priority_queue_item_t item;      /**< Enqueued/dequeued item. */
-    uint32_t i;                           /**< Loop index. */
+    rtos_priority_queue_t queue;          /**< 被测队列。 */
+    rtos_priority_queue_item_t item;      /**< 入队或出队队列项。 */
+    uint32_t i;                           /**< 循环下标。 */
 
     rtos_priority_queue_init(&queue);
     for (i = 0u; i < 17u; ++i) {
@@ -76,16 +83,18 @@ static int test_quota_dequeue_order(void)
 }
 
 /**
- * @brief Verify low-priority eviction and priority-0 protection.
+ * @brief 验证低优先级驱逐和 priority 0 保护策略。
+ *
+ * @return 0 表示测试通过，非 0 表示失败。
  */
 static int test_eviction_policy(void)
 {
-    rtos_priority_queue_t queue;             /**< Queue under test. */
-    rtos_priority_queue_item_t item;         /**< New item. */
-    rtos_priority_queue_item_t evicted_item; /**< Evicted item. */
-    rtos_priority_queue_depth_t depth;       /**< Queue depth snapshot. */
-    bool evicted;                            /**< Eviction flag. */
-    uint32_t i;                              /**< Loop index. */
+    rtos_priority_queue_t queue;             /**< 被测队列。 */
+    rtos_priority_queue_item_t item;         /**< 新队列项。 */
+    rtos_priority_queue_item_t evicted_item; /**< 被驱逐队列项。 */
+    rtos_priority_queue_depth_t depth;       /**< 队列深度快照。 */
+    bool evicted;                            /**< 驱逐标记。 */
+    uint32_t i;                              /**< 循环下标。 */
 
     rtos_priority_queue_init(&queue);
     for (i = 0u; i < RTOS_FIRMWARE_PRIORITY_QUEUE_CAPACITY; ++i) {
@@ -122,12 +131,14 @@ static int test_eviction_policy(void)
 }
 
 /**
- * @brief Verify invalid priority handling.
+ * @brief 验证非法 priority 处理。
+ *
+ * @return 0 表示测试通过，非 0 表示失败。
  */
 static int test_invalid_priority(void)
 {
-    rtos_priority_queue_t queue;     /**< Queue under test. */
-    rtos_priority_queue_item_t item; /**< Invalid item. */
+    rtos_priority_queue_t queue;     /**< 被测队列。 */
+    rtos_priority_queue_item_t item; /**< 非法队列项。 */
 
     rtos_priority_queue_init(&queue);
     item = make_item(1u, 4u, 1u);
@@ -137,6 +148,11 @@ static int test_invalid_priority(void)
     return 0;
 }
 
+/**
+ * @brief P1 优先级队列主机端测试入口。
+ *
+ * @return 0 表示全部测试通过，非 0 表示失败。
+ */
 int main(void)
 {
     CHECK(test_quota_dequeue_order() == 0);

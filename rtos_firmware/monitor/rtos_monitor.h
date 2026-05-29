@@ -1,6 +1,6 @@
 /**
  * @file rtos_monitor.h
- * @brief P1 monitor placeholder snapshots for later heartbeat/error/statistics work.
+ * @brief P1 monitor 占位快照，供后续心跳、错误和统计模块扩展。
  * @author Yukikaze
  */
 #ifndef RTOS_MONITOR_H
@@ -16,7 +16,7 @@ extern "C" {
 #endif
 
 /**
- * @brief P1 Linux heartbeat placeholder snapshot.
+ * @brief P1 Linux heartbeat 占位快照。
  */
 typedef struct {
     bool initialized;
@@ -25,7 +25,7 @@ typedef struct {
 } rtos_linux_heartbeat_snapshot_t;
 
 /**
- * @brief P1 error state placeholder snapshot.
+ * @brief P1 错误状态占位快照。
  */
 typedef struct {
     bool degraded;
@@ -33,7 +33,7 @@ typedef struct {
 } rtos_error_state_snapshot_t;
 
 /**
- * @brief P1 recovery placeholder snapshot.
+ * @brief P1 recovery 占位快照。
  */
 typedef struct {
     bool recovery_pending;
@@ -41,7 +41,7 @@ typedef struct {
 } rtos_recovery_snapshot_t;
 
 /**
- * @brief P1 monitor statistics placeholder snapshot.
+ * @brief P1 monitor 统计占位快照。
  */
 typedef struct {
     uint32_t snapshot_sequence;

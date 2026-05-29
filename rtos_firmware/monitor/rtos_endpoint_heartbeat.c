@@ -1,6 +1,6 @@
 /**
  * @file rtos_endpoint_heartbeat.c
- * @brief P1 endpoint heartbeat table implementation.
+ * @brief P1 端心跳表实现。
  * @author Yukikaze
  */
 #include "rtos_endpoint_heartbeat.h"
@@ -8,7 +8,11 @@
 #include <string.h>
 
 /**
- * @brief Return true when two raw CIDs are identical.
+ * @brief 判断两个 raw CID 是否完全相同。
+ *
+ * @param left 左侧 CID。
+ * @param right 右侧 CID。
+ * @return true 表示相同，false 表示不同。
  */
 static bool cid_equals(const uint8_t left[ANYMSG_CID_LENGTH],
                        const uint8_t right[ANYMSG_CID_LENGTH])
@@ -21,13 +25,17 @@ static bool cid_equals(const uint8_t left[ANYMSG_CID_LENGTH],
 }
 
 /**
- * @brief Find an entry by source CID.
+ * @brief 按 source CID 查找心跳记录。
+ *
+ * @param table 端心跳表上下文。
+ * @param source_cid 端设备源 CID。
+ * @return 找到的记录指针，未找到时返回 NULL。
  */
 static rtos_endpoint_heartbeat_entry_t *find_entry(
     rtos_endpoint_heartbeat_table_t *table,
     const uint8_t source_cid[ANYMSG_CID_LENGTH])
 {
-    uint32_t i; /**< Entry scan index. */
+    uint32_t i; /**< 记录扫描下标。 */
 
     if ((table == 0) || (source_cid == 0)) {
         return 0;
@@ -43,13 +51,17 @@ static rtos_endpoint_heartbeat_entry_t *find_entry(
 }
 
 /**
- * @brief Allocate a free heartbeat entry.
+ * @brief 分配一个空闲心跳记录。
+ *
+ * @param table 端心跳表上下文。
+ * @param source_cid 端设备源 CID。
+ * @return 新分配的记录指针，无空闲记录时返回 NULL。
  */
 static rtos_endpoint_heartbeat_entry_t *allocate_entry(
     rtos_endpoint_heartbeat_table_t *table,
     const uint8_t source_cid[ANYMSG_CID_LENGTH])
 {
-    uint32_t i; /**< Entry scan index. */
+    uint32_t i; /**< 记录扫描下标。 */
 
     if ((table == 0) || (source_cid == 0)) {
         return 0;
@@ -66,6 +78,11 @@ static rtos_endpoint_heartbeat_entry_t *allocate_entry(
     return 0;
 }
 
+/**
+ * @brief 初始化端心跳表。
+ *
+ * @param table 端心跳表上下文。
+ */
 void rtos_endpoint_heartbeat_init(rtos_endpoint_heartbeat_table_t *table)
 {
     if (table != 0) {
@@ -73,6 +90,13 @@ void rtos_endpoint_heartbeat_init(rtos_endpoint_heartbeat_table_t *table)
     }
 }
 
+/**
+ * @brief 配置用于 P1 心跳表更新的 gateway CID。
+ *
+ * @param table 端心跳表上下文。
+ * @param gateway_cid gateway CID。
+ * @return UNIFIED_OK 表示成功，否则返回公共错误码。
+ */
 unified_error_t rtos_endpoint_heartbeat_set_gateway(
     rtos_endpoint_heartbeat_table_t *table,
     const uint8_t gateway_cid[ANYMSG_CID_LENGTH])
@@ -86,6 +110,11 @@ unified_error_t rtos_endpoint_heartbeat_set_gateway(
     return UNIFIED_OK;
 }
 
+/**
+ * @brief 清除已配置的 gateway CID。
+ *
+ * @param table 端心跳表上下文。
+ */
 void rtos_endpoint_heartbeat_clear_gateway(rtos_endpoint_heartbeat_table_t *table)
 {
     if (table != 0) {
@@ -94,6 +123,17 @@ void rtos_endpoint_heartbeat_clear_gateway(rtos_endpoint_heartbeat_table_t *tabl
     }
 }
 
+/**
+ * @brief 消费一帧端到网关心跳。
+ *
+ * @param table 端心跳表上下文。
+ * @param source_cid 心跳源 CID。
+ * @param destination_cid 心跳目的 CID。
+ * @param source_interface 心跳来源接口。
+ * @param now_ms 当前 RTOS 时间，单位毫秒。
+ * @param frame_local_time anyMSG local_time 快照。
+ * @return UNIFIED_OK 表示成功，否则返回公共错误码。
+ */
 unified_error_t rtos_endpoint_heartbeat_consume(
     rtos_endpoint_heartbeat_table_t *table,
     const uint8_t source_cid[ANYMSG_CID_LENGTH],
@@ -102,7 +142,7 @@ unified_error_t rtos_endpoint_heartbeat_consume(
     uint32_t now_ms,
     uint32_t frame_local_time)
 {
-    rtos_endpoint_heartbeat_entry_t *entry; /**< Entry being updated. */
+    rtos_endpoint_heartbeat_entry_t *entry; /**< 当前更新的记录。 */
 
     if ((table == 0) || (source_cid == 0) || (destination_cid == 0)) {
         return UNIFIED_ERR_NULL;
@@ -134,11 +174,17 @@ unified_error_t rtos_endpoint_heartbeat_consume(
     return UNIFIED_OK;
 }
 
+/**
+ * @brief 读取端心跳表快照。
+ *
+ * @param table 端心跳表上下文。
+ * @param out_snapshot 输出心跳表快照。
+ */
 void rtos_endpoint_heartbeat_get_snapshot(
     const rtos_endpoint_heartbeat_table_t *table,
     rtos_endpoint_heartbeat_snapshot_t *out_snapshot)
 {
-    uint32_t i; /**< Entry scan index. */
+    uint32_t i; /**< 记录扫描下标。 */
 
     if (out_snapshot == 0) {
         return;

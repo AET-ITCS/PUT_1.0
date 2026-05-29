@@ -1,6 +1,6 @@
 /**
  * @file rtos_priority_queue.h
- * @brief rtos_firmware P1 priority queue interface.
+ * @brief rtos_firmware P1 优先级队列接口。
  * @author Yukikaze
  */
 #ifndef RTOS_PRIORITY_QUEUE_H
@@ -18,37 +18,37 @@ extern "C" {
 #endif
 
 /**
- * @brief P1 local priority queue item.
+ * @brief P1 本地优先级队列项。
  */
 typedef struct {
-    uint32_t frame_id;          /**< Trusted Frame Pool block reference. */
-    put_shm_interface_t source_interface; /**< Original RX interface. */
-    put_shm_interface_t target_interface; /**< Resolved TX interface. */
-    uint8_t source_cid[ANYMSG_CID_LENGTH]; /**< anyMSG source CID. */
-    uint8_t destination_cid[ANYMSG_CID_LENGTH]; /**< anyMSG destination CID. */
-    uint8_t type;              /**< anyMSG type. */
-    uint8_t priority;          /**< Scheduler priority, 0 is highest. */
-    uint8_t ttl;               /**< P1 TTL in milliseconds, 0 disables TTL checks. */
-    uint8_t retry_count;       /**< TX retry count accumulated by scheduler. */
-    uint32_t epoch;            /**< Linux epoch seen in the route input. */
-    uint32_t flags;            /**< Route input flags, carried through to sinks. */
-    uint32_t receive_time_ms;  /**< Time when the route input became visible to P1. */
-    uint32_t enqueue_time_ms;  /**< Time when the item entered the local queue. */
-    uint32_t route_epoch_seen; /**< Active route epoch recorded at enqueue. */
-    uint32_t frame_local_time; /**< anyMSG local_time snapshot for heartbeat/tests. */
+    uint32_t frame_id;          /**< 可信 Frame Pool block 引用。 */
+    put_shm_interface_t source_interface; /**< 原始 RX 接口。 */
+    put_shm_interface_t target_interface; /**< 已解析出的 TX 接口。 */
+    uint8_t source_cid[ANYMSG_CID_LENGTH]; /**< anyMSG 源 CID。 */
+    uint8_t destination_cid[ANYMSG_CID_LENGTH]; /**< anyMSG 目的 CID。 */
+    uint8_t type;              /**< anyMSG type。 */
+    uint8_t priority;          /**< 调度优先级，0 为最高。 */
+    uint8_t ttl;               /**< P1 TTL 毫秒值，0 表示禁用过期检查。 */
+    uint8_t retry_count;       /**< 调度过程中累计的 TX 重试次数。 */
+    uint32_t epoch;            /**< 路由输入携带的 Linux epoch。 */
+    uint32_t flags;            /**< 透传给 sink 的路由输入标志。 */
+    uint32_t receive_time_ms;  /**< 路由输入对 P1 可见的时间。 */
+    uint32_t enqueue_time_ms;  /**< 队列项进入本地队列的时间。 */
+    uint32_t route_epoch_seen; /**< 入队时记录的 active route epoch。 */
+    uint32_t frame_local_time; /**< 用于心跳/测试的 anyMSG local_time 快照。 */
 } rtos_priority_queue_item_t;
 
 /**
- * @brief Queue depth snapshot by priority.
+ * @brief 按优先级统计的队列深度快照。
  */
 typedef struct {
-    uint32_t depth[RTOS_FIRMWARE_PRIORITY_COUNT]; /**< Per-priority item count. */
-    uint32_t total_depth;                         /**< Total item count. */
-    uint32_t capacity;                            /**< Fixed queue capacity. */
+    uint32_t depth[RTOS_FIRMWARE_PRIORITY_COUNT]; /**< 各优先级队列项数量。 */
+    uint32_t total_depth;                         /**< 队列项总数。 */
+    uint32_t capacity;                            /**< 固定队列容量。 */
 } rtos_priority_queue_depth_t;
 
 /**
- * @brief Fixed-capacity P1 priority queue.
+ * @brief 固定容量 P1 优先级队列。
  */
 typedef struct {
     rtos_priority_queue_item_t items[RTOS_FIRMWARE_PRIORITY_QUEUE_CAPACITY];
@@ -58,39 +58,18 @@ typedef struct {
     uint32_t count;
 } rtos_priority_queue_t;
 
-/**
- * @brief Initialize a fixed-capacity priority queue with default quotas.
- */
 void rtos_priority_queue_init(rtos_priority_queue_t *queue);
 
-/**
- * @brief Return true when a priority value is accepted by P1.
- */
 bool rtos_priority_queue_priority_is_valid(uint8_t priority);
 
-/**
- * @brief Enqueue an item, evicting the oldest same-or-lower priority item if needed.
- *
- * @param queue Queue context.
- * @param item New item.
- * @param evicted_item Optional output for an item evicted to make room.
- * @param out_evicted Optional flag set to true when evicted_item is valid.
- * @return UNIFIED_OK on enqueue, UNIFIED_ERR_IPC_QUEUE_FULL when no item can be evicted.
- */
 unified_error_t rtos_priority_queue_enqueue(rtos_priority_queue_t *queue,
                                             const rtos_priority_queue_item_t *item,
                                             rtos_priority_queue_item_t *evicted_item,
                                             bool *out_evicted);
 
-/**
- * @brief Dequeue one item according to strict priority plus quota scheduling.
- */
 unified_error_t rtos_priority_queue_dequeue(rtos_priority_queue_t *queue,
                                             rtos_priority_queue_item_t *out_item);
 
-/**
- * @brief Read queue depth counters.
- */
 void rtos_priority_queue_get_depth(const rtos_priority_queue_t *queue,
                                    rtos_priority_queue_depth_t *out_depth);
 

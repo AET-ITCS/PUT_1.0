@@ -1,6 +1,6 @@
 /**
  * @file rtos_tasks.h
- * @brief P1 task entry placeholder API.
+ * @brief P1 task 入口占位接口。
  * @author Yukikaze
  */
 #ifndef RTOS_TASKS_H

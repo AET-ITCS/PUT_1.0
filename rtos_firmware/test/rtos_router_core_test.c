@@ -1,6 +1,6 @@
 /**
  * @file rtos_router_core_test.c
- * @brief P1 router core host tests.
+ * @brief P1 路由核心主机端测试。
  * @author Yukikaze
  */
 #include "rtos_router.h"
@@ -18,24 +18,27 @@
     } while (0)
 
 /**
- * @brief Mock sink context.
+ * @brief 模拟 sink 上下文。
  */
 typedef struct {
-    uint32_t now_ms;                       /**< Time source value. */
-    uint32_t tx_count;                     /**< TX sink call count. */
-    uint32_t reclaim_count;                /**< Reclaim sink call count. */
-    uint32_t tx_failures_before_success;   /**< Queue-full failures before success. */
-    bool tx_always_full;                   /**< Force all TX attempts to queue full. */
-    rtos_route_output_t tx_outputs[128];   /**< Captured TX outputs. */
-    rtos_route_output_t reclaim_outputs[128]; /**< Captured reclaim outputs. */
+    uint32_t now_ms;                       /**< 时间源当前值。 */
+    uint32_t tx_count;                     /**< TX sink 调用次数。 */
+    uint32_t reclaim_count;                /**< reclaim sink 调用次数。 */
+    uint32_t tx_failures_before_success;   /**< 成功前模拟队列满的次数。 */
+    bool tx_always_full;                   /**< 强制所有 TX 尝试返回队列满。 */
+    rtos_route_output_t tx_outputs[128];   /**< 捕获到的 TX 输出。 */
+    rtos_route_output_t reclaim_outputs[128]; /**< 捕获到的 reclaim 输出。 */
 } mock_context_t;
 
 /**
- * @brief Mock time source.
+ * @brief 模拟时间源。
+ *
+ * @param user_context 模拟上下文。
+ * @return 当前模拟时间。
  */
 static uint32_t mock_time_source(void *user_context)
 {
-    mock_context_t *context; /**< Mock context. */
+    mock_context_t *context; /**< 模拟上下文。 */
 
     context = (mock_context_t *)user_context;
     if (context == 0) {
@@ -46,12 +49,16 @@ static uint32_t mock_time_source(void *user_context)
 }
 
 /**
- * @brief Mock TX sink.
+ * @brief 模拟 TX sink。
+ *
+ * @param output 路由输出。
+ * @param user_context 模拟上下文。
+ * @return UNIFIED_OK 表示成功，否则返回公共错误码。
  */
 static unified_error_t mock_tx_sink(const rtos_route_output_t *output,
                                     void *user_context)
 {
-    mock_context_t *context; /**< Mock context. */
+    mock_context_t *context; /**< 模拟上下文。 */
 
     context = (mock_context_t *)user_context;
     if ((context == 0) || (output == 0)) {
@@ -76,12 +83,16 @@ static unified_error_t mock_tx_sink(const rtos_route_output_t *output,
 }
 
 /**
- * @brief Mock reclaim sink.
+ * @brief 模拟 reclaim sink。
+ *
+ * @param output 路由输出。
+ * @param user_context 模拟上下文。
+ * @return UNIFIED_OK 表示成功，否则返回公共错误码。
  */
 static unified_error_t mock_reclaim_sink(const rtos_route_output_t *output,
                                          void *user_context)
 {
-    mock_context_t *context; /**< Mock context. */
+    mock_context_t *context; /**< 模拟上下文。 */
 
     context = (mock_context_t *)user_context;
     if ((context == 0) || (output == 0)) {
@@ -97,11 +108,14 @@ static unified_error_t mock_reclaim_sink(const rtos_route_output_t *output,
 }
 
 /**
- * @brief Initialize router and mock context.
+ * @brief 初始化路由器和模拟上下文。
+ *
+ * @param router 路由上下文。
+ * @param context 模拟上下文。
  */
 static void init_router(rtos_router_context_t *router, mock_context_t *context)
 {
-    rtos_router_sinks_t sinks; /**< Mock sink callbacks. */
+    rtos_router_sinks_t sinks; /**< 模拟 sink 回调集合。 */
 
     (void)memset(context, 0, sizeof(*context));
     (void)memset(&sinks, 0, sizeof(sinks));
@@ -113,14 +127,20 @@ static void init_router(rtos_router_context_t *router, mock_context_t *context)
 }
 
 /**
- * @brief Build a valid route input.
+ * @brief 构造一个合法路由输入。
+ *
+ * @param frame_id 帧 ID。
+ * @param destination_first_byte 目的 CID 首字节。
+ * @param type anyMSG type。
+ * @param priority 优先级。
+ * @return 构造完成的路由输入。
  */
 static rtos_route_input_t make_input(uint32_t frame_id,
                                      uint8_t destination_first_byte,
                                      uint8_t type,
                                      uint8_t priority)
 {
-    rtos_route_input_t input; /**< Route input under construction. */
+    rtos_route_input_t input; /**< 正在构造的路由输入。 */
 
     (void)memset(&input, 0, sizeof(input));
     input.frame_id = frame_id;
@@ -138,7 +158,9 @@ static rtos_route_input_t make_input(uint32_t frame_id,
 }
 
 /**
- * @brief Verify all fixed CID segments route to the expected interface.
+ * @brief 验证所有固定 CID 段能路由到预期接口。
+ *
+ * @return 0 表示测试通过，非 0 表示失败。
  */
 static int test_cid_routes(void)
 {
@@ -158,10 +180,10 @@ static int test_cid_routes(void)
         PUT_SHM_INTERFACE_4G,
         PUT_SHM_INTERFACE_RS485,
     };
-    rtos_router_context_t router;   /**< Router under test. */
-    mock_context_t context;         /**< Mock sink context. */
-    rtos_route_input_t input;       /**< Route input. */
-    uint32_t i;                     /**< Loop index. */
+    rtos_router_context_t router;   /**< 被测路由上下文。 */
+    mock_context_t context;         /**< 模拟 sink 上下文。 */
+    rtos_route_input_t input;       /**< 路由输入。 */
+    uint32_t i;                     /**< 循环下标。 */
 
     for (i = 0u; i < PUT_SHM_INTERFACE_COUNT; ++i) {
         init_router(&router, &context);
@@ -177,13 +199,15 @@ static int test_cid_routes(void)
 }
 
 /**
- * @brief Verify reserved CID ranges do not enter TX.
+ * @brief 验证保留 CID 段不会进入 TX。
+ *
+ * @return 0 表示测试通过，非 0 表示失败。
  */
 static int test_no_route_reclaim(void)
 {
-    rtos_router_context_t router; /**< Router under test. */
-    mock_context_t context;       /**< Mock sink context. */
-    rtos_route_input_t input;     /**< Route input. */
+    rtos_router_context_t router; /**< 被测路由上下文。 */
+    mock_context_t context;       /**< 模拟 sink 上下文。 */
+    rtos_route_input_t input;     /**< 路由输入。 */
 
     init_router(&router, &context);
     input = make_input(1u, ANYMSG_CID_RESERVED_LOW_MIN, ANYMSG_TYPE_RAW_CAN, 2u);
@@ -202,14 +226,16 @@ static int test_no_route_reclaim(void)
 }
 
 /**
- * @brief Verify invalid header/type/priority/trust paths reclaim as invalid frame.
+ * @brief 验证非法 header/type/priority/trust 路径按非法帧回收。
+ *
+ * @return 0 表示测试通过，非 0 表示失败。
  */
 static int test_invalid_inputs(void)
 {
-    rtos_router_context_t router;          /**< Router under test. */
-    mock_context_t context;                /**< Mock sink context. */
-    rtos_route_input_t input;              /**< Route input. */
-    rtos_router_statistics_t statistics;   /**< Router statistics. */
+    rtos_router_context_t router;          /**< 被测路由上下文。 */
+    mock_context_t context;                /**< 模拟 sink 上下文。 */
+    rtos_route_input_t input;              /**< 路由输入。 */
+    rtos_router_statistics_t statistics;   /**< 路由统计。 */
 
     init_router(&router, &context);
 
@@ -248,13 +274,15 @@ static int test_invalid_inputs(void)
 }
 
 /**
- * @brief Verify TTL and epoch checks.
+ * @brief 验证 TTL 和 epoch 检查。
+ *
+ * @return 0 表示测试通过，非 0 表示失败。
  */
 static int test_ttl_and_epoch(void)
 {
-    rtos_router_context_t router; /**< Router under test. */
-    mock_context_t context;       /**< Mock sink context. */
-    rtos_route_input_t input;     /**< Route input. */
+    rtos_router_context_t router; /**< 被测路由上下文。 */
+    mock_context_t context;       /**< 模拟 sink 上下文。 */
+    rtos_route_input_t input;     /**< 路由输入。 */
 
     init_router(&router, &context);
     context.now_ms = 100u;
@@ -292,14 +320,16 @@ static int test_ttl_and_epoch(void)
 }
 
 /**
- * @brief Verify heartbeat consume and gateway CID behavior.
+ * @brief 验证心跳消费和 gateway CID 行为。
+ *
+ * @return 0 表示测试通过，非 0 表示失败。
  */
 static int test_heartbeat_consume(void)
 {
-    rtos_router_context_t router;                      /**< Router under test. */
-    mock_context_t context;                            /**< Mock sink context. */
-    rtos_route_input_t input;                          /**< Route input. */
-    rtos_endpoint_heartbeat_snapshot_t heartbeat;      /**< Heartbeat snapshot. */
+    rtos_router_context_t router;                      /**< 被测路由上下文。 */
+    mock_context_t context;                            /**< 模拟 sink 上下文。 */
+    rtos_route_input_t input;                          /**< 路由输入。 */
+    rtos_endpoint_heartbeat_snapshot_t heartbeat;      /**< 心跳快照。 */
     uint8_t gateway_cid[ANYMSG_CID_LENGTH] = {0x01u, 0x02u, 0x03u, 0x04u};
 
     init_router(&router, &context);
@@ -333,14 +363,16 @@ static int test_heartbeat_consume(void)
 }
 
 /**
- * @brief Verify TX queue-full retry policy and final reclaim.
+ * @brief 验证 TX 队列满重试策略和最终 reclaim。
+ *
+ * @return 0 表示测试通过，非 0 表示失败。
  */
 static int test_tx_congestion(void)
 {
-    rtos_router_context_t router;        /**< Router under test. */
-    mock_context_t context;              /**< Mock sink context. */
-    rtos_route_input_t input;            /**< Route input. */
-    rtos_router_statistics_t statistics; /**< Router statistics. */
+    rtos_router_context_t router;        /**< 被测路由上下文。 */
+    mock_context_t context;              /**< 模拟 sink 上下文。 */
+    rtos_route_input_t input;            /**< 路由输入。 */
+    rtos_router_statistics_t statistics; /**< 路由统计。 */
 
     init_router(&router, &context);
     context.tx_failures_before_success = 2u;
@@ -377,14 +409,16 @@ static int test_tx_congestion(void)
 }
 
 /**
- * @brief Verify priority ordering through the router scheduler.
+ * @brief 验证路由调度器的 priority 顺序。
+ *
+ * @return 0 表示测试通过，非 0 表示失败。
  */
 static int test_router_priority_order(void)
 {
-    rtos_router_context_t router; /**< Router under test. */
-    mock_context_t context;       /**< Mock sink context. */
-    rtos_route_input_t input;     /**< Route input. */
-    uint32_t i;                   /**< Loop index. */
+    rtos_router_context_t router; /**< 被测路由上下文。 */
+    mock_context_t context;       /**< 模拟 sink 上下文。 */
+    rtos_route_input_t input;     /**< 路由输入。 */
+    uint32_t i;                   /**< 循环下标。 */
 
     init_router(&router, &context);
     for (i = 0u; i < 17u; ++i) {
@@ -407,6 +441,11 @@ static int test_router_priority_order(void)
     return 0;
 }
 
+/**
+ * @brief P1 路由核心主机端测试入口。
+ *
+ * @return 0 表示全部测试通过，非 0 表示失败。
+ */
 int main(void)
 {
     CHECK(test_cid_routes() == 0);

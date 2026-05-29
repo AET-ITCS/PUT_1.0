@@ -1,6 +1,6 @@
 /**
  * @file rtos_router_core.c
- * @brief P1 route core with mockable TX and reclaim sinks.
+ * @brief 带可替换 TX 和 reclaim sink 的 P1 路由核心实现。
  * @author Yukikaze
  */
 #include "rtos_router.h"
@@ -8,7 +8,7 @@
 #include <string.h>
 
 /**
- * @brief TX retry limits by priority.
+ * @brief 各优先级 TX 重试上限。
  */
 static const uint8_t k_retry_limit[RTOS_FIRMWARE_PRIORITY_COUNT] = {
     3u,
@@ -18,7 +18,10 @@ static const uint8_t k_retry_limit[RTOS_FIRMWARE_PRIORITY_COUNT] = {
 };
 
 /**
- * @brief Default monotonic time source for host tests that do not inject time.
+ * @brief 未注入时间源时使用的默认单调时间源。
+ *
+ * @param user_context 用户上下文，当前未使用。
+ * @return 默认时间 0。
  */
 static uint32_t default_time_source(void *user_context)
 {
@@ -27,7 +30,10 @@ static uint32_t default_time_source(void *user_context)
 }
 
 /**
- * @brief Read current router time.
+ * @brief 读取当前路由时间。
+ *
+ * @param router 路由上下文。
+ * @return 当前时间，单位毫秒。
  */
 static uint32_t router_now(const rtos_router_context_t *router)
 {
@@ -39,7 +45,11 @@ static uint32_t router_now(const rtos_router_context_t *router)
 }
 
 /**
- * @brief Copy CID fields from a route input.
+ * @brief 复制 route input 中的 CID 字段。
+ *
+ * @param output 路由输出。
+ * @param source_cid 源 CID。
+ * @param destination_cid 目的 CID。
  */
 static void copy_input_cids(rtos_route_output_t *output,
                             const uint8_t source_cid[ANYMSG_CID_LENGTH],
@@ -50,7 +60,10 @@ static void copy_input_cids(rtos_route_output_t *output,
 }
 
 /**
- * @brief Record a reclaim drop reason.
+ * @brief 记录 reclaim drop reason 统计。
+ *
+ * @param router 路由上下文。
+ * @param reason reclaim 原因。
  */
 static void record_reclaim_stat(rtos_router_context_t *router,
                                 put_shm_reclaim_reason_t reason)
@@ -67,7 +80,11 @@ static void record_reclaim_stat(rtos_router_context_t *router,
 }
 
 /**
- * @brief Emit reclaim output through the optional mock sink.
+ * @brief 通过可选 mock sink 输出 reclaim 结果。
+ *
+ * @param router 路由上下文。
+ * @param output reclaim 输出。
+ * @return UNIFIED_OK 表示成功，否则返回公共错误码。
  */
 static unified_error_t emit_reclaim(rtos_router_context_t *router,
                                     const rtos_route_output_t *output)
@@ -85,14 +102,19 @@ static unified_error_t emit_reclaim(rtos_router_context_t *router,
 }
 
 /**
- * @brief Build and emit reclaim output from a route input.
+ * @brief 根据 route input 构造并输出 reclaim 结果。
+ *
+ * @param router 路由上下文。
+ * @param input 路由输入。
+ * @param reason reclaim 原因。
+ * @return UNIFIED_OK 表示成功，否则返回公共错误码。
  */
 static unified_error_t reclaim_input(rtos_router_context_t *router,
                                      const rtos_route_input_t *input,
                                      put_shm_reclaim_reason_t reason)
 {
-    rtos_route_output_t output; /**< Reclaim output. */
-    uint32_t now_ms;            /**< Current time. */
+    rtos_route_output_t output; /**< reclaim 输出。 */
+    uint32_t now_ms;            /**< 当前时间。 */
 
     if ((router == 0) || (input == 0)) {
         return UNIFIED_ERR_NULL;
@@ -116,16 +138,22 @@ static unified_error_t reclaim_input(rtos_router_context_t *router,
 }
 
 /**
- * @brief Build and emit reclaim output from a queue item.
+ * @brief 根据队列项构造并输出 reclaim 结果。
+ *
+ * @param router 路由上下文。
+ * @param item 队列项。
+ * @param reason reclaim 原因。
+ * @param out_output 输出 reclaim 结果，可为 NULL。
+ * @return UNIFIED_OK 表示成功，否则返回公共错误码。
  */
 static unified_error_t reclaim_item(rtos_router_context_t *router,
                                     const rtos_priority_queue_item_t *item,
                                     put_shm_reclaim_reason_t reason,
                                     rtos_route_output_t *out_output)
 {
-    rtos_route_output_t output; /**< Reclaim output. */
-    uint32_t now_ms;            /**< Current time. */
-    unified_error_t result;     /**< Sink result. */
+    rtos_route_output_t output; /**< reclaim 输出。 */
+    uint32_t now_ms;            /**< 当前时间。 */
+    unified_error_t result;     /**< sink 回调返回结果。 */
 
     if ((router == 0) || (item == 0)) {
         return UNIFIED_ERR_NULL;
@@ -155,14 +183,19 @@ static unified_error_t reclaim_item(rtos_router_context_t *router,
 }
 
 /**
- * @brief Fill a queue item from route input and resolved target.
+ * @brief 根据 route input 和已解析目标填充队列项。
+ *
+ * @param router 路由上下文。
+ * @param input 路由输入。
+ * @param target_interface 已解析的目标接口。
+ * @param out_item 输出队列项。
  */
 static void fill_queue_item(rtos_router_context_t *router,
                             const rtos_route_input_t *input,
                             put_shm_interface_t target_interface,
                             rtos_priority_queue_item_t *out_item)
 {
-    uint32_t now_ms; /**< Current time. */
+    uint32_t now_ms; /**< 当前时间。 */
 
     now_ms = router_now(router);
     (void)memset(out_item, 0, sizeof(*out_item));
@@ -183,7 +216,10 @@ static void fill_queue_item(rtos_router_context_t *router,
 }
 
 /**
- * @brief Record specific invalid-frame counters.
+ * @brief 记录具体非法帧统计。
+ *
+ * @param router 路由上下文。
+ * @param input 路由输入。
  */
 static void record_invalid_input(rtos_router_context_t *router,
                                  const rtos_route_input_t *input)
@@ -220,7 +256,10 @@ static void record_invalid_input(rtos_router_context_t *router,
 }
 
 /**
- * @brief Return true when input should be reclaimed as invalid anyMSG/trust.
+ * @brief 判断输入是否应按非法帧回收。
+ *
+ * @param input 路由输入。
+ * @return true 表示应作为 invalid frame 回收，false 表示可继续处理。
  */
 static bool input_is_invalid(const rtos_route_input_t *input)
 {
@@ -241,6 +280,14 @@ static bool input_is_invalid(const rtos_route_input_t *input)
     return false;
 }
 
+/**
+ * @brief 初始化 P1 路由上下文。
+ *
+ * @param router 路由上下文。
+ * @param sinks 可替换 sink 回调集合，可为 NULL。
+ * @param time_source 时间源回调，可为 NULL。
+ * @param time_context 时间源用户上下文。
+ */
 void rtos_router_init(rtos_router_context_t *router,
                       const rtos_router_sinks_t *sinks,
                       rtos_router_time_source_t time_source,
@@ -262,6 +309,12 @@ void rtos_router_init(rtos_router_context_t *router,
     router->current_linux_epoch = 1u;
 }
 
+/**
+ * @brief 设置 P1 epoch 检查接受的 Linux epoch。
+ *
+ * @param router 路由上下文。
+ * @param linux_epoch 当前 Linux epoch。
+ */
 void rtos_router_set_linux_epoch(rtos_router_context_t *router, uint32_t linux_epoch)
 {
     if (router != 0) {
@@ -269,16 +322,23 @@ void rtos_router_set_linux_epoch(rtos_router_context_t *router, uint32_t linux_e
     }
 }
 
+/**
+ * @brief 提交一条可信 route input 到 P1 路由核心。
+ *
+ * @param router 路由上下文。
+ * @param input 路由输入。
+ * @return UNIFIED_OK 表示提交完成，否则返回公共错误码。
+ */
 unified_error_t rtos_router_submit(rtos_router_context_t *router,
                                    const rtos_route_input_t *input)
 {
-    put_shm_interface_t target_interface;       /**< Route lookup result. */
-    rtos_priority_queue_item_t item;            /**< New queue item. */
-    rtos_priority_queue_item_t evicted_item;    /**< Queue item evicted for backpressure. */
-    bool evicted;                               /**< Whether enqueue evicted an old item. */
-    unified_error_t enqueue_result;             /**< Queue enqueue result. */
-    unified_error_t heartbeat_result;           /**< Heartbeat table update result. */
-    uint32_t now_ms;                            /**< Current time. */
+    put_shm_interface_t target_interface;       /**< 路由查询结果。 */
+    rtos_priority_queue_item_t item;            /**< 新队列项。 */
+    rtos_priority_queue_item_t evicted_item;    /**< 背压驱逐出的旧队列项。 */
+    bool evicted;                               /**< 本次入队是否驱逐旧队列项。 */
+    unified_error_t enqueue_result;             /**< 队列入队结果。 */
+    unified_error_t heartbeat_result;           /**< 心跳表更新结果。 */
+    uint32_t now_ms;                            /**< 当前时间。 */
 
     if ((router == 0) || (input == 0)) {
         return UNIFIED_ERR_NULL;
@@ -341,15 +401,22 @@ unified_error_t rtos_router_submit(rtos_router_context_t *router,
     return UNIFIED_OK;
 }
 
+/**
+ * @brief 调度一个已入队帧到 TX 或 reclaim。
+ *
+ * @param router 路由上下文。
+ * @param out_output 输出本次调度结果，可为 NULL。
+ * @return UNIFIED_OK 表示成功，否则返回公共错误码。
+ */
 unified_error_t rtos_router_schedule_once(rtos_router_context_t *router,
                                           rtos_route_output_t *out_output)
 {
-    rtos_priority_queue_item_t item;      /**< Dequeued queue item. */
-    put_shm_interface_t target_interface; /**< Target after possible epoch refresh. */
-    rtos_route_output_t output;           /**< TX output. */
-    unified_error_t result;               /**< Queue or sink result. */
-    uint32_t now_ms;                      /**< Current time. */
-    uint8_t retry_limit;                  /**< Retry limit for item priority. */
+    rtos_priority_queue_item_t item;      /**< 已出队队列项。 */
+    put_shm_interface_t target_interface; /**< 路由 epoch 刷新后的目标接口。 */
+    rtos_route_output_t output;           /**< TX 输出。 */
+    unified_error_t result;               /**< 队列或 sink 返回结果。 */
+    uint32_t now_ms;                      /**< 当前时间。 */
+    uint8_t retry_limit;                  /**< 当前优先级的重试上限。 */
 
     if (router == 0) {
         return UNIFIED_ERR_NULL;
@@ -416,10 +483,17 @@ unified_error_t rtos_router_schedule_once(rtos_router_context_t *router,
     }
 }
 
+/**
+ * @brief 按 budget 调度本地队列中的多个帧。
+ *
+ * @param router 路由上下文。
+ * @param budget 本轮最多调度数量。
+ * @return 本轮实际消费的队列项数量。
+ */
 uint32_t rtos_router_drain(rtos_router_context_t *router, uint32_t budget)
 {
-    uint32_t processed;       /**< Number of processed queue items. */
-    unified_error_t result;   /**< schedule_once result. */
+    uint32_t processed;       /**< 已处理队列项数量。 */
+    unified_error_t result;   /**< 单次调度返回结果。 */
 
     if (router == 0) {
         return 0u;
@@ -440,6 +514,12 @@ uint32_t rtos_router_drain(rtos_router_context_t *router, uint32_t budget)
     return processed;
 }
 
+/**
+ * @brief 读取路由表快照。
+ *
+ * @param router 路由上下文。
+ * @param out_table 输出路由表快照。
+ */
 void rtos_router_get_route_table(const rtos_router_context_t *router,
                                  rtos_route_table_snapshot_t *out_table)
 {
@@ -448,6 +528,13 @@ void rtos_router_get_route_table(const rtos_router_context_t *router,
     }
 }
 
+/**
+ * @brief 替换路由表快照。
+ *
+ * @param router 路由上下文。
+ * @param table 新路由表快照。
+ * @return UNIFIED_OK 表示成功，否则返回公共错误码。
+ */
 unified_error_t rtos_router_set_route_table(rtos_router_context_t *router,
                                             const rtos_route_table_snapshot_t *table)
 {
@@ -463,6 +550,12 @@ unified_error_t rtos_router_set_route_table(rtos_router_context_t *router,
     return UNIFIED_OK;
 }
 
+/**
+ * @brief 读取路由统计快照。
+ *
+ * @param router 路由上下文。
+ * @param out_statistics 输出统计快照。
+ */
 void rtos_router_get_statistics(const rtos_router_context_t *router,
                                 rtos_router_statistics_t *out_statistics)
 {
