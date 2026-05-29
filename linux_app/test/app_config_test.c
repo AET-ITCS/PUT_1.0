@@ -1,5 +1,6 @@
 #include "app_config.h"
 
+#include <arpa/inet.h>
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
@@ -40,6 +41,7 @@ static int test_default_ethernet_config(void)
     CHECK(config.wifi_port == 5001u);
     CHECK(strcmp(config.wifi_tx_peer_addr, "") == 0);
     CHECK(config.wifi_tx_peer_port == 5001u);
+    CHECK(config.wifi_tx_peer_count == 0u);
     CHECK(app_config_validate(&config) == UNIFIED_OK);
     return 0;
 }
@@ -83,6 +85,7 @@ static int test_load_ethernet_config(void)
     app_config_t config;
     char path[128];
     FILE *fp;
+    struct in_addr expected_addr;
 
     (void)snprintf(path, sizeof(path), "/tmp/put_app_config_test_%ld.ini", (long)getpid());
     fp = fopen(path, "w");
@@ -106,6 +109,8 @@ static int test_load_ethernet_config(void)
     fputs("port = 6001\n", fp);
     fputs("tx_peer_addr = \"127.0.0.11\"\n", fp);
     fputs("tx_peer_port = 7001\n", fp);
+    fputs("tx_peer = \"0x61000001,192.168.1.50,5001\"\n", fp);
+    fputs("tx_peer = \"0x62000002,127.0.0.1,0\"\n", fp);
     CHECK(fclose(fp) == 0);
 
     app_config_set_defaults(&config);
@@ -125,6 +130,17 @@ static int test_load_ethernet_config(void)
     CHECK(config.wifi_port == 6001u);
     CHECK(strcmp(config.wifi_tx_peer_addr, "127.0.0.11") == 0);
     CHECK(config.wifi_tx_peer_port == 7001u);
+    CHECK(config.wifi_tx_peer_count == 2u);
+    CHECK(config.wifi_tx_peers[0].destination_cid[0] == 0x61u);
+    CHECK(config.wifi_tx_peers[0].destination_cid[1] == 0x00u);
+    CHECK(config.wifi_tx_peers[0].destination_cid[2] == 0x00u);
+    CHECK(config.wifi_tx_peers[0].destination_cid[3] == 0x01u);
+    CHECK(config.wifi_tx_peers[0].port == 5001u);
+    CHECK(inet_pton(AF_INET, "192.168.1.50", &expected_addr) == 1);
+    CHECK(config.wifi_tx_peers[0].ipv4_addr_be == expected_addr.s_addr);
+    CHECK(config.wifi_tx_peers[1].destination_cid[0] == 0x62u);
+    CHECK(config.wifi_tx_peers[1].destination_cid[3] == 0x02u);
+    CHECK(config.wifi_tx_peers[1].port == 0u);
     (void)remove(path);
     return 0;
 }
@@ -228,6 +244,58 @@ static int test_reject_invalid_tx_peer(void)
     return 0;
 }
 
+static int expect_invalid_wifi_peer_line(const char *line)
+{
+    app_config_t config;
+    char path[128];
+    FILE *fp;
+
+    (void)snprintf(path,
+                   sizeof(path),
+                   "/tmp/put_app_config_bad_wifi_peer_%ld.ini",
+                   (long)getpid());
+    fp = fopen(path, "w");
+    CHECK(fp != NULL);
+    fputs("[wifi]\n", fp);
+    fputs(line, fp);
+    CHECK(fclose(fp) == 0);
+
+    app_config_set_defaults(&config);
+    CHECK(app_config_load_file(&config, path) == UNIFIED_ERR_INVALID_ARG);
+    (void)remove(path);
+    return 0;
+}
+
+static int test_reject_invalid_wifi_tx_peer(void)
+{
+    app_config_t config;
+    char path[128];
+    FILE *fp;
+
+    CHECK(expect_invalid_wifi_peer_line("tx_peer = \"0x20000001,127.0.0.1,5001\"\n") == 0);
+    CHECK(expect_invalid_wifi_peer_line("tx_peer = \"0x61000001,not-an-ip,5001\"\n") == 0);
+    CHECK(expect_invalid_wifi_peer_line("tx_peer = \"0x61000001,127.0.0.1,65536\"\n") == 0);
+
+    (void)snprintf(path,
+                   sizeof(path),
+                   "/tmp/put_app_config_many_wifi_peer_%ld.ini",
+                   (long)getpid());
+    fp = fopen(path, "w");
+    CHECK(fp != NULL);
+    fputs("[wifi]\n", fp);
+    for (uint32_t i = 0u; i <= WIFI_TX_PEER_MAX; ++i) {
+        fprintf(fp, "tx_peer = \"0x%02X0000%02X,127.0.0.1,5001\"\n",
+                (unsigned)(0x60u + (i & 0x0Fu)),
+                (unsigned)i);
+    }
+    CHECK(fclose(fp) == 0);
+
+    app_config_set_defaults(&config);
+    CHECK(app_config_load_file(&config, path) == UNIFIED_ERR_INVALID_ARG);
+    (void)remove(path);
+    return 0;
+}
+
 static int test_ignore_tx_peer_when_interface_disabled(void)
 {
     app_config_t config;
@@ -276,6 +344,9 @@ int main(void)
         return 1;
     }
     if (test_reject_invalid_tx_peer() != 0) {
+        return 1;
+    }
+    if (test_reject_invalid_wifi_tx_peer() != 0) {
         return 1;
     }
     if (test_ignore_tx_peer_when_interface_disabled() != 0) {

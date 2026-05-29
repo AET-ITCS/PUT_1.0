@@ -371,6 +371,99 @@ static int test_udp_tx_uses_default_peer(void)
     return 0;
 }
 
+static int test_udp_tx_uses_configured_destination_peer(void)
+{
+    wifi_tx_context_t tx_ctx;
+    wifi_tx_peer_t peer;
+    anymsg_buffer_t msg;
+    adapter_tx_packet_t packet;
+    uint8_t frame[PUT_SHM_FRAME_POOL_BLOCK_SIZE + 1u];
+    uint8_t received[PUT_SHM_FRAME_POOL_BLOCK_SIZE + 1u];
+    anymsg_header_t *header;
+    struct sockaddr_in bind_addr;
+    struct in_addr peer_addr;
+    struct timeval timeout;
+    socklen_t bind_len;
+    ssize_t received_len;
+    int recv_fd;
+    uint16_t port;
+    size_t frame_len;
+
+    recv_fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if ((recv_fd < 0) && udp_loopback_is_unavailable()) {
+        puts("wifi_adapter_test: SKIP udp tx configured peer (AF_INET unavailable)");
+        return 0;
+    }
+    CHECK(recv_fd >= 0);
+
+    timeout.tv_sec = 1;
+    timeout.tv_usec = 0;
+    CHECK(setsockopt(recv_fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) == 0);
+
+    memset(&bind_addr, 0, sizeof(bind_addr));
+    bind_addr.sin_family = AF_INET;
+    bind_addr.sin_port = 0;
+    CHECK(inet_pton(AF_INET, "127.0.0.1", &bind_addr.sin_addr) == 1);
+    CHECK(bind(recv_fd, (const struct sockaddr *)&bind_addr, sizeof(bind_addr)) == 0);
+    bind_len = (socklen_t)sizeof(bind_addr);
+    CHECK(getsockname(recv_fd, (struct sockaddr *)&bind_addr, &bind_len) == 0);
+    port = ntohs(bind_addr.sin_port);
+
+    memset(&peer, 0, sizeof(peer));
+    peer.destination_cid[0] = 0x7Fu;
+    peer.destination_cid[1] = 0x00u;
+    peer.destination_cid[2] = 0x00u;
+    peer.destination_cid[3] = 0x01u;
+    CHECK(inet_pton(AF_INET, "127.0.0.1", &peer_addr) == 1);
+    peer.ipv4_addr_be = peer_addr.s_addr;
+    peer.port = port;
+
+    frame_len = make_anymsg(frame, 4u, 0x60u, 0x7Fu);
+    header = (anymsg_header_t *)frame;
+    memcpy(header->destination_cid, peer.destination_cid, ANYMSG_CID_LENGTH);
+    msg.data = frame;
+    msg.len = frame_len;
+    memset(&packet, 0, sizeof(packet));
+    wifi_tx_context_init(&tx_ctx, port);
+    CHECK(wifi_tx_context_add_peer(&tx_ctx, &peer) == 0);
+    CHECK(wifi_adapter.encapsulate(&tx_ctx, &msg, &packet) == 0);
+    CHECK(wifi_adapter.send(&tx_ctx, &packet) == 0);
+
+    received_len = recvfrom(recv_fd, received, sizeof(received), 0, 0, 0);
+    CHECK(received_len == (ssize_t)frame_len);
+    CHECK(memcmp(received, frame, frame_len) == 0);
+
+    wifi_tx_context_destroy(&tx_ctx);
+    (void)close(recv_fd);
+    return 0;
+}
+
+static int test_udp_tx_fails_without_configured_peer(void)
+{
+    wifi_tx_context_t tx_ctx;
+    anymsg_buffer_t msg;
+    adapter_tx_packet_t packet;
+    uint8_t frame[PUT_SHM_FRAME_POOL_BLOCK_SIZE + 1u];
+    anymsg_header_t *header;
+    size_t frame_len;
+
+    frame_len = make_anymsg(frame, 4u, 0x60u, 0x7Fu);
+    header = (anymsg_header_t *)frame;
+    header->destination_cid[0] = 0x7Fu;
+    header->destination_cid[1] = 0u;
+    header->destination_cid[2] = 0u;
+    header->destination_cid[3] = 1u;
+
+    msg.data = frame;
+    msg.len = frame_len;
+    memset(&packet, 0, sizeof(packet));
+    wifi_tx_context_init(&tx_ctx, WIFI_ADAPTER_DEFAULT_PORT);
+    CHECK(wifi_adapter.encapsulate(&tx_ctx, &msg, &packet) == 0);
+    CHECK(wifi_adapter.send(&tx_ctx, &packet) != 0);
+    wifi_tx_context_destroy(&tx_ctx);
+    return 0;
+}
+
 int main(void)
 {
     if (test_valid_udp_anymsg_enters_wifi_rx_ring() != 0) {
@@ -398,6 +491,12 @@ int main(void)
         return 1;
     }
     if (test_udp_tx_uses_default_peer() != 0) {
+        return 1;
+    }
+    if (test_udp_tx_uses_configured_destination_peer() != 0) {
+        return 1;
+    }
+    if (test_udp_tx_fails_without_configured_peer() != 0) {
         return 1;
     }
 

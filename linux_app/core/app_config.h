@@ -3,9 +3,11 @@
 #define APP_CONFIG_H
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #include "error_code.h"
+#include "wifi_adapter.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -63,6 +65,8 @@ typedef struct {
     uint16_t wifi_port;
     char wifi_tx_peer_addr[APP_CONFIG_WIFI_BIND_ADDR_MAX];
     uint16_t wifi_tx_peer_port;
+    size_t wifi_tx_peer_count;
+    wifi_tx_peer_t wifi_tx_peers[WIFI_TX_PEER_MAX];
 
     bool bluetooth_enabled;
     uint8_t bluetooth_channel;
