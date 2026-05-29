@@ -5,7 +5,10 @@
  */
 #include "rtos_router.h"
 
+#include <stddef.h>
 #include <string.h>
+
+#include "crc16.h"
 
 /**
  * @brief 判断接口值是否属于 ABI 固定的六类接口。
@@ -39,6 +42,42 @@ void rtos_router_route_table_default(rtos_route_table_snapshot_t *out_table)
     out_table->cid_segment_targets[ANYMSG_CID_SEGMENT_BLUETOOTH] = PUT_SHM_INTERFACE_BLUETOOTH;
     out_table->cid_segment_targets[ANYMSG_CID_SEGMENT_4G] = PUT_SHM_INTERFACE_4G;
     out_table->cid_segment_targets[ANYMSG_CID_SEGMENT_RS485] = PUT_SHM_INTERFACE_RS485;
+}
+
+/**
+ * @brief 计算 route table 快照 CRC。
+ *
+ * @param table route table 快照。
+ * @return CRC-16/CCITT-FALSE，NULL 时返回 0。
+ */
+uint16_t rtos_router_route_table_calculate_crc(
+    const rtos_route_table_snapshot_t *table)
+{
+    if (table == 0) {
+        return 0u;
+    }
+
+    return unified_crc16_ccitt_false((const uint8_t *)table,
+                                     offsetof(rtos_route_table_snapshot_t, crc16));
+}
+
+/**
+ * @brief 检查 route table CRC。
+ *
+ * @param table route table 快照。
+ * @return true 表示 CRC 未启用或校验通过。
+ */
+bool rtos_router_route_table_crc_is_valid(const rtos_route_table_snapshot_t *table)
+{
+    if (table == 0) {
+        return false;
+    }
+
+    if (table->crc16 == 0u) {
+        return true;
+    }
+
+    return table->crc16 == rtos_router_route_table_calculate_crc(table);
 }
 
 /**

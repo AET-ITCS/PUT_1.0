@@ -87,6 +87,41 @@ extern "C" {
 #define RTOS_FIRMWARE_PENDING_RECLAIM_CAPACITY PUT_SHM_FRAME_POOL_BLOCK_COUNT
 #endif
 
+/** @brief P3 Linux heartbeat warning 阈值，单位毫秒。 */
+#ifndef RTOS_FIRMWARE_LINUX_HEARTBEAT_WARNING_MS
+#define RTOS_FIRMWARE_LINUX_HEARTBEAT_WARNING_MS 300u
+#endif
+
+/** @brief P3 Linux heartbeat suspected abnormal 阈值，单位毫秒。 */
+#ifndef RTOS_FIRMWARE_LINUX_HEARTBEAT_SUSPECT_MS
+#define RTOS_FIRMWARE_LINUX_HEARTBEAT_SUSPECT_MS 500u
+#endif
+
+/** @brief P3 Linux heartbeat 全局降级阈值，单位毫秒。 */
+#ifndef RTOS_FIRMWARE_LINUX_HEARTBEAT_DEGRADED_MS
+#define RTOS_FIRMWARE_LINUX_HEARTBEAT_DEGRADED_MS 1000u
+#endif
+
+/** @brief P3 endpoint heartbeat warning 阈值，单位毫秒。 */
+#ifndef RTOS_FIRMWARE_ENDPOINT_HEARTBEAT_WARN_MS
+#define RTOS_FIRMWARE_ENDPOINT_HEARTBEAT_WARN_MS 3000u
+#endif
+
+/** @brief P3 endpoint heartbeat offline 阈值，单位毫秒。 */
+#ifndef RTOS_FIRMWARE_ENDPOINT_HEARTBEAT_OFFLINE_MS
+#define RTOS_FIRMWARE_ENDPOINT_HEARTBEAT_OFFLINE_MS 5000u
+#endif
+
+/** @brief P3 ring/pending 长时间未恢复告警阈值，单位毫秒。 */
+#ifndef RTOS_FIRMWARE_MONITOR_STUCK_WARN_MS
+#define RTOS_FIRMWARE_MONITOR_STUCK_WARN_MS 300u
+#endif
+
+/** @brief P3 统计 latency 滑动窗口容量。 */
+#ifndef RTOS_FIRMWARE_LATENCY_WINDOW_CAPACITY
+#define RTOS_FIRMWARE_LATENCY_WINDOW_CAPACITY 32u
+#endif
+
 #ifdef __cplusplus
 }
 #endif

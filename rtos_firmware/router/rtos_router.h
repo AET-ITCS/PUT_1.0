@@ -108,6 +108,7 @@ typedef struct {
     uint32_t invalid_priority_count;
     uint32_t invalid_type_count;
     uint32_t invalid_header_count;
+    uint32_t route_table_crc_error_count;
 } rtos_router_statistics_t;
 
 /**
@@ -165,6 +166,12 @@ unified_error_t rtos_router_schedule_once(rtos_router_context_t *router,
 
 uint32_t rtos_router_drain(rtos_router_context_t *router, uint32_t budget);
 
+uint32_t rtos_router_reclaim_queued(rtos_router_context_t *router,
+                                    put_shm_reclaim_reason_t reason,
+                                    uint32_t budget);
+
+uint32_t rtos_router_get_queued_count(const rtos_router_context_t *router);
+
 void rtos_router_get_route_table(const rtos_router_context_t *router,
                                  rtos_route_table_snapshot_t *out_table);
 
@@ -172,6 +179,11 @@ unified_error_t rtos_router_set_route_table(rtos_router_context_t *router,
                                             const rtos_route_table_snapshot_t *table);
 
 void rtos_router_route_table_default(rtos_route_table_snapshot_t *out_table);
+
+uint16_t rtos_router_route_table_calculate_crc(
+    const rtos_route_table_snapshot_t *table);
+
+bool rtos_router_route_table_crc_is_valid(const rtos_route_table_snapshot_t *table);
 
 unified_error_t rtos_router_route_table_lookup(
     const rtos_route_table_snapshot_t *table,

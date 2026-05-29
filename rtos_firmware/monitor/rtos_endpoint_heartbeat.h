@@ -23,7 +23,20 @@ extern "C" {
 typedef enum {
     RTOS_ENDPOINT_HEARTBEAT_STATE_EMPTY = 0,
     RTOS_ENDPOINT_HEARTBEAT_STATE_ONLINE = 1,
+    RTOS_ENDPOINT_HEARTBEAT_STATE_WARN = 2,
+    RTOS_ENDPOINT_HEARTBEAT_STATE_OFFLINE = 3,
 } rtos_endpoint_heartbeat_state_t;
+
+/**
+ * @brief 端心跳统计。
+ */
+typedef struct {
+    uint32_t rx_count;           /**< 合法端心跳消费数量。 */
+    uint32_t invalid_count;      /**< 非法 source/destination 或未配置 gateway 数量。 */
+    uint32_t timeout_count;      /**< ONLINE/WARN 转超时状态次数。 */
+    uint32_t recover_count;      /**< WARN/OFFLINE 后由新心跳恢复次数。 */
+    uint32_t table_full_count;   /**< 端心跳表满次数。 */
+} rtos_endpoint_heartbeat_statistics_t;
 
 /**
  * @brief 单个端心跳记录。
@@ -35,6 +48,7 @@ typedef struct {
     uint32_t last_rtos_time_ms;                  /**< 心跳到达时的 RTOS 时间。 */
     uint32_t last_frame_local_time;              /**< anyMSG local_time 快照。 */
     uint32_t rx_count;                           /**< 已消费心跳数量。 */
+    uint32_t timeout_count;                      /**< 该端进入 WARN/OFFLINE 次数。 */
     rtos_endpoint_heartbeat_state_t state;       /**< P1 心跳状态。 */
 } rtos_endpoint_heartbeat_entry_t;
 
@@ -45,6 +59,7 @@ typedef struct {
     bool gateway_configured;                     /**< gateway CID 已配置。 */
     uint8_t gateway_cid[ANYMSG_CID_LENGTH];      /**< 当前配置的 gateway CID。 */
     uint32_t entry_count;                        /**< 已分配记录数量。 */
+    rtos_endpoint_heartbeat_statistics_t statistics; /**< 端心跳统计。 */
     rtos_endpoint_heartbeat_entry_t entries[RTOS_FIRMWARE_ENDPOINT_HEARTBEAT_CAPACITY];
 } rtos_endpoint_heartbeat_snapshot_t;
 
@@ -54,6 +69,7 @@ typedef struct {
 typedef struct {
     bool gateway_configured;
     uint8_t gateway_cid[ANYMSG_CID_LENGTH];
+    rtos_endpoint_heartbeat_statistics_t statistics;
     rtos_endpoint_heartbeat_entry_t entries[RTOS_FIRMWARE_ENDPOINT_HEARTBEAT_CAPACITY];
 } rtos_endpoint_heartbeat_table_t;
 
@@ -72,6 +88,16 @@ unified_error_t rtos_endpoint_heartbeat_consume(
     put_shm_interface_t source_interface,
     uint32_t now_ms,
     uint32_t frame_local_time);
+
+uint32_t rtos_endpoint_heartbeat_scan_timeouts(
+    rtos_endpoint_heartbeat_table_t *table,
+    uint32_t now_ms);
+
+void rtos_endpoint_heartbeat_clear_entries(rtos_endpoint_heartbeat_table_t *table);
+
+void rtos_endpoint_heartbeat_get_statistics(
+    const rtos_endpoint_heartbeat_table_t *table,
+    rtos_endpoint_heartbeat_statistics_t *out_statistics);
 
 void rtos_endpoint_heartbeat_get_snapshot(
     const rtos_endpoint_heartbeat_table_t *table,

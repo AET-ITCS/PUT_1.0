@@ -327,51 +327,51 @@ P2 验收标准：
 
 Heartbeat：
 
-- [ ] 周期性更新 RTOS heartbeat seq。
-- [ ] 周期性读取 Linux heartbeat seq。
-- [ ] Linux heartbeat 300 ms 未变化进入 warning。
-- [ ] Linux heartbeat 500 ms 未变化进入 suspected abnormal。
-- [ ] Linux heartbeat 1000 ms 未变化进入全局降级。
-- [ ] Linux heartbeat 从异常恢复时触发 Recovery。
-- [ ] 端到网关心跳表最大记录数默认 64。
-- [ ] endpoint heartbeat warn 默认 3000 ms，offline 默认 5000 ms。
-- [ ] endpoint entry 至少保存 `source_cid`、last RX interface/ring、last RTOS time、last frame local_time、state、rx_count、timeout_count。
-- [ ] gateway CID 和 gateway alias 由配置或控制区加载；未配置时不更新端心跳表。
+- [x] 周期性更新 RTOS heartbeat seq。
+- [x] 周期性读取 Linux heartbeat seq。
+- [x] Linux heartbeat 300 ms 未变化进入 warning。
+- [x] Linux heartbeat 500 ms 未变化进入 suspected abnormal。
+- [x] Linux heartbeat 1000 ms 未变化进入全局降级。
+- [x] Linux heartbeat 从异常恢复时触发 Recovery。
+- [x] 端到网关心跳表最大记录数默认 64。
+- [x] endpoint heartbeat warn 默认 3000 ms，offline 默认 5000 ms。
+- [x] endpoint entry 至少保存 `source_cid`、last RX interface/ring、last RTOS time、last frame local_time、state、rx_count、timeout_count。
+- [x] gateway CID 和 gateway alias 由配置或控制区加载；未配置时不更新端心跳表。
 
 Error Monitor：
 
-- [ ] 监控 RX Ring 长时间积压。
-- [ ] 监控 TX Ring 长时间满。
-- [ ] 监控 pending bit 长时间未清除。
-- [ ] 监控 Frame Pool 异常或疑似泄漏。
-- [ ] 监控 TTL 过期、epoch mismatch、route miss 大量增加。
-- [ ] 监控 Mailbox notify 失败。
-- [ ] 监控 Linux heartbeat 超时。
-- [ ] 监控端心跳超时、非法端心跳 source CID、端心跳表满。
-- [ ] 监控共享内存 magic/version、ring descriptor、cache sync 异常。
-- [ ] 监控 reclaim ring 积压或满、pending reclaim 长时间不下降。
-- [ ] 不监控 CAN BusOff、RS485 方向控制、SPI/UART 物理驱动错误，这些由 Linux 物理层负责。
+- [x] 监控 RX Ring 长时间积压。
+- [x] 监控 TX Ring 长时间满。
+- [x] 监控 pending bit 长时间未清除。
+- [x] 监控 Frame Pool 异常或疑似泄漏。
+- [x] 监控 TTL 过期、epoch mismatch、route miss 大量增加。
+- [x] 监控 Mailbox notify 失败。
+- [x] 监控 Linux heartbeat 超时。
+- [x] 监控端心跳超时、非法端心跳 source CID、端心跳表满。
+- [x] 监控共享内存 magic/version、ring descriptor、cache sync 异常。
+- [x] 监控 reclaim ring 积压或满、pending reclaim 长时间不下降。
+- [x] 不监控 CAN BusOff、RS485 方向控制、SPI/UART 物理驱动错误，这些由 Linux 物理层负责。
 
 Recovery：
 
-- [ ] Recovery 触发条件包括 Linux heartbeat 恢复、Linux ready 重新置位、linux_epoch 变化、共享内存 magic/version 重建、ring descriptor 变化、route table 更新、Mailbox 恢复、reclaim ring 从满状态恢复。
-- [ ] Recovery 时暂停 IPC Event Task 新帧投递。
-- [ ] Recovery 时暂停 Router Scheduler 和 TX Writer。
-- [ ] 冻结本地 priority 队列引用。
-- [ ] reclaim ring 可写时，按预算分批写 reclaim，reason 映射为 `PUT_SHM_RECLAIM_REASON_QUEUE_FULL`。
-- [ ] reclaim ring 满时进入 `RECLAIM_BLOCKED`，等待 Linux drain 后补写。
-- [ ] 标记旧 epoch 和 TTL 过期数据为待丢弃，不继续写 TX Ring。
-- [ ] 重新检查共享内存 magic/version。
-- [ ] 重新读取 linux_epoch。
-- [ ] 重新 attach 或刷新 RX/TX Ring 映射。
-- [ ] 重新加载 route table、gateway CID 和端心跳配置。
-- [ ] 清理本地 pending bitmap 快照和错误状态。
-- [ ] 端心跳表恢复后必须由新的 `type = 0x00` 心跳重新确认。
-- [ ] Recovery 完成后回到 `NORMAL`。
+- [x] Recovery 触发条件包括 Linux heartbeat 恢复、Linux ready 重新置位、linux_epoch 变化、共享内存 magic/version 重建、ring descriptor 变化、route table 更新、Mailbox 恢复、reclaim ring 从满状态恢复。
+- [x] Recovery 时暂停 IPC Event Task 新帧投递。
+- [x] Recovery 时暂停 Router Scheduler 和 TX Writer。
+- [x] 冻结本地 priority 队列引用。
+- [x] reclaim ring 可写时，按预算分批写 reclaim，reason 映射为 `PUT_SHM_RECLAIM_REASON_QUEUE_FULL`。
+- [x] reclaim ring 满时进入 `RECLAIM_BLOCKED`，等待 Linux drain 后补写。
+- [x] 标记旧 epoch 和 TTL 过期数据为待丢弃，不继续写 TX Ring。
+- [x] 重新检查共享内存 magic/version。
+- [x] 重新读取 linux_epoch。
+- [x] 重新 attach 或刷新 RX/TX Ring 映射。
+- [x] 重新加载 route table、gateway CID 和端心跳配置。
+- [x] 清理本地 pending bitmap 快照和错误状态。
+- [x] 端心跳表恢复后必须由新的 `type = 0x00` 心跳重新确认。
+- [x] Recovery 完成后回到 `NORMAL`。
 
 状态机：
 
-- [ ] 扩展小核全局状态机为：
+- [x] 扩展小核全局状态机为：
 
 ```text
 BOOT
@@ -387,20 +387,20 @@ RECLAIM_BLOCKED
 RECOVERY
 ```
 
-- [ ] `DEGRADED` 停止普通业务路由，保留错误统计和必要 Doorbell/event。
-- [ ] `DEGRADED_RECLAIM_FULL` 暂停所有会产生新 reclaim 的 RX drain。
-- [ ] `RECLAIM_BLOCKED` 只等待 Linux drain 后补写被冻结 reclaim descriptor。
-- [ ] `RECOVERY` 必须重新同步 epoch、Ring、bitmap、route table 和 gateway 配置，不继续旧状态。
+- [x] `DEGRADED` 停止普通业务路由，保留错误统计和必要 Doorbell/event。
+- [x] `DEGRADED_RECLAIM_FULL` 暂停所有会产生新 reclaim 的 RX drain。
+- [x] `RECLAIM_BLOCKED` 只等待 Linux drain 后补写被冻结 reclaim descriptor。
+- [x] `RECOVERY` 必须重新同步 epoch、Ring、bitmap、route table 和 gateway 配置，不继续旧状态。
 
 Statistics：
 
-- [ ] 维护 Doorbell RX/TX 次数、RX ring drain 次数、TX ring write 次数。
-- [ ] 维护 route success、route miss、drop reason、priority、interface 维度统计。
-- [ ] 维护 TTL drop、epoch drop、TX ring full、reclaim ring full、reclaim blocked、pending reclaim retry。
-- [ ] 维护 auth failed、integrity failed、replay drop、invalid descriptor、invalid descriptor no reclaim、invalid anyMSG。
-- [ ] 维护 Linux heartbeat timeout、endpoint heartbeat rx/invalid/timeout/recover/table full。
-- [ ] 维护小核内部 latency：RX dequeue 到 TX enqueue 的 max/count，priority 0/1 和 priority 2 预留 p95/p99 或滑动窗口摘要。
-- [ ] 高频统计先在小核本地累加，后续按周期同步到共享状态区。
+- [x] 维护 Doorbell RX/TX 次数、RX ring drain 次数、TX ring write 次数。
+- [x] 维护 route success、route miss、drop reason、priority、interface 维度统计。
+- [x] 维护 TTL drop、epoch drop、TX ring full、reclaim ring full、reclaim blocked、pending reclaim retry。
+- [x] 维护 auth failed、integrity failed、replay drop、invalid descriptor、invalid descriptor no reclaim、invalid anyMSG。
+- [x] 维护 Linux heartbeat timeout、endpoint heartbeat rx/invalid/timeout/recover/table full。
+- [x] 维护小核内部 latency：RX dequeue 到 TX enqueue 的 max/count，priority 0/1 和 priority 2 预留 p95/p99 或滑动窗口摘要。
+- [x] 高频统计先在小核本地累加，后续按周期同步到共享状态区。
 
 P3 验收标准：
 
@@ -466,7 +466,7 @@ P4 验收标准：
 新增测试落位：
 
 - [x] 新增正式路由核心测试放入 `rtos_firmware/test/`。
-- [ ] 新增 IPC 适配和闭环测试放入 `rtos_firmware/test/` 或跨库 host test 目录。
+- [x] 新增 IPC 适配和闭环测试放入 `rtos_firmware/test/` 或跨库 host test 目录。
 - [x] 不继续扩展 `freertos/router_core/test` 作为正式验收入口。
 - [x] 保留并持续运行 `rtos_firmware/test/rtos_shm_ipc_test.c`。
 - [x] 保留并持续运行 `linux_app/test/linux_shm_ipc_test.c`。
@@ -486,7 +486,7 @@ P1 测试：
 - [x] gateway CID 未配置时心跳不更新端在线表。
 - [x] 本地队列满时按优先级丢弃并写 mock reclaim。
 - [x] TX mock 拥塞时按 priority 策略重试或丢弃。
-- [ ] Recovery 清理本地队列引用并写 mock reclaim。
+- [x] Recovery 清理本地队列引用并写 mock reclaim。
 - [x] 统计计数与实际处理路径一致。
 
 P2 测试：
@@ -504,15 +504,15 @@ P2 测试：
 
 P3 测试：
 
-- [ ] Linux heartbeat warning / suspected abnormal / global degraded 转换。
-- [ ] Linux heartbeat 恢复触发 Recovery。
-- [ ] endpoint heartbeat ONLINE / WARN / OFFLINE 转换。
-- [ ] reclaim full 进入 `DEGRADED_RECLAIM_FULL`。
-- [ ] Linux drain reclaim 后进入 `RECLAIM_BLOCKED` 补写并恢复。
-- [ ] linux_epoch 变化触发 Recovery。
-- [ ] magic/version 变化触发 Recovery。
-- [ ] route table CRC 错误保持旧表并计数。
-- [ ] Recovery 后旧 epoch 本地引用不会写 TX Ring。
+- [x] Linux heartbeat warning / suspected abnormal / global degraded 转换。
+- [x] Linux heartbeat 恢复触发 Recovery。
+- [x] endpoint heartbeat ONLINE / WARN / OFFLINE 转换。
+- [x] reclaim full 进入 `DEGRADED_RECLAIM_FULL`。
+- [x] Linux drain reclaim 后进入 `RECLAIM_BLOCKED` 补写并恢复。
+- [x] linux_epoch 变化触发 Recovery。
+- [x] magic/version 变化触发 Recovery。
+- [x] route table CRC 错误保持旧表并计数。
+- [x] Recovery 后旧 epoch 本地引用不会写 TX Ring。
 
 P4 测试：
 

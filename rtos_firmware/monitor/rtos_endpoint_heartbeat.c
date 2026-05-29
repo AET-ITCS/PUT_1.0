@@ -25,6 +25,22 @@ static bool cid_equals(const uint8_t left[ANYMSG_CID_LENGTH],
 }
 
 /**
+ * @brief 判断 source CID 是否为可维护端设备地址。
+ *
+ * @param source_cid source CID。
+ * @return true 表示 source CID 位于 0x20..0xDF。
+ */
+static bool source_cid_is_valid(const uint8_t source_cid[ANYMSG_CID_LENGTH])
+{
+    if (source_cid == 0) {
+        return false;
+    }
+
+    return (source_cid[0] >= ANYMSG_CID_CAN_MIN) &&
+           (source_cid[0] <= ANYMSG_CID_RS485_MAX);
+}
+
+/**
  * @brief 按 source CID 查找心跳记录。
  *
  * @param table 端心跳表上下文。
@@ -149,10 +165,17 @@ unified_error_t rtos_endpoint_heartbeat_consume(
     }
 
     if (!table->gateway_configured) {
+        table->statistics.invalid_count = table->statistics.invalid_count + 1u;
         return UNIFIED_ERR_IPC_NOT_READY;
     }
 
+    if (!source_cid_is_valid(source_cid)) {
+        table->statistics.invalid_count = table->statistics.invalid_count + 1u;
+        return UNIFIED_ERR_INVALID_ARG;
+    }
+
     if (!cid_equals(table->gateway_cid, destination_cid)) {
+        table->statistics.invalid_count = table->statistics.invalid_count + 1u;
         return UNIFIED_ERR_INVALID_ARG;
     }
 
@@ -162,7 +185,13 @@ unified_error_t rtos_endpoint_heartbeat_consume(
     }
 
     if (entry == 0) {
+        table->statistics.table_full_count = table->statistics.table_full_count + 1u;
         return UNIFIED_ERR_IPC_QUEUE_FULL;
+    }
+
+    if ((entry->state == RTOS_ENDPOINT_HEARTBEAT_STATE_WARN) ||
+        (entry->state == RTOS_ENDPOINT_HEARTBEAT_STATE_OFFLINE)) {
+        table->statistics.recover_count = table->statistics.recover_count + 1u;
     }
 
     entry->last_rx_interface = source_interface;
@@ -170,8 +199,86 @@ unified_error_t rtos_endpoint_heartbeat_consume(
     entry->last_frame_local_time = frame_local_time;
     entry->rx_count = entry->rx_count + 1u;
     entry->state = RTOS_ENDPOINT_HEARTBEAT_STATE_ONLINE;
+    table->statistics.rx_count = table->statistics.rx_count + 1u;
 
     return UNIFIED_OK;
+}
+
+/**
+ * @brief 周期扫描端心跳超时状态。
+ *
+ * @param table 端心跳表上下文。
+ * @param now_ms 当前 RTOS 时间。
+ * @return 本次发生状态转换的 entry 数量。
+ */
+uint32_t rtos_endpoint_heartbeat_scan_timeouts(
+    rtos_endpoint_heartbeat_table_t *table,
+    uint32_t now_ms)
+{
+    uint32_t i;           /**< 记录扫描下标。 */
+    uint32_t transitions; /**< 本轮状态转换数。 */
+    uint32_t age_ms;      /**< 距上次心跳时间。 */
+
+    if (table == 0) {
+        return 0u;
+    }
+
+    transitions = 0u;
+    for (i = 0u; i < RTOS_FIRMWARE_ENDPOINT_HEARTBEAT_CAPACITY; ++i) {
+        if (!table->entries[i].in_use ||
+            (table->entries[i].state == RTOS_ENDPOINT_HEARTBEAT_STATE_EMPTY)) {
+            continue;
+        }
+
+        age_ms = now_ms - table->entries[i].last_rtos_time_ms;
+        if ((age_ms >= RTOS_FIRMWARE_ENDPOINT_HEARTBEAT_OFFLINE_MS) &&
+            (table->entries[i].state != RTOS_ENDPOINT_HEARTBEAT_STATE_OFFLINE)) {
+            table->entries[i].state = RTOS_ENDPOINT_HEARTBEAT_STATE_OFFLINE;
+            table->entries[i].timeout_count = table->entries[i].timeout_count + 1u;
+            table->statistics.timeout_count = table->statistics.timeout_count + 1u;
+            transitions = transitions + 1u;
+        } else if ((age_ms >= RTOS_FIRMWARE_ENDPOINT_HEARTBEAT_WARN_MS) &&
+                   (table->entries[i].state == RTOS_ENDPOINT_HEARTBEAT_STATE_ONLINE)) {
+            table->entries[i].state = RTOS_ENDPOINT_HEARTBEAT_STATE_WARN;
+            table->entries[i].timeout_count = table->entries[i].timeout_count + 1u;
+            table->statistics.timeout_count = table->statistics.timeout_count + 1u;
+            transitions = transitions + 1u;
+        }
+    }
+
+    return transitions;
+}
+
+/**
+ * @brief 清空端心跳 entry，保留 gateway 配置和累计统计。
+ *
+ * @param table 端心跳表上下文。
+ */
+void rtos_endpoint_heartbeat_clear_entries(rtos_endpoint_heartbeat_table_t *table)
+{
+    if (table != 0) {
+        (void)memset(table->entries, 0, sizeof(table->entries));
+    }
+}
+
+/**
+ * @brief 读取端心跳统计。
+ *
+ * @param table 端心跳表上下文。
+ * @param out_statistics 输出统计。
+ */
+void rtos_endpoint_heartbeat_get_statistics(
+    const rtos_endpoint_heartbeat_table_t *table,
+    rtos_endpoint_heartbeat_statistics_t *out_statistics)
+{
+    if (out_statistics == 0) {
+        return;
+    }
+
+    (void)memset(out_statistics, 0, sizeof(*out_statistics));
+    if (table != 0) {
+        *out_statistics = table->statistics;
+    }
 }
 
 /**
@@ -197,6 +304,7 @@ void rtos_endpoint_heartbeat_get_snapshot(
 
     out_snapshot->gateway_configured = table->gateway_configured;
     (void)memcpy(out_snapshot->gateway_cid, table->gateway_cid, ANYMSG_CID_LENGTH);
+    out_snapshot->statistics = table->statistics;
     for (i = 0u; i < RTOS_FIRMWARE_ENDPOINT_HEARTBEAT_CAPACITY; ++i) {
         out_snapshot->entries[i] = table->entries[i];
         if (table->entries[i].in_use) {

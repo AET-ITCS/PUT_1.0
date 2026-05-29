@@ -515,6 +515,61 @@ uint32_t rtos_router_drain(rtos_router_context_t *router, uint32_t budget)
 }
 
 /**
+ * @brief 按 Recovery/drop reason 回收本地调度队列中的帧。
+ *
+ * @param router 路由上下文。
+ * @param reason reclaim reason。
+ * @param budget 本轮最多回收数量。
+ * @return 本轮成功提交到 reclaim sink 的数量。
+ */
+uint32_t rtos_router_reclaim_queued(rtos_router_context_t *router,
+                                    put_shm_reclaim_reason_t reason,
+                                    uint32_t budget)
+{
+    uint32_t processed;                 /**< 已回收队列项数量。 */
+    rtos_priority_queue_item_t item;    /**< 已出队队列项。 */
+    unified_error_t result;             /**< 队列或 reclaim sink 结果。 */
+
+    if (router == 0) {
+        return 0u;
+    }
+
+    processed = 0u;
+    while (processed < budget) {
+        result = rtos_priority_queue_dequeue(&router->queue, &item);
+        if (result == UNIFIED_ERR_IPC_QUEUE_EMPTY) {
+            break;
+        }
+        if (result != UNIFIED_OK) {
+            break;
+        }
+
+        result = reclaim_item(router, &item, reason, 0);
+        if (result != UNIFIED_OK) {
+            break;
+        }
+        processed = processed + 1u;
+    }
+
+    return processed;
+}
+
+/**
+ * @brief 读取 router 本地队列深度。
+ *
+ * @param router 路由上下文。
+ * @return 本地队列项数量。
+ */
+uint32_t rtos_router_get_queued_count(const rtos_router_context_t *router)
+{
+    if (router == 0) {
+        return 0u;
+    }
+
+    return router->queue.count;
+}
+
+/**
  * @brief 读取路由表快照。
  *
  * @param router 路由上下文。
@@ -544,6 +599,12 @@ unified_error_t rtos_router_set_route_table(rtos_router_context_t *router,
 
     if (!table->valid) {
         return UNIFIED_ERR_INVALID_ARG;
+    }
+
+    if (!rtos_router_route_table_crc_is_valid(table)) {
+        router->statistics.route_table_crc_error_count =
+            router->statistics.route_table_crc_error_count + 1u;
+        return UNIFIED_ERR_CRC;
     }
 
     router->route_table = *table;

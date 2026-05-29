@@ -442,6 +442,40 @@ static int test_router_priority_order(void)
 }
 
 /**
+ * @brief 验证 route table CRC 错误时保留旧表。
+ *
+ * @return 0 表示测试通过。
+ */
+static int test_route_table_crc_rejects_bad_update(void)
+{
+    rtos_router_context_t router;       /**< 被测路由上下文。 */
+    mock_context_t context;             /**< 模拟 sink 上下文。 */
+    rtos_route_table_snapshot_t table;  /**< route table 快照。 */
+    rtos_route_table_snapshot_t saved;  /**< 原 route table 快照。 */
+    rtos_router_statistics_t statistics; /**< router 统计。 */
+
+    init_router(&router, &context);
+    rtos_router_get_route_table(&router, &saved);
+    table = saved;
+    table.active_route_epoch = table.active_route_epoch + 1u;
+    table.crc16 = 0x1234u;
+    CHECK(rtos_router_set_route_table(&router, &table) == UNIFIED_ERR_CRC);
+    rtos_router_get_route_table(&router, &table);
+    CHECK(table.active_route_epoch == saved.active_route_epoch);
+    rtos_router_get_statistics(&router, &statistics);
+    CHECK(statistics.route_table_crc_error_count == 1u);
+
+    table = saved;
+    table.active_route_epoch = table.active_route_epoch + 1u;
+    table.crc16 = rtos_router_route_table_calculate_crc(&table);
+    CHECK(rtos_router_set_route_table(&router, &table) == UNIFIED_OK);
+    rtos_router_get_route_table(&router, &saved);
+    CHECK(saved.active_route_epoch == table.active_route_epoch);
+
+    return 0;
+}
+
+/**
  * @brief P1 路由核心主机端测试入口。
  *
  * @return 0 表示全部测试通过，非 0 表示失败。
@@ -455,6 +489,7 @@ int main(void)
     CHECK(test_heartbeat_consume() == 0);
     CHECK(test_tx_congestion() == 0);
     CHECK(test_router_priority_order() == 0);
+    CHECK(test_route_table_crc_rejects_bad_update() == 0);
     CHECK(rtos_router_adapter_p1_boundary_check() == UNIFIED_OK);
 
     return 0;

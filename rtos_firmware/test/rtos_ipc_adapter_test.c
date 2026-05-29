@@ -804,6 +804,93 @@ static int test_route_epoch_refresh_before_tx(void)
 }
 
 /**
+ * @brief 验证全局降级状态阻止新的 RX drain。
+ *
+ * @return 0 表示通过。
+ */
+static int test_global_degraded_blocks_rx_drain(void)
+{
+    linux_shm_ipc_t linux_ipc;             /**< Linux IPC。 */
+    rtos_shm_ipc_t rtos_ipc;               /**< RTOS IPC。 */
+    rtos_tasks_context_t tasks;            /**< P3 task 上下文。 */
+    test_clock_t clock;                    /**< 测试时钟。 */
+    uint8_t source_cid[ANYMSG_CID_LENGTH]; /**< source CID。 */
+    uint8_t destination_cid[ANYMSG_CID_LENGTH]; /**< destination CID。 */
+    uint32_t frame_id;                     /**< frame_id。 */
+    uint32_t read_seq_before;              /**< 降级前 RX read_seq。 */
+
+    CHECK(setup_system(&linux_ipc, &rtos_ipc, &tasks, 0, &clock) == 0);
+    rtos_tasks_observe_linux_heartbeat(&tasks, 1u);
+    clock.now_ms = 1100u;
+    CHECK(rtos_heartbeat_task_run_once(&tasks) > 0u);
+    CHECK(rtos_tasks_get_state(&tasks) == RTOS_TASKS_STATE_DEGRADED);
+
+    make_cid(ANYMSG_CID_CAN_MIN, 1u, source_cid);
+    make_cid(ANYMSG_CID_RS485_MIN, 2u, destination_cid);
+    CHECK(publish_frame(&linux_ipc,
+                        PUT_SHM_INTERFACE_CAN,
+                        PUT_SHM_INTERFACE_RS485,
+                        source_cid,
+                        destination_cid,
+                        ANYMSG_TYPE_RAW_CAN,
+                        2u,
+                        0u,
+                        11u,
+                        1u,
+                        0u,
+                        &frame_id) == 0);
+    read_seq_before = g_region.rx_rings[PUT_SHM_INTERFACE_CAN].consumer.read_seq;
+    CHECK(rtos_ipc_event_task_run_once(&tasks, RTOS_IPC_EVENT_TRIGGER_PERIODIC) == 0u);
+    CHECK(g_region.rx_rings[PUT_SHM_INTERFACE_CAN].consumer.read_seq == read_seq_before);
+    return 0;
+}
+
+/**
+ * @brief 验证 linux_epoch 变化触发 Recovery。
+ *
+ * @return 0 表示通过。
+ */
+static int test_linux_epoch_change_triggers_recovery(void)
+{
+    linux_shm_ipc_t linux_ipc;          /**< Linux IPC。 */
+    rtos_shm_ipc_t rtos_ipc;            /**< RTOS IPC。 */
+    rtos_tasks_context_t tasks;         /**< P3 task 上下文。 */
+    test_clock_t clock;                 /**< 测试时钟。 */
+    rtos_recovery_snapshot_t recovery;  /**< recovery 快照。 */
+
+    CHECK(setup_system(&linux_ipc, &rtos_ipc, &tasks, 0, &clock) == 0);
+    g_region.header.linux_epoch = 12u;
+    CHECK(rtos_error_monitor_task_run_once(&tasks) > 0u);
+    CHECK(rtos_tasks_get_state(&tasks) == RTOS_TASKS_STATE_RECOVERY);
+    rtos_monitor_get_recovery_snapshot(&tasks.monitor, &recovery);
+    CHECK(recovery.recovery_pending);
+    CHECK((recovery.trigger_bits & RTOS_RECOVERY_TRIGGER_LINUX_EPOCH) != 0u);
+    return 0;
+}
+
+/**
+ * @brief 验证 magic/version 异常进入 DEGRADED。
+ *
+ * @return 0 表示通过。
+ */
+static int test_magic_version_error_degrades(void)
+{
+    linux_shm_ipc_t linux_ipc;          /**< Linux IPC。 */
+    rtos_shm_ipc_t rtos_ipc;            /**< RTOS IPC。 */
+    rtos_tasks_context_t tasks;         /**< P3 task 上下文。 */
+    test_clock_t clock;                 /**< 测试时钟。 */
+    rtos_error_state_snapshot_t error;  /**< 错误快照。 */
+
+    CHECK(setup_system(&linux_ipc, &rtos_ipc, &tasks, 0, &clock) == 0);
+    g_region.header.magic = 0u;
+    CHECK(rtos_error_monitor_task_run_once(&tasks) == 1u);
+    CHECK(rtos_tasks_get_state(&tasks) == RTOS_TASKS_STATE_DEGRADED);
+    rtos_monitor_get_error_state_snapshot(&tasks.monitor, &error);
+    CHECK((error.error_bits & RTOS_MONITOR_ERROR_SHM_FORMAT) != 0u);
+    return 0;
+}
+
+/**
  * @brief P2 host 闭环测试入口。
  *
  * @return 0 表示全部测试通过。
@@ -818,5 +905,8 @@ int main(void)
     CHECK(test_tx_ring_full_reclaims() == 0);
     CHECK(test_reclaim_full_blocks_and_recovers() == 0);
     CHECK(test_route_epoch_refresh_before_tx() == 0);
+    CHECK(test_global_degraded_blocks_rx_drain() == 0);
+    CHECK(test_linux_epoch_change_triggers_recovery() == 0);
+    CHECK(test_magic_version_error_degrades() == 0);
     return 0;
 }
