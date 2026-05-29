@@ -46,6 +46,11 @@ static uint16_t read_le16(const uint8_t bytes[2])
     return (uint16_t)((uint16_t)bytes[0] | ((uint16_t)bytes[1] << 8u));
 }
 
+static ssize_t can_default_write(int fd, const void *buf, size_t count)
+{
+    return write(fd, buf, count);
+}
+
 static uint64_t now_monotonic_ms(void)
 {
     struct timespec ts;
@@ -304,6 +309,9 @@ void can_tx_context_init(can_tx_context_t *ctx, uint32_t tx_can_id, bool extende
     ctx->tx_can_id = tx_can_id;
     ctx->extended_id = extended_id;
     ctx->socket_fd = -1;
+    ctx->write_fn = can_default_write;
+    ctx->last_tx_error_stage = 0;
+    ctx->last_tx_error = UNIFIED_OK;
 }
 
 void can_tx_context_set_socket(can_tx_context_t *ctx, int socket_fd)
@@ -313,6 +321,15 @@ void can_tx_context_set_socket(can_tx_context_t *ctx, int socket_fd)
     }
 
     ctx->socket_fd = socket_fd;
+}
+
+void can_tx_context_set_write_fn(can_tx_context_t *ctx, can_tx_write_fn_t write_fn)
+{
+    if (ctx == 0) {
+        return;
+    }
+
+    ctx->write_fn = (write_fn == 0) ? can_default_write : write_fn;
 }
 
 unified_error_t can_adapter_decode_anymsg(const uint8_t *input,
@@ -754,17 +771,64 @@ static int can_fragment_tx(void *ctx,
     return 0;
 }
 
-static int can_send(void *ctx, const adapter_tx_packet_t *packet)
+static void can_tx_context_clear_error(can_tx_context_t *ctx)
+{
+    if (ctx == 0) {
+        return;
+    }
+
+    ctx->last_tx_error_stage = 0;
+    ctx->last_tx_error = UNIFIED_OK;
+}
+
+static void record_can_tx_error(can_tx_context_t *tx_ctx,
+                                const char *stage,
+                                unified_error_t err)
+{
+    if (tx_ctx != 0) {
+        tx_ctx->last_tx_error_stage = stage;
+        tx_ctx->last_tx_error = err;
+    }
+
+    (void)pthread_mutex_lock(&g_can_state.lock);
+    record_error(&g_can_state.status, 0, stage, err);
+    (void)pthread_mutex_unlock(&g_can_state.lock);
+}
+
+static int can_get_tx_error(void *ctx, adapter_tx_error_t *out_error)
 {
     can_tx_context_t *tx_ctx;
-    int fd;
-    ssize_t sent;
 
-    if ((packet == 0) || (packet->data == 0) || (packet->len != sizeof(struct can_frame))) {
+    if ((ctx == 0) || (out_error == 0)) {
         return -1;
     }
 
     tx_ctx = (can_tx_context_t *)ctx;
+    if ((tx_ctx->last_tx_error_stage == 0) ||
+        (tx_ctx->last_tx_error_stage[0] == '\0')) {
+        return -1;
+    }
+
+    out_error->stage = tx_ctx->last_tx_error_stage;
+    out_error->err = tx_ctx->last_tx_error;
+    return 0;
+}
+
+static int can_send(void *ctx, const adapter_tx_packet_t *packet)
+{
+    can_tx_context_t *tx_ctx;
+    can_tx_write_fn_t write_fn;
+    int fd;
+    ssize_t sent;
+
+    tx_ctx = (can_tx_context_t *)ctx;
+    can_tx_context_clear_error(tx_ctx);
+
+    if ((packet == 0) || (packet->data == 0) || (packet->len != sizeof(struct can_frame))) {
+        record_can_tx_error(tx_ctx, "can_send_packet", UNIFIED_ERR_INVALID_ARG);
+        return -1;
+    }
+
     fd = (tx_ctx == 0) ? -1 : tx_ctx->socket_fd;
     if (fd < 0) {
         (void)pthread_mutex_lock(&g_can_state.lock);
@@ -772,22 +836,32 @@ static int can_send(void *ctx, const adapter_tx_packet_t *packet)
         (void)pthread_mutex_unlock(&g_can_state.lock);
     }
     if (fd < 0) {
-        record_error(&g_can_state.status, g_can_state.config.collector,
-                     "can_send_offline", UNIFIED_ERR_IPC_OFFLINE);
+        record_can_tx_error(tx_ctx, "can_send_offline", UNIFIED_ERR_IPC_OFFLINE);
         return -1;
     }
 
-    sent = write(fd, packet->data, packet->len);
+    write_fn = ((tx_ctx != 0) && (tx_ctx->write_fn != 0)) ? tx_ctx->write_fn : can_default_write;
+    sent = write_fn(fd, packet->data, packet->len);
     if (sent != (ssize_t)packet->len) {
-        record_error(&g_can_state.status, g_can_state.config.collector,
-                     "can_send", UNIFIED_ERR_INVALID_ARG);
+        if (sent >= 0) {
+            record_can_tx_error(tx_ctx, "can_send_short", UNIFIED_ERR_LENGTH);
+        } else if ((errno == EAGAIN) || (errno == EWOULDBLOCK) || (errno == ENOBUFS)) {
+            record_can_tx_error(tx_ctx, "can_send_busy", UNIFIED_ERR_IPC_QUEUE_FULL);
+        } else if ((errno == ENETDOWN) || (errno == ENODEV) || (errno == EBADF)) {
+            record_can_tx_error(tx_ctx, "can_send_offline", UNIFIED_ERR_IPC_OFFLINE);
+        } else {
+            record_can_tx_error(tx_ctx, "can_send", UNIFIED_ERR_INVALID_ARG);
+        }
         return -1;
     }
 
+    (void)pthread_mutex_lock(&g_can_state.lock);
     g_can_state.status.tx_frames++;
     g_can_state.status.tx_bytes += (uint64_t)packet->len;
     g_can_state.status.last_tx_ms = now_monotonic_ms();
     g_can_state.status.updated_at_ms = g_can_state.status.last_tx_ms;
+    (void)pthread_mutex_unlock(&g_can_state.lock);
+    can_tx_context_clear_error(tx_ctx);
     return 0;
 }
 
@@ -801,7 +875,9 @@ static int can_status(void *ctx, void *out_status)
 
     (void)ctx;
     status = (can_status_t *)out_status;
+    (void)pthread_mutex_lock(&g_can_state.lock);
     *status = g_can_state.status;
+    (void)pthread_mutex_unlock(&g_can_state.lock);
     return 0;
 }
 
@@ -893,6 +969,9 @@ static int open_can_socket(const can_adapter_config_t *config,
     timeout.tv_sec = 0;
     timeout.tv_usec = CAN_ADAPTER_SOCKET_TIMEOUT_US;
     (void)setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+    if (setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout)) != 0) {
+        record_error(status, collector, "can_socket_snd_timeout", UNIFIED_ERR_INVALID_ARG);
+    }
 
     memset(&addr, 0, sizeof(addr));
     addr.can_family = AF_CAN;
@@ -1183,4 +1262,5 @@ physical_interface_adapter_t can_adapter = {
     can_fragment_tx,
     can_send,
     can_status,
+    can_get_tx_error,
 };

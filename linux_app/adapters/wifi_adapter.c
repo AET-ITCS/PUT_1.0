@@ -44,9 +44,40 @@ static wifi_tcp_server_state_t g_wifi_tcp_server = {
     .running = false,
 };
 
+static wifi_tx_context_t g_wifi_fallback_tx_context = {
+    .port = WIFI_ADAPTER_DEFAULT_PORT,
+    .udp_socket_fd = -1,
+    .default_peer_configured = false,
+    .default_peer_addr_be = 0u,
+    .last_tx_error_stage = 0,
+    .last_tx_error = UNIFIED_OK,
+};
+
 static uint16_t read_le16(const uint8_t bytes[2])
 {
     return (uint16_t)((uint16_t)bytes[0] | ((uint16_t)bytes[1] << 8u));
+}
+
+static void wifi_tx_context_clear_error(wifi_tx_context_t *ctx)
+{
+    if (ctx == 0) {
+        return;
+    }
+
+    ctx->last_tx_error_stage = 0;
+    ctx->last_tx_error = UNIFIED_OK;
+}
+
+static void wifi_tx_context_record_error(wifi_tx_context_t *ctx,
+                                         const char *stage,
+                                         unified_error_t err)
+{
+    if (ctx == 0) {
+        return;
+    }
+
+    ctx->last_tx_error_stage = stage;
+    ctx->last_tx_error = err;
 }
 
 void wifi_tx_context_init(wifi_tx_context_t *ctx, uint16_t port)
@@ -58,6 +89,31 @@ void wifi_tx_context_init(wifi_tx_context_t *ctx, uint16_t port)
     memset(ctx, 0, sizeof(*ctx));
     ctx->port = (port == 0u) ? (uint16_t)WIFI_ADAPTER_DEFAULT_PORT : port;
     ctx->udp_socket_fd = -1;
+    wifi_tx_context_clear_error(ctx);
+}
+
+unified_error_t wifi_tx_context_set_default_peer(wifi_tx_context_t *ctx,
+                                                 const char *ipv4,
+                                                 uint16_t port)
+{
+    struct in_addr addr;
+
+    if ((ctx == 0) || (ipv4 == 0) || (ipv4[0] == '\0')) {
+        return UNIFIED_ERR_NULL;
+    }
+
+    if (inet_pton(AF_INET, ipv4, &addr) != 1) {
+        wifi_tx_context_record_error(ctx,
+                                     "wifi_peer_config",
+                                     UNIFIED_ERR_INVALID_ARG);
+        return UNIFIED_ERR_INVALID_ARG;
+    }
+
+    ctx->default_peer_addr_be = addr.s_addr;
+    ctx->port = (port == 0u) ? (uint16_t)WIFI_ADAPTER_DEFAULT_PORT : port;
+    ctx->default_peer_configured = true;
+    wifi_tx_context_clear_error(ctx);
+    return UNIFIED_OK;
 }
 
 void wifi_tx_context_destroy(wifi_tx_context_t *ctx)
@@ -182,37 +238,54 @@ static int wifi_fragment_tx(void *ctx,
 
 static int wifi_send(void *ctx, const adapter_tx_packet_t *packet)
 {
-    static wifi_tx_context_t fallback_ctx = {
-        .port = WIFI_ADAPTER_DEFAULT_PORT,
-        .udp_socket_fd = -1,
-    };
     wifi_tx_context_t *tx_ctx;
     const anymsg_header_t *header;
     struct sockaddr_in peer_addr;
     ssize_t sent;
 
+    tx_ctx = (ctx == 0) ? &g_wifi_fallback_tx_context : (wifi_tx_context_t *)ctx;
+    wifi_tx_context_clear_error(tx_ctx);
+
     if ((packet == 0) || (packet->data == 0) ||
         (packet->len < ANYMSG_HEADER_SIZE) ||
         (packet->len > PUT_SHM_FRAME_POOL_BLOCK_SIZE)) {
+        wifi_tx_context_record_error(tx_ctx,
+                                     "wifi_send_packet",
+                                     UNIFIED_ERR_INVALID_ARG);
         return -1;
     }
 
-    tx_ctx = (ctx == 0) ? &fallback_ctx : (wifi_tx_context_t *)ctx;
     if (tx_ctx->port == 0u) {
         tx_ctx->port = (uint16_t)WIFI_ADAPTER_DEFAULT_PORT;
+    }
+    header = (const anymsg_header_t *)packet->data;
+    if (anymsg_cid_segment_from_first_byte(header->destination_cid[0]) !=
+        ANYMSG_CID_SEGMENT_WIFI) {
+        wifi_tx_context_record_error(tx_ctx,
+                                     "wifi_send_bad_cid",
+                                     UNIFIED_ERR_INVALID_ARG);
+        return -1;
+    }
+    if (!tx_ctx->default_peer_configured) {
+        wifi_tx_context_record_error(tx_ctx,
+                                     "wifi_send_no_peer",
+                                     UNIFIED_ERR_IPC_OFFLINE);
+        return -1;
     }
     if (tx_ctx->udp_socket_fd < 0) {
         tx_ctx->udp_socket_fd = socket(AF_INET, SOCK_DGRAM, 0);
         if (tx_ctx->udp_socket_fd < 0) {
+            wifi_tx_context_record_error(tx_ctx,
+                                         "wifi_socket",
+                                         UNIFIED_ERR_IPC_NOT_READY);
             return -1;
         }
     }
 
-    header = (const anymsg_header_t *)packet->data;
     memset(&peer_addr, 0, sizeof(peer_addr));
     peer_addr.sin_family = AF_INET;
     peer_addr.sin_port = htons(tx_ctx->port);
-    memcpy(&peer_addr.sin_addr.s_addr, header->destination_cid, ANYMSG_CID_LENGTH);
+    peer_addr.sin_addr.s_addr = tx_ctx->default_peer_addr_be;
 
     sent = sendto(tx_ctx->udp_socket_fd,
                   packet->data,
@@ -220,7 +293,44 @@ static int wifi_send(void *ctx, const adapter_tx_packet_t *packet)
                   0,
                   (const struct sockaddr *)&peer_addr,
                   sizeof(peer_addr));
-    return (sent == (ssize_t)packet->len) ? 0 : -1;
+    if (sent == (ssize_t)packet->len) {
+        wifi_tx_context_clear_error(tx_ctx);
+        return 0;
+    }
+
+    if (sent >= 0) {
+        wifi_tx_context_record_error(tx_ctx,
+                                     "wifi_send_short",
+                                     UNIFIED_ERR_LENGTH);
+    } else if ((errno == EAGAIN) || (errno == EWOULDBLOCK) || (errno == ENOBUFS)) {
+        wifi_tx_context_record_error(tx_ctx,
+                                     "wifi_send_busy",
+                                     UNIFIED_ERR_IPC_QUEUE_FULL);
+    } else {
+        wifi_tx_context_record_error(tx_ctx,
+                                     "wifi_send",
+                                     UNIFIED_ERR_IPC_OFFLINE);
+    }
+    return -1;
+}
+
+static int wifi_get_tx_error(void *ctx, adapter_tx_error_t *out_error)
+{
+    wifi_tx_context_t *tx_ctx;
+
+    if (out_error == 0) {
+        return -1;
+    }
+
+    tx_ctx = (ctx == 0) ? &g_wifi_fallback_tx_context : (wifi_tx_context_t *)ctx;
+    if ((tx_ctx->last_tx_error_stage == 0) ||
+        (tx_ctx->last_tx_error_stage[0] == '\0')) {
+        return -1;
+    }
+
+    out_error->stage = tx_ctx->last_tx_error_stage;
+    out_error->err = tx_ctx->last_tx_error;
+    return 0;
 }
 
 static int wifi_status(void *ctx, void *out_status)
@@ -855,4 +965,5 @@ physical_interface_adapter_t wifi_adapter = {
     wifi_fragment_tx,
     wifi_send,
     wifi_status,
+    wifi_get_tx_error,
 };

@@ -1,5 +1,6 @@
 #include "can_adapter.h"
 
+#include <errno.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -21,11 +22,22 @@
            CAN_ADAPTER_DATA_PAYLOAD_SIZE))
 
 static put_shm_region_t g_region;
+static ssize_t g_mock_can_write_result;
+static int g_mock_can_write_errno;
 
 static void write_le16(uint8_t bytes[2], uint16_t value)
 {
     bytes[0] = (uint8_t)(value & 0xFFu);
     bytes[1] = (uint8_t)((value >> 8u) & 0xFFu);
+}
+
+static ssize_t mock_can_write(int fd, const void *buf, size_t count)
+{
+    (void)fd;
+    (void)buf;
+    (void)count;
+    errno = g_mock_can_write_errno;
+    return g_mock_can_write_result;
 }
 
 static size_t make_anymsg(uint8_t *buffer,
@@ -469,6 +481,46 @@ static int test_fragment_tx_generates_sof_and_data_frames(void)
     return 0;
 }
 
+static int test_send_failures_are_classified(void)
+{
+    can_tx_context_t tx_ctx;
+    adapter_tx_packet_t packet;
+    adapter_tx_error_t tx_error;
+    struct can_frame frame;
+
+    memset(&frame, 0, sizeof(frame));
+    frame.can_id = 0x321u;
+    frame.can_dlc = CAN_ADAPTER_CLASSIC_DLC;
+    packet.data = (const uint8_t *)&frame;
+    packet.len = sizeof(frame);
+
+    can_tx_context_init(&tx_ctx, 0x321u, false);
+    can_tx_context_set_socket(&tx_ctx, 123);
+    can_tx_context_set_write_fn(&tx_ctx, mock_can_write);
+
+    g_mock_can_write_result = -1;
+    g_mock_can_write_errno = EAGAIN;
+    CHECK(can_adapter.send(&tx_ctx, &packet) != 0);
+    CHECK(can_adapter.get_tx_error(&tx_ctx, &tx_error) == 0);
+    CHECK(strcmp(tx_error.stage, "can_send_busy") == 0);
+    CHECK(tx_error.err == UNIFIED_ERR_IPC_QUEUE_FULL);
+
+    g_mock_can_write_result = -1;
+    g_mock_can_write_errno = ENETDOWN;
+    CHECK(can_adapter.send(&tx_ctx, &packet) != 0);
+    CHECK(can_adapter.get_tx_error(&tx_ctx, &tx_error) == 0);
+    CHECK(strcmp(tx_error.stage, "can_send_offline") == 0);
+    CHECK(tx_error.err == UNIFIED_ERR_IPC_OFFLINE);
+
+    g_mock_can_write_result = (ssize_t)(sizeof(frame) - 1u);
+    g_mock_can_write_errno = 0;
+    CHECK(can_adapter.send(&tx_ctx, &packet) != 0);
+    CHECK(can_adapter.get_tx_error(&tx_ctx, &tx_error) == 0);
+    CHECK(strcmp(tx_error.stage, "can_send_short") == 0);
+    CHECK(tx_error.err == UNIFIED_ERR_LENGTH);
+    return 0;
+}
+
 int main(void)
 {
     if (test_decode_valid_and_invalid_anymsg() != 0) {
@@ -493,6 +545,9 @@ int main(void)
         return 1;
     }
     if (test_fragment_tx_generates_sof_and_data_frames() != 0) {
+        return 1;
+    }
+    if (test_send_failures_are_classified() != 0) {
         return 1;
     }
 

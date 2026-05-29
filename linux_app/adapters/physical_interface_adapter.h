@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 #include "anymsg_frame.h"
+#include "error_code.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -41,6 +42,11 @@ typedef struct {
 } adapter_tx_packet_list_t;
 
 typedef struct {
+    const char *stage;
+    unified_error_t err;
+} adapter_tx_error_t;
+
+typedef struct {
     const char *name;
     uint8_t interface_id;
     uint64_t rx_frames;
@@ -71,6 +77,7 @@ typedef struct {
                        adapter_tx_packet_list_t *out_packets);
     int (*send)(void *ctx, const adapter_tx_packet_t *packet);
     int (*status)(void *ctx, void *out_status);
+    int (*get_tx_error)(void *ctx, adapter_tx_error_t *out_error);
 } physical_interface_adapter_t;
 
 #ifdef __cplusplus

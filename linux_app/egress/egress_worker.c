@@ -180,6 +180,20 @@ static bool send_by_adapter(const egress_worker_context_t *ctx,
     return send_packet_list(ctx, &packets);
 }
 
+static void record_send_failure(const egress_worker_context_t *ctx)
+{
+    adapter_tx_error_t tx_error;
+
+    if ((ctx != 0) && (ctx->adapter != 0) && (ctx->adapter->get_tx_error != 0) &&
+        (ctx->adapter->get_tx_error(ctx->adapter_ctx, &tx_error) == 0) &&
+        (tx_error.stage != 0) && (tx_error.stage[0] != '\0')) {
+        record_error(ctx, tx_error.stage, tx_error.err);
+        return;
+    }
+
+    record_error(ctx, "send", UNIFIED_ERR_IPC_OFFLINE);
+}
+
 static void release_frame(const egress_worker_context_t *ctx,
                           const put_shm_descriptor_t *descriptor,
                           egress_worker_drain_result_t *result)
@@ -270,7 +284,7 @@ unified_error_t egress_worker_drain_once(egress_worker_context_t *ctx,
             }
         } else {
             result.tx_failed++;
-            record_error(ctx, "send", UNIFIED_ERR_IPC_OFFLINE);
+            record_send_failure(ctx);
         }
 
         release_frame(ctx, &descriptor, &result);

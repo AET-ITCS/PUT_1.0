@@ -121,7 +121,7 @@ static void configure_status_modules(status_collector_t *collector, const app_co
                                       true,
                                       config->bluetooth_enabled,
                                       "Bluetooth RFCOMM",
-                                      "Bluetooth egress is observable; physical adapter binding is pending");
+                                      "Bluetooth egress unavailable until adapter binding is implemented");
     status_collector_configure_module(collector,
                                       STATUS_MODULE_4G,
                                       true,
@@ -238,6 +238,58 @@ int main(int argc, char **argv)
     ethernet_tx_context_init(&ethernet_tx_context, config.ethernet_port);
     wifi_tx_context_init(&wifi_tx_context, config.wifi_port);
 
+    if (config.ethernet_tx_peer_addr[0] != '\0') {
+        err = ethernet_tx_context_set_default_peer(&ethernet_tx_context,
+                                                   config.ethernet_tx_peer_addr,
+                                                   config.ethernet_tx_peer_port);
+        if (err != UNIFIED_OK) {
+            fprintf(stderr, "invalid ethernet tx peer config\n");
+            status_collector_record_error(&collector,
+                                          STATUS_MODULE_ETHERNET,
+                                          "ethernet_peer_config",
+                                          err);
+            (void)status_collector_write_all(&collector);
+            egress_manager_destroy(&egress_manager);
+            ethernet_tx_context_destroy(&ethernet_tx_context);
+            wifi_tx_context_destroy(&wifi_tx_context);
+            status_collector_destroy(&collector);
+            return EXIT_FAILURE;
+        }
+    }
+    if (config.wifi_tx_peer_addr[0] != '\0') {
+        err = wifi_tx_context_set_default_peer(&wifi_tx_context,
+                                               config.wifi_tx_peer_addr,
+                                               config.wifi_tx_peer_port);
+        if (err != UNIFIED_OK) {
+            fprintf(stderr, "invalid wifi tx peer config\n");
+            status_collector_record_error(&collector,
+                                          STATUS_MODULE_WIFI,
+                                          "wifi_peer_config",
+                                          err);
+            (void)status_collector_write_all(&collector);
+            egress_manager_destroy(&egress_manager);
+            ethernet_tx_context_destroy(&ethernet_tx_context);
+            wifi_tx_context_destroy(&wifi_tx_context);
+            status_collector_destroy(&collector);
+            return EXIT_FAILURE;
+        }
+    }
+
+    if (config.bluetooth_enabled) {
+        err = UNIFIED_ERR_IPC_NOT_READY;
+        fprintf(stderr, "bluetooth adapter unavailable: adapter binding is not implemented\n");
+        status_collector_record_error(&collector,
+                                      STATUS_MODULE_BLUETOOTH,
+                                      "bluetooth_adapter_unavailable",
+                                      err);
+        (void)status_collector_write_all(&collector);
+        egress_manager_destroy(&egress_manager);
+        ethernet_tx_context_destroy(&ethernet_tx_context);
+        wifi_tx_context_destroy(&wifi_tx_context);
+        status_collector_destroy(&collector);
+        return EXIT_FAILURE;
+    }
+
     linux_epoch = make_linux_epoch();
     err = linux_shm_ipc_map(&ipc, 0u, PUT_SHM_REGION_SIZE, NULL);
     if (err != UNIFIED_OK) {
@@ -284,7 +336,7 @@ int main(int argc, char **argv)
     egress_config.adapters[PUT_SHM_INTERFACE_WIFI] = &wifi_adapter;
     egress_config.adapter_contexts[PUT_SHM_INTERFACE_WIFI] = &wifi_tx_context;
     egress_config.enabled[PUT_SHM_INTERFACE_WIFI] = config.wifi_enabled;
-    egress_config.enabled[PUT_SHM_INTERFACE_BLUETOOTH] = config.bluetooth_enabled;
+    egress_config.enabled[PUT_SHM_INTERFACE_BLUETOOTH] = false;
     egress_config.enabled[PUT_SHM_INTERFACE_4G] = false;
     egress_config.enabled[PUT_SHM_INTERFACE_RS485] = false;
     err = egress_manager_start(&egress_manager, &egress_config);

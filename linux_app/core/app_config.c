@@ -3,6 +3,7 @@
 
 #include <ctype.h>
 #include <errno.h>
+#include <arpa/inet.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -119,6 +120,17 @@ static void copy_string(char *dst, size_t dst_size, const char *src)
     (void)snprintf(dst, dst_size, "%s", (src == NULL) ? "" : src);
 }
 
+static bool is_valid_ipv4_address(const char *text)
+{
+    struct in_addr addr;
+
+    if ((text == NULL) || (text[0] == '\0')) {
+        return false;
+    }
+
+    return inet_pton(AF_INET, text, &addr) == 1;
+}
+
 void app_config_set_defaults(app_config_t *config)
 {
     if (config == NULL) {
@@ -143,6 +155,10 @@ void app_config_set_defaults(app_config_t *config)
                 sizeof(config->ethernet_bind_addr),
                 APP_CONFIG_ETHERNET_DEFAULT_BIND_ADDR);
     config->ethernet_port = (uint16_t)APP_CONFIG_ETHERNET_DEFAULT_PORT;
+    copy_string(config->ethernet_tx_peer_addr,
+                sizeof(config->ethernet_tx_peer_addr),
+                APP_CONFIG_ETHERNET_DEFAULT_TX_PEER_ADDR);
+    config->ethernet_tx_peer_port = (uint16_t)APP_CONFIG_ETHERNET_DEFAULT_TX_PEER_PORT;
     config->wifi_enabled = false;
     config->wifi_udp_enabled = APP_CONFIG_WIFI_DEFAULT_UDP_ENABLED;
     config->wifi_tcp_enabled = APP_CONFIG_WIFI_DEFAULT_TCP_ENABLED;
@@ -150,6 +166,10 @@ void app_config_set_defaults(app_config_t *config)
                 sizeof(config->wifi_bind_addr),
                 APP_CONFIG_WIFI_DEFAULT_BIND_ADDR);
     config->wifi_port = (uint16_t)APP_CONFIG_WIFI_DEFAULT_PORT;
+    copy_string(config->wifi_tx_peer_addr,
+                sizeof(config->wifi_tx_peer_addr),
+                APP_CONFIG_WIFI_DEFAULT_TX_PEER_ADDR);
+    config->wifi_tx_peer_port = (uint16_t)APP_CONFIG_WIFI_DEFAULT_TX_PEER_PORT;
     config->bluetooth_enabled = false;
     config->bluetooth_channel = 1u;
     config->max_packets = 0u;
@@ -287,6 +307,21 @@ static unified_error_t apply_key_value(app_config_t *config,
             config->ethernet_port = (uint16_t)u32_value;
             return UNIFIED_OK;
         }
+
+        if (strcmp(key, "tx_peer_addr") == 0) {
+            copy_string(config->ethernet_tx_peer_addr,
+                        sizeof(config->ethernet_tx_peer_addr),
+                        value);
+            return UNIFIED_OK;
+        }
+
+        if (strcmp(key, "tx_peer_port") == 0) {
+            if ((parse_u32(value, &u32_value) != 0) || (u32_value == 0u) || (u32_value > UINT16_MAX)) {
+                return UNIFIED_ERR_INVALID_ARG;
+            }
+            config->ethernet_tx_peer_port = (uint16_t)u32_value;
+            return UNIFIED_OK;
+        }
     } else if (strcmp(section, "wifi") == 0) {
         if (strcmp(key, "enabled") == 0) {
             if (parse_bool(value, &bool_value) != 0) {
@@ -325,6 +360,21 @@ static unified_error_t apply_key_value(app_config_t *config,
                 return UNIFIED_ERR_INVALID_ARG;
             }
             config->wifi_port = (uint16_t)u32_value;
+            return UNIFIED_OK;
+        }
+
+        if (strcmp(key, "tx_peer_addr") == 0) {
+            copy_string(config->wifi_tx_peer_addr,
+                        sizeof(config->wifi_tx_peer_addr),
+                        value);
+            return UNIFIED_OK;
+        }
+
+        if (strcmp(key, "tx_peer_port") == 0) {
+            if ((parse_u32(value, &u32_value) != 0) || (u32_value == 0u) || (u32_value > UINT16_MAX)) {
+                return UNIFIED_ERR_INVALID_ARG;
+            }
+            config->wifi_tx_peer_port = (uint16_t)u32_value;
             return UNIFIED_OK;
         }
     } else if (strcmp(section, "bluetooth") == 0) {
@@ -454,6 +504,12 @@ unified_error_t app_config_validate(const app_config_t *config)
         if (!config->ethernet_udp_enabled && !config->ethernet_tcp_enabled) {
             return UNIFIED_ERR_INVALID_ARG;
         }
+        if (config->ethernet_tx_peer_addr[0] != '\0') {
+            if ((config->ethernet_tx_peer_port == 0u) ||
+                !is_valid_ipv4_address(config->ethernet_tx_peer_addr)) {
+                return UNIFIED_ERR_INVALID_ARG;
+            }
+        }
     }
 
     if (config->wifi_enabled) {
@@ -462,6 +518,12 @@ unified_error_t app_config_validate(const app_config_t *config)
         }
         if (!config->wifi_udp_enabled && !config->wifi_tcp_enabled) {
             return UNIFIED_ERR_INVALID_ARG;
+        }
+        if (config->wifi_tx_peer_addr[0] != '\0') {
+            if ((config->wifi_tx_peer_port == 0u) ||
+                !is_valid_ipv4_address(config->wifi_tx_peer_addr)) {
+                return UNIFIED_ERR_INVALID_ARG;
+            }
         }
     }
 

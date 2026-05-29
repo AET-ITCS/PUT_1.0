@@ -1,6 +1,7 @@
 #include "ethernet_adapter.h"
 
 #include <arpa/inet.h>
+#include <errno.h>
 #include <netinet/in.h>
 #include <stdio.h>
 #include <string.h>
@@ -309,7 +310,12 @@ static int test_tcp_stream_invalid_length_is_counted(void)
     return 0;
 }
 
-static int test_udp_tx_uses_destination_cid_ipv4(void)
+static bool udp_loopback_is_unavailable(void)
+{
+    return (errno == EPERM) || (errno == EACCES) || (errno == EAFNOSUPPORT);
+}
+
+static int test_udp_tx_uses_default_peer(void)
 {
     ethernet_tx_context_t tx_ctx;
     anymsg_buffer_t msg;
@@ -326,6 +332,10 @@ static int test_udp_tx_uses_destination_cid_ipv4(void)
     size_t frame_len;
 
     recv_fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if ((recv_fd < 0) && udp_loopback_is_unavailable()) {
+        puts("ethernet_adapter_test: SKIP udp tx default peer (AF_INET unavailable)");
+        return 0;
+    }
     CHECK(recv_fd >= 0);
 
     timeout.tv_sec = 1;
@@ -343,14 +353,12 @@ static int test_udp_tx_uses_destination_cid_ipv4(void)
 
     frame_len = make_anymsg(frame, 4u, 0x40u, 0x40u);
     header = (anymsg_header_t *)frame;
-    header->destination_cid[0] = 127u;
-    header->destination_cid[1] = 0u;
-    header->destination_cid[2] = 0u;
-    header->destination_cid[3] = 1u;
+    header->destination_cid[1] = 0x01u;
     msg.data = frame;
     msg.len = frame_len;
     memset(&packet, 0, sizeof(packet));
     ethernet_tx_context_init(&tx_ctx, port);
+    CHECK(ethernet_tx_context_set_default_peer(&tx_ctx, "127.0.0.1", port) == UNIFIED_OK);
     CHECK(ethernet_adapter.encapsulate(&tx_ctx, &msg, &packet) == 0);
     CHECK(ethernet_adapter.send(&tx_ctx, &packet) == 0);
 
@@ -389,7 +397,7 @@ int main(void)
     if (test_tcp_stream_invalid_length_is_counted() != 0) {
         return 1;
     }
-    if (test_udp_tx_uses_destination_cid_ipv4() != 0) {
+    if (test_udp_tx_uses_default_peer() != 0) {
         return 1;
     }
 

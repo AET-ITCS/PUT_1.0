@@ -5,6 +5,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <sys/types.h>
 
 #include "error_code.h"
 #include "linux_shm_ipc.h"
@@ -34,6 +35,8 @@ extern "C" {
            CAN_ADAPTER_DATA_PAYLOAD_SIZE))
 #define CAN_ADAPTER_REASSEMBLY_MAX_SESSIONS 8u
 #define CAN_ADAPTER_REASSEMBLY_BITMAP_SIZE 16u
+
+typedef ssize_t (*can_tx_write_fn_t)(int fd, const void *buf, size_t count);
 
 typedef struct {
     bool enabled;
@@ -112,6 +115,9 @@ typedef struct {
     bool extended_id;
     uint8_t next_session_id;
     int socket_fd;
+    can_tx_write_fn_t write_fn;
+    const char *last_tx_error_stage;
+    unified_error_t last_tx_error;
     struct can_frame frames[CAN_ADAPTER_TX_MAX_PACKETS];
     adapter_tx_packet_t packets[CAN_ADAPTER_TX_MAX_PACKETS];
 } can_tx_context_t;
@@ -121,6 +127,7 @@ extern physical_interface_adapter_t can_adapter;
 void can_adapter_config_set_defaults(can_adapter_config_t *config);
 void can_tx_context_init(can_tx_context_t *ctx, uint32_t tx_can_id, bool extended_id);
 void can_tx_context_set_socket(can_tx_context_t *ctx, int socket_fd);
+void can_tx_context_set_write_fn(can_tx_context_t *ctx, can_tx_write_fn_t write_fn);
 unified_error_t can_adapter_decode_anymsg(const uint8_t *input,
                                           size_t input_len,
                                           adapter_rx_result_t *out);

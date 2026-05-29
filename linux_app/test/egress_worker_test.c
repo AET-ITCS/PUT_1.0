@@ -1,9 +1,17 @@
 #include "egress_manager.h"
 #include "egress_worker.h"
+#include "ethernet_adapter.h"
+#include "wifi_adapter.h"
 
+#include <arpa/inet.h>
+#include <errno.h>
+#include <netinet/in.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/socket.h>
+#include <sys/time.h>
+#include <unistd.h>
 
 #include "crc16.h"
 
@@ -213,6 +221,7 @@ static physical_interface_adapter_t g_mock_adapter = {
     mock_fragment_tx,
     mock_send,
     0,
+    0,
 };
 
 static void setup_worker_context(egress_worker_context_t *ctx,
@@ -231,6 +240,77 @@ static void setup_worker_context(egress_worker_context_t *ctx,
     ctx->linux_epoch = 77u;
     ctx->enabled = enabled;
     ctx->budget = 16u;
+}
+
+static void setup_physical_worker_context(egress_worker_context_t *ctx,
+                                          linux_shm_ipc_t *ipc,
+                                          status_collector_t *collector,
+                                          put_shm_interface_t interface_id,
+                                          status_module_id_t status_module,
+                                          physical_interface_adapter_t *adapter,
+                                          void *adapter_ctx,
+                                          bool enabled)
+{
+    memset(ctx, 0, sizeof(*ctx));
+    ctx->interface_id = interface_id;
+    ctx->status_module = status_module;
+    ctx->adapter = adapter;
+    ctx->adapter_ctx = adapter_ctx;
+    ctx->ipc = ipc;
+    ctx->collector = collector;
+    ctx->linux_epoch = 77u;
+    ctx->enabled = enabled;
+    ctx->budget = 16u;
+}
+
+static bool udp_loopback_is_unavailable(void)
+{
+    return (errno == EPERM) || (errno == EACCES) || (errno == EAFNOSUPPORT);
+}
+
+static int open_udp_loopback_receiver(uint16_t *out_port)
+{
+    struct sockaddr_in bind_addr;
+    struct timeval timeout;
+    socklen_t bind_len;
+    int fd;
+
+    if (out_port == 0) {
+        return -1;
+    }
+
+    fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (fd < 0) {
+        return -1;
+    }
+
+    timeout.tv_sec = 1;
+    timeout.tv_usec = 0;
+    if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) != 0) {
+        (void)close(fd);
+        return -1;
+    }
+
+    memset(&bind_addr, 0, sizeof(bind_addr));
+    bind_addr.sin_family = AF_INET;
+    bind_addr.sin_port = 0;
+    if (inet_pton(AF_INET, "127.0.0.1", &bind_addr.sin_addr) != 1) {
+        (void)close(fd);
+        return -1;
+    }
+    if (bind(fd, (const struct sockaddr *)&bind_addr, sizeof(bind_addr)) != 0) {
+        (void)close(fd);
+        return -1;
+    }
+
+    bind_len = (socklen_t)sizeof(bind_addr);
+    if (getsockname(fd, (struct sockaddr *)&bind_addr, &bind_len) != 0) {
+        (void)close(fd);
+        return -1;
+    }
+
+    *out_port = ntohs(bind_addr.sin_port);
+    return fd;
 }
 
 static int test_legal_tx_descriptor_sends_and_releases(void)
@@ -267,6 +347,214 @@ static int test_legal_tx_descriptor_sends_and_releases(void)
     CHECK(mock.send_count == 1u);
     CHECK(collector.modules[STATUS_MODULE_ETHERNET].tx_frames == 1u);
     CHECK(collector.modules[STATUS_MODULE_ETHERNET].tx_bytes == descriptor.frame_length);
+    CHECK((ipc.allocation_bitmap & (uint64_t)(1ULL << frame_id)) == 0u);
+    status_collector_destroy(&collector);
+    return 0;
+}
+
+static int test_ethernet_worker_sends_to_default_peer(void)
+{
+    linux_shm_ipc_t ipc;
+    status_collector_t collector;
+    egress_worker_context_t ctx;
+    ethernet_tx_context_t tx_ctx;
+    put_shm_descriptor_t descriptor;
+    uint32_t frame_id;
+    egress_worker_drain_result_t result;
+    uint8_t expected[PUT_SHM_FRAME_POOL_BLOCK_SIZE + 1u];
+    uint8_t received[PUT_SHM_FRAME_POOL_BLOCK_SIZE + 1u];
+    ssize_t received_len;
+    uint16_t port;
+    int recv_fd;
+
+    recv_fd = open_udp_loopback_receiver(&port);
+    if ((recv_fd < 0) && udp_loopback_is_unavailable()) {
+        puts("egress_worker_test: SKIP ethernet worker udp tx (AF_INET unavailable)");
+        return 0;
+    }
+    CHECK(recv_fd >= 0);
+    CHECK(setup_ipc(&ipc) == 0);
+    status_collector_init(&collector, NULL, false);
+    status_collector_configure_module(&collector, STATUS_MODULE_ETHERNET,
+                                      true, true, "test", "test");
+    ethernet_tx_context_init(&tx_ctx, port);
+    CHECK(ethernet_tx_context_set_default_peer(&tx_ctx, "127.0.0.1", port) ==
+          UNIFIED_OK);
+    setup_physical_worker_context(&ctx,
+                                  &ipc,
+                                  &collector,
+                                  PUT_SHM_INTERFACE_ETHERNET,
+                                  STATUS_MODULE_ETHERNET,
+                                  &ethernet_adapter,
+                                  &tx_ctx,
+                                  true);
+    CHECK(prepare_tx_frame(&ipc,
+                           PUT_SHM_INTERFACE_CAN,
+                           PUT_SHM_INTERFACE_ETHERNET,
+                           0x20u,
+                           0x40u,
+                           4u,
+                           &frame_id,
+                           &descriptor) == 0);
+    publish_tx_direct(&g_region.tx_rings[PUT_SHM_INTERFACE_ETHERNET],
+                      &g_region.tx_pending_bitmap,
+                      &descriptor);
+    memcpy(expected, g_region.frame_pool[frame_id].bytes, descriptor.frame_length);
+
+    CHECK(egress_worker_drain_once(&ctx, &result) == UNIFIED_OK);
+    CHECK(result.dequeued == 1u);
+    CHECK(result.tx_ok == 1u);
+    received_len = recvfrom(recv_fd, received, sizeof(received), 0, 0, 0);
+    CHECK(received_len == (ssize_t)descriptor.frame_length);
+    CHECK(memcmp(received, expected, descriptor.frame_length) == 0);
+    CHECK((ipc.allocation_bitmap & (uint64_t)(1ULL << frame_id)) == 0u);
+    ethernet_tx_context_destroy(&tx_ctx);
+    (void)close(recv_fd);
+    status_collector_destroy(&collector);
+    return 0;
+}
+
+static int test_wifi_worker_sends_to_default_peer(void)
+{
+    linux_shm_ipc_t ipc;
+    status_collector_t collector;
+    egress_worker_context_t ctx;
+    wifi_tx_context_t tx_ctx;
+    put_shm_descriptor_t descriptor;
+    uint32_t frame_id;
+    egress_worker_drain_result_t result;
+    uint8_t expected[PUT_SHM_FRAME_POOL_BLOCK_SIZE + 1u];
+    uint8_t received[PUT_SHM_FRAME_POOL_BLOCK_SIZE + 1u];
+    ssize_t received_len;
+    uint16_t port;
+    int recv_fd;
+
+    recv_fd = open_udp_loopback_receiver(&port);
+    if ((recv_fd < 0) && udp_loopback_is_unavailable()) {
+        puts("egress_worker_test: SKIP wifi worker udp tx (AF_INET unavailable)");
+        return 0;
+    }
+    CHECK(recv_fd >= 0);
+    CHECK(setup_ipc(&ipc) == 0);
+    status_collector_init(&collector, NULL, false);
+    status_collector_configure_module(&collector, STATUS_MODULE_WIFI,
+                                      true, true, "test", "test");
+    wifi_tx_context_init(&tx_ctx, port);
+    CHECK(wifi_tx_context_set_default_peer(&tx_ctx, "127.0.0.1", port) ==
+          UNIFIED_OK);
+    setup_physical_worker_context(&ctx,
+                                  &ipc,
+                                  &collector,
+                                  PUT_SHM_INTERFACE_WIFI,
+                                  STATUS_MODULE_WIFI,
+                                  &wifi_adapter,
+                                  &tx_ctx,
+                                  true);
+    CHECK(prepare_tx_frame(&ipc,
+                           PUT_SHM_INTERFACE_CAN,
+                           PUT_SHM_INTERFACE_WIFI,
+                           0x20u,
+                           0x60u,
+                           4u,
+                           &frame_id,
+                           &descriptor) == 0);
+    publish_tx_direct(&g_region.tx_rings[PUT_SHM_INTERFACE_WIFI],
+                      &g_region.tx_pending_bitmap,
+                      &descriptor);
+    memcpy(expected, g_region.frame_pool[frame_id].bytes, descriptor.frame_length);
+
+    CHECK(egress_worker_drain_once(&ctx, &result) == UNIFIED_OK);
+    CHECK(result.dequeued == 1u);
+    CHECK(result.tx_ok == 1u);
+    received_len = recvfrom(recv_fd, received, sizeof(received), 0, 0, 0);
+    CHECK(received_len == (ssize_t)descriptor.frame_length);
+    CHECK(memcmp(received, expected, descriptor.frame_length) == 0);
+    CHECK((ipc.allocation_bitmap & (uint64_t)(1ULL << frame_id)) == 0u);
+    wifi_tx_context_destroy(&tx_ctx);
+    (void)close(recv_fd);
+    status_collector_destroy(&collector);
+    return 0;
+}
+
+static int test_physical_worker_no_peer_records_specific_error(void)
+{
+    linux_shm_ipc_t ipc;
+    status_collector_t collector;
+    egress_worker_context_t ctx;
+    ethernet_tx_context_t tx_ctx;
+    put_shm_descriptor_t descriptor;
+    uint32_t frame_id;
+    egress_worker_drain_result_t result;
+
+    CHECK(setup_ipc(&ipc) == 0);
+    status_collector_init(&collector, NULL, false);
+    status_collector_configure_module(&collector, STATUS_MODULE_ETHERNET,
+                                      true, true, "test", "test");
+    ethernet_tx_context_init(&tx_ctx, ETHERNET_ADAPTER_DEFAULT_PORT);
+    setup_physical_worker_context(&ctx,
+                                  &ipc,
+                                  &collector,
+                                  PUT_SHM_INTERFACE_ETHERNET,
+                                  STATUS_MODULE_ETHERNET,
+                                  &ethernet_adapter,
+                                  &tx_ctx,
+                                  true);
+    CHECK(prepare_tx_frame(&ipc,
+                           PUT_SHM_INTERFACE_CAN,
+                           PUT_SHM_INTERFACE_ETHERNET,
+                           0x20u,
+                           0x40u,
+                           0u,
+                           &frame_id,
+                           &descriptor) == 0);
+    publish_tx_direct(&g_region.tx_rings[PUT_SHM_INTERFACE_ETHERNET],
+                      &g_region.tx_pending_bitmap,
+                      &descriptor);
+
+    CHECK(egress_worker_drain_once(&ctx, &result) == UNIFIED_OK);
+    CHECK(result.tx_failed == 1u);
+    CHECK(strcmp(collector.modules[STATUS_MODULE_ETHERNET].last_error_stage,
+                 "ethernet_send_no_peer") == 0);
+    CHECK(collector.modules[STATUS_MODULE_ETHERNET].send_fail_count == 1u);
+    CHECK((ipc.allocation_bitmap & (uint64_t)(1ULL << frame_id)) == 0u);
+    ethernet_tx_context_destroy(&tx_ctx);
+    status_collector_destroy(&collector);
+    return 0;
+}
+
+static int test_destination_cid_target_mismatch_is_released(void)
+{
+    linux_shm_ipc_t ipc;
+    status_collector_t collector;
+    egress_worker_context_t ctx;
+    mock_adapter_context_t mock;
+    put_shm_descriptor_t descriptor;
+    uint32_t frame_id;
+    egress_worker_drain_result_t result;
+
+    CHECK(setup_ipc(&ipc) == 0);
+    status_collector_init(&collector, NULL, false);
+    status_collector_configure_module(&collector, STATUS_MODULE_ETHERNET,
+                                      true, true, "test", "test");
+    memset(&mock, 0, sizeof(mock));
+    setup_worker_context(&ctx, &ipc, &collector, &mock, true);
+    CHECK(prepare_tx_frame(&ipc,
+                           PUT_SHM_INTERFACE_CAN,
+                           PUT_SHM_INTERFACE_ETHERNET,
+                           0x20u,
+                           0x60u,
+                           0u,
+                           &frame_id,
+                           &descriptor) == 0);
+    publish_tx_direct(&g_region.tx_rings[PUT_SHM_INTERFACE_ETHERNET],
+                      &g_region.tx_pending_bitmap,
+                      &descriptor);
+
+    CHECK(egress_worker_drain_once(&ctx, &result) == UNIFIED_OK);
+    CHECK(result.validation_failed == 1u);
+    CHECK(mock.send_count == 0u);
+    CHECK(strcmp(collector.modules[STATUS_MODULE_ETHERNET].last_error_stage,
+                 "egress_validate") == 0);
     CHECK((ipc.allocation_bitmap & (uint64_t)(1ULL << frame_id)) == 0u);
     status_collector_destroy(&collector);
     return 0;
@@ -457,6 +745,10 @@ static int test_reclaim_drain_releases_frame(void)
 int main(void)
 {
     CHECK(test_legal_tx_descriptor_sends_and_releases() == 0);
+    CHECK(test_ethernet_worker_sends_to_default_peer() == 0);
+    CHECK(test_wifi_worker_sends_to_default_peer() == 0);
+    CHECK(test_physical_worker_no_peer_records_specific_error() == 0);
+    CHECK(test_destination_cid_target_mismatch_is_released() == 0);
     CHECK(test_empty_tx_ring_is_normal() == 0);
     CHECK(test_invalid_anymsg_is_released_without_send() == 0);
     CHECK(test_send_failure_releases_frame() == 0);

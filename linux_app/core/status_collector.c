@@ -692,7 +692,8 @@ void status_collector_record_error(status_collector_t *collector,
                 (strstr(stage, "socket") != 0) ||
                 (strstr(stage, "offline") != 0) ||
                 (strstr(stage, "disabled") != 0) ||
-                (strstr(stage, "adapter_missing") != 0))) {
+                (strstr(stage, "adapter_missing") != 0) ||
+                (strstr(stage, "unavailable") != 0))) {
         m->interface_offline_count++;
     }
 
