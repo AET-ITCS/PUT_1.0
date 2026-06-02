@@ -8,9 +8,32 @@
 #include <unistd.h>
 #include <string.h>
 #include <time.h>
-#include <bluetooth/bluetooth.h>
-#include <bluetooth/rfcomm.h>
 #include <errno.h>
+#include <stdio.h>
+
+/* Fallback definitions for Linux Bluetooth sockets to avoid libbluetooth-dev dependency */
+#ifndef AF_BLUETOOTH
+#define AF_BLUETOOTH 31
+#endif
+
+#ifndef BTPROTO_RFCOMM
+#define BTPROTO_RFCOMM 3
+#endif
+
+typedef struct {
+    uint8_t b[6];
+} __attribute__((packed)) bdaddr_t;
+
+struct sockaddr_rc {
+    sa_family_t rc_family;
+    bdaddr_t    rc_bdaddr;
+    uint8_t     rc_channel;
+};
+
+static inline void bt_mac_to_str(const bdaddr_t *ba, char *str) {
+    sprintf(str, "%02X:%02X:%02X:%02X:%02X:%02X",
+            ba->b[5], ba->b[4], ba->b[3], ba->b[2], ba->b[1], ba->b[0]);
+}
 
 /**
  * @brief 蓝牙模块内部上下文结构体
@@ -297,8 +320,8 @@ static void *bluetooth_thread(void *arg) {
         c->client_fd = accept(c->listen_fd, (struct sockaddr *)&rem_addr, &opt);
         if (c->client_fd < 0) { sleep(1); continue; }
         
-        // 将配对客户端的 MAC 地址转换为可读字符串
-        ba2str(&rem_addr.rc_bdaddr, c->connected_client_addr);
+        // 将配准客户端的 MAC 地址转换为可读字符串
+        bt_mac_to_str(&rem_addr.rc_bdaddr, c->connected_client_addr);
     }
     
     if (c->config.collector != 0) {
@@ -318,9 +341,9 @@ int bluetooth_server_start(const bluetooth_config_t *config) {
     int s = socket(AF_BLUETOOTH, SOCK_STREAM, BTPROTO_RFCOMM);
     if (s < 0) return -1;
     
-    struct sockaddr_rc loc_addr = { 0 };
+    struct sockaddr_rc loc_addr;
+    memset(&loc_addr, 0, sizeof(loc_addr));
     loc_addr.rc_family = AF_BLUETOOTH;
-    loc_addr.rc_bdaddr = *BDADDR_ANY;
     loc_addr.rc_channel = config->channel > 0 ? config->channel : 1; 
     
     if (bind(s, (struct sockaddr *)&loc_addr, sizeof(loc_addr)) < 0) { close(s); return -1; }
