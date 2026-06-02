@@ -54,9 +54,9 @@ static int test_default_ethernet_config(void)
     CHECK(config.four_g_tx_peer_port == 5002u);
     CHECK(config.four_g_tx_peer_count == 0u);
     CHECK(config.rs485_enabled);
-    CHECK(strcmp(config.rs485_uart_device, "/dev/ttyS1") == 0);
+    CHECK(strcmp(config.rs485_uart_device, "/dev/ttyS4") == 0);
     CHECK(config.rs485_baudrate == 115200u);
-    CHECK(config.rs485_flags == (uint32_t)(SER_RS485_ENABLED | SER_RS485_RTS_AFTER_SEND));
+    CHECK(config.rs485_flags == (uint32_t)(SER_RS485_ENABLED | SER_RS485_RTS_ON_SEND));
     CHECK(app_config_validate(&config) == UNIFIED_OK);
     return 0;
 }
@@ -295,6 +295,11 @@ static int test_reject_invalid_rs485_config(void)
     app_config_set_defaults(&config);
     config.rs485_enabled = true;
     config.rs485_baudrate = 12345u;
+    CHECK(app_config_validate(&config) == UNIFIED_ERR_INVALID_ARG);
+
+    app_config_set_defaults(&config);
+    config.rs485_enabled = true;
+    config.rs485_flags = (uint32_t)SER_RS485_RTS_ON_SEND;
     CHECK(app_config_validate(&config) == UNIFIED_ERR_INVALID_ARG);
     return 0;
 }
