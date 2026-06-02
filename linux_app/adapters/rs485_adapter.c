@@ -283,8 +283,8 @@ void rs485_adapter_config_set_defaults(rs485_adapter_config_t *config)
     config->enabled = false;
     (void)snprintf(config->uart_device, sizeof(config->uart_device), "%s", RS485_ADAPTER_DEFAULT_DEVICE);
     config->baudrate = RS485_ADAPTER_DEFAULT_BAUDRATE;
-    /* 默认启用RS485，并在发送完毕后自动拉低RTS释放总线控制权（硬件自动流控） */
-    config->rs485_flags = SER_RS485_ENABLED | SER_RS485_RTS_AFTER_SEND;
+    /* 默认启用RS485，IOB 板 U14 的 DE/RE 由 GPIO15 高电平使能发送。 */
+    config->rs485_flags = SER_RS485_ENABLED | SER_RS485_RTS_ON_SEND;
 }
 
 /**
@@ -474,18 +474,24 @@ static int open_uart(const rs485_adapter_config_t *config, rs485_status_t *statu
 
     /* 5. 硬件流控设置，通过 ioctl 激活 Linux 驱动的 RS485 模式 */
     if (config->rs485_flags != 0u) {
+        uint32_t managed_flags;
+
         memset(&rs485conf, 0, sizeof(rs485conf));
         if (ioctl(fd, TIOCGRS485, &rs485conf) < 0) {
             record_error(status, collector, "rs485_ioctl_get", UNIFIED_ERR_INVALID_ARG);
-        } else {
-            rs485conf.flags |= config->rs485_flags;
-            /* 保证发送完毕后 RTS 引脚能够准确指示接收/发送状态(DE低电平使能接收) */
-            if ((rs485conf.flags & SER_RS485_RTS_AFTER_SEND) != 0u) {
-                rs485conf.flags &= (uint32_t)~SER_RS485_RTS_ON_SEND;
-            }
-            if (ioctl(fd, TIOCSRS485, &rs485conf) < 0) {
-                record_error(status, collector, "rs485_ioctl_set", UNIFIED_ERR_INVALID_ARG);
-            }
+            (void)close(fd);
+            return -1;
+        }
+
+        managed_flags = (uint32_t)(SER_RS485_ENABLED |
+                                   SER_RS485_RTS_ON_SEND |
+                                   SER_RS485_RTS_AFTER_SEND);
+        rs485conf.flags = (uint32_t)((rs485conf.flags & ~managed_flags) |
+                                     config->rs485_flags);
+        if (ioctl(fd, TIOCSRS485, &rs485conf) < 0) {
+            record_error(status, collector, "rs485_ioctl_set", UNIFIED_ERR_INVALID_ARG);
+            (void)close(fd);
+            return -1;
         }
     }
 
@@ -697,6 +703,11 @@ static int rs485_decode_rx(void *ctx,
 
     err = anymsg_validate_header_static_fields(header);
     if (err != UNIFIED_OK) {
+        return -1;
+    }
+
+    if (anymsg_cid_segment_from_first_byte(anymsg_source_cid_first_byte(header)) !=
+        ANYMSG_CID_SEGMENT_RS485) {
         return -1;
     }
 

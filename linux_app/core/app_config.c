@@ -146,6 +146,15 @@ static bool is_supported_rs485_baudrate(uint32_t baudrate)
     }
 }
 
+static bool is_valid_rs485_flags(uint32_t flags)
+{
+    if (flags == 0u) {
+        return true;
+    }
+
+    return (flags & (uint32_t)SER_RS485_ENABLED) != 0u;
+}
+
 static int parse_wifi_cid(const char *text, uint8_t cid[ANYMSG_CID_LENGTH])
 {
     uint32_t value;
@@ -265,7 +274,7 @@ void app_config_set_defaults(app_config_t *config)
                 sizeof(config->rs485_uart_device),
                 APP_CONFIG_RS485_DEFAULT_UART_DEVICE);
     config->rs485_baudrate = APP_CONFIG_RS485_DEFAULT_BAUDRATE;
-    config->rs485_flags = (uint32_t)(SER_RS485_ENABLED | SER_RS485_RTS_AFTER_SEND);
+    config->rs485_flags = (uint32_t)(SER_RS485_ENABLED | SER_RS485_RTS_ON_SEND);
     config->max_packets = 0u;
 }
 
@@ -677,7 +686,8 @@ unified_error_t app_config_validate(const app_config_t *config)
 
     if (config->rs485_enabled) {
         if ((config->rs485_uart_device[0] == '\0') ||
-            !is_supported_rs485_baudrate(config->rs485_baudrate)) {
+            !is_supported_rs485_baudrate(config->rs485_baudrate) ||
+            !is_valid_rs485_flags(config->rs485_flags)) {
             return UNIFIED_ERR_INVALID_ARG;
         }
     }
