@@ -43,6 +43,16 @@ static int test_default_ethernet_config(void)
     CHECK(strcmp(config.wifi_tx_peer_addr, "") == 0);
     CHECK(config.wifi_tx_peer_port == 5001u);
     CHECK(config.wifi_tx_peer_count == 0u);
+    CHECK(!config.four_g_enabled);
+    CHECK(strcmp(config.four_g_ifname, "usb0") == 0);
+    CHECK(config.four_g_bind_to_device);
+    CHECK(config.four_g_udp_enabled);
+    CHECK(config.four_g_tcp_enabled);
+    CHECK(strcmp(config.four_g_bind_addr, "0.0.0.0") == 0);
+    CHECK(config.four_g_port == 5002u);
+    CHECK(strcmp(config.four_g_tx_peer_addr, "") == 0);
+    CHECK(config.four_g_tx_peer_port == 5002u);
+    CHECK(config.four_g_tx_peer_count == 0u);
     CHECK(config.rs485_enabled);
     CHECK(strcmp(config.rs485_uart_device, "/dev/ttyS1") == 0);
     CHECK(config.rs485_baudrate == 115200u);
@@ -107,6 +117,56 @@ static int test_load_rs485_config(void)
     CHECK(strcmp(config.rs485_uart_device, "/dev/ttyUSB0") == 0);
     CHECK(config.rs485_baudrate == 57600u);
     CHECK(config.rs485_flags == 0u);
+    (void)remove(path);
+    return 0;
+}
+
+static int test_load_four_g_config(void)
+{
+    app_config_t config;
+    char path[128];
+    FILE *fp;
+    struct in_addr expected_addr;
+
+    (void)snprintf(path, sizeof(path), "/tmp/put_app_config_four_g_test_%ld.ini", (long)getpid());
+    fp = fopen(path, "w");
+    CHECK(fp != NULL);
+    fputs("[4g]\n", fp);
+    fputs("enabled = true\n", fp);
+    fputs("ifname = \"usb0\"\n", fp);
+    fputs("bind_to_device = true\n", fp);
+    fputs("udp_enabled = true\n", fp);
+    fputs("tcp_enabled = false\n", fp);
+    fputs("bind_addr = \"127.0.0.3\"\n", fp);
+    fputs("port = 6002\n", fp);
+    fputs("tx_peer_addr = \"127.0.0.12\"\n", fp);
+    fputs("tx_peer_port = 7002\n", fp);
+    fputs("tx_peer = \"0xA1000001,192.168.10.100,5002\"\n", fp);
+    fputs("tx_peer = \"0xA2000002,127.0.0.1,0\"\n", fp);
+    CHECK(fclose(fp) == 0);
+
+    app_config_set_defaults(&config);
+    CHECK(app_config_load_file(&config, path) == UNIFIED_OK);
+    CHECK(config.four_g_enabled);
+    CHECK(strcmp(config.four_g_ifname, "usb0") == 0);
+    CHECK(config.four_g_bind_to_device);
+    CHECK(config.four_g_udp_enabled);
+    CHECK(!config.four_g_tcp_enabled);
+    CHECK(strcmp(config.four_g_bind_addr, "127.0.0.3") == 0);
+    CHECK(config.four_g_port == 6002u);
+    CHECK(strcmp(config.four_g_tx_peer_addr, "127.0.0.12") == 0);
+    CHECK(config.four_g_tx_peer_port == 7002u);
+    CHECK(config.four_g_tx_peer_count == 2u);
+    CHECK(config.four_g_tx_peers[0].destination_cid[0] == 0xA1u);
+    CHECK(config.four_g_tx_peers[0].destination_cid[1] == 0x00u);
+    CHECK(config.four_g_tx_peers[0].destination_cid[2] == 0x00u);
+    CHECK(config.four_g_tx_peers[0].destination_cid[3] == 0x01u);
+    CHECK(config.four_g_tx_peers[0].port == 5002u);
+    CHECK(inet_pton(AF_INET, "192.168.10.100", &expected_addr) == 1);
+    CHECK(config.four_g_tx_peers[0].ipv4_addr_be == expected_addr.s_addr);
+    CHECK(config.four_g_tx_peers[1].destination_cid[0] == 0xA2u);
+    CHECK(config.four_g_tx_peers[1].destination_cid[3] == 0x02u);
+    CHECK(config.four_g_tx_peers[1].port == 0u);
     (void)remove(path);
     return 0;
 }
@@ -251,6 +311,28 @@ static int test_reject_wifi_with_no_transport(void)
     return 0;
 }
 
+static int test_reject_four_g_with_no_transport(void)
+{
+    app_config_t config;
+
+    app_config_set_defaults(&config);
+    config.four_g_enabled = true;
+    config.four_g_udp_enabled = false;
+    config.four_g_tcp_enabled = false;
+    CHECK(app_config_validate(&config) == UNIFIED_ERR_INVALID_ARG);
+
+    app_config_set_defaults(&config);
+    config.four_g_enabled = true;
+    config.four_g_ifname[0] = '\0';
+    CHECK(app_config_validate(&config) == UNIFIED_ERR_INVALID_ARG);
+
+    app_config_set_defaults(&config);
+    config.four_g_enabled = true;
+    config.four_g_port = 0u;
+    CHECK(app_config_validate(&config) == UNIFIED_ERR_INVALID_ARG);
+    return 0;
+}
+
 static int test_reject_invalid_tx_peer(void)
 {
     app_config_t config;
@@ -287,6 +369,23 @@ static int test_reject_invalid_tx_peer(void)
                    "%s",
                    "127.0.0.1");
     config.wifi_tx_peer_port = 0u;
+    CHECK(app_config_validate(&config) == UNIFIED_ERR_INVALID_ARG);
+
+    app_config_set_defaults(&config);
+    config.four_g_enabled = true;
+    (void)snprintf(config.four_g_tx_peer_addr,
+                   sizeof(config.four_g_tx_peer_addr),
+                   "%s",
+                   "not-an-ip");
+    CHECK(app_config_validate(&config) == UNIFIED_ERR_INVALID_ARG);
+
+    app_config_set_defaults(&config);
+    config.four_g_enabled = true;
+    (void)snprintf(config.four_g_tx_peer_addr,
+                   sizeof(config.four_g_tx_peer_addr),
+                   "%s",
+                   "127.0.0.1");
+    config.four_g_tx_peer_port = 0u;
     CHECK(app_config_validate(&config) == UNIFIED_ERR_INVALID_ARG);
     return 0;
 }
@@ -343,6 +442,58 @@ static int test_reject_invalid_wifi_tx_peer(void)
     return 0;
 }
 
+static int expect_invalid_four_g_peer_line(const char *line)
+{
+    app_config_t config;
+    char path[128];
+    FILE *fp;
+
+    (void)snprintf(path,
+                   sizeof(path),
+                   "/tmp/put_app_config_bad_four_g_peer_%ld.ini",
+                   (long)getpid());
+    fp = fopen(path, "w");
+    CHECK(fp != NULL);
+    fputs("[4g]\n", fp);
+    fputs(line, fp);
+    CHECK(fclose(fp) == 0);
+
+    app_config_set_defaults(&config);
+    CHECK(app_config_load_file(&config, path) == UNIFIED_ERR_INVALID_ARG);
+    (void)remove(path);
+    return 0;
+}
+
+static int test_reject_invalid_four_g_tx_peer(void)
+{
+    app_config_t config;
+    char path[128];
+    FILE *fp;
+
+    CHECK(expect_invalid_four_g_peer_line("tx_peer = \"0x20000001,127.0.0.1,5002\"\n") == 0);
+    CHECK(expect_invalid_four_g_peer_line("tx_peer = \"0xA1000001,not-an-ip,5002\"\n") == 0);
+    CHECK(expect_invalid_four_g_peer_line("tx_peer = \"0xA1000001,127.0.0.1,65536\"\n") == 0);
+
+    (void)snprintf(path,
+                   sizeof(path),
+                   "/tmp/put_app_config_many_four_g_peer_%ld.ini",
+                   (long)getpid());
+    fp = fopen(path, "w");
+    CHECK(fp != NULL);
+    fputs("[4g]\n", fp);
+    for (uint32_t i = 0u; i <= FOUR_G_TX_PEER_MAX; ++i) {
+        fprintf(fp, "tx_peer = \"0x%02X0000%02X,127.0.0.1,5002\"\n",
+                (unsigned)(0xA0u + (i & 0x0Fu)),
+                (unsigned)i);
+    }
+    CHECK(fclose(fp) == 0);
+
+    app_config_set_defaults(&config);
+    CHECK(app_config_load_file(&config, path) == UNIFIED_ERR_INVALID_ARG);
+    (void)remove(path);
+    return 0;
+}
+
 static int test_ignore_tx_peer_when_interface_disabled(void)
 {
     app_config_t config;
@@ -363,6 +514,15 @@ static int test_ignore_tx_peer_when_interface_disabled(void)
                    "%s",
                    "not-an-ip");
     config.wifi_tx_peer_port = 0u;
+    CHECK(app_config_validate(&config) == UNIFIED_OK);
+
+    app_config_set_defaults(&config);
+    config.four_g_enabled = false;
+    (void)snprintf(config.four_g_tx_peer_addr,
+                   sizeof(config.four_g_tx_peer_addr),
+                   "%s",
+                   "not-an-ip");
+    config.four_g_tx_peer_port = 0u;
     CHECK(app_config_validate(&config) == UNIFIED_OK);
     return 0;
 }
@@ -411,6 +571,9 @@ int main(void)
     if (test_load_rs485_config() != 0) {
         return 1;
     }
+    if (test_load_four_g_config() != 0) {
+        return 1;
+    }
     if (test_load_ethernet_config() != 0) {
         return 1;
     }
@@ -429,10 +592,16 @@ int main(void)
     if (test_reject_wifi_with_no_transport() != 0) {
         return 1;
     }
+    if (test_reject_four_g_with_no_transport() != 0) {
+        return 1;
+    }
     if (test_reject_invalid_tx_peer() != 0) {
         return 1;
     }
     if (test_reject_invalid_wifi_tx_peer() != 0) {
+        return 1;
+    }
+    if (test_reject_invalid_four_g_tx_peer() != 0) {
         return 1;
     }
     if (test_ignore_tx_peer_when_interface_disabled() != 0) {
