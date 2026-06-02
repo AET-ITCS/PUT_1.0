@@ -11,6 +11,7 @@
 #include <unistd.h>
 
 #include "app_config.h"
+#include "bluetooth_adapter.h"
 #include "can_adapter.h"
 #include "egress_manager.h"
 #include "ethernet_adapter.h"
@@ -123,7 +124,7 @@ static void configure_status_modules(status_collector_t *collector, const app_co
                                       true,
                                       config->bluetooth_enabled,
                                       "Bluetooth RFCOMM",
-                                      "Bluetooth egress unavailable until adapter binding is implemented");
+                                      "Bluetooth RFCOMM channel carries complete anyMSG; RX to Linux SHM v2");
     status_collector_configure_module(collector,
                                       STATUS_MODULE_4G,
                                       true,
@@ -199,6 +200,7 @@ int main(int argc, char **argv)
     bool wifi_tcp_started = false;
     bool four_g_udp_started = false;
     bool four_g_tcp_started = false;
+    bool bluetooth_started = false;
     bool rs485_started = false;
     int exit_code = EXIT_SUCCESS;
 
@@ -337,22 +339,6 @@ int main(int argc, char **argv)
         }
     }
 
-    if (config.bluetooth_enabled) {
-        err = UNIFIED_ERR_IPC_NOT_READY;
-        fprintf(stderr, "bluetooth adapter unavailable: adapter binding is not implemented\n");
-        status_collector_record_error(&collector,
-                                      STATUS_MODULE_BLUETOOTH,
-                                      "bluetooth_adapter_unavailable",
-                                      err);
-        (void)status_collector_write_all(&collector);
-        egress_manager_destroy(&egress_manager);
-        ethernet_tx_context_destroy(&ethernet_tx_context);
-        wifi_tx_context_destroy(&wifi_tx_context);
-        four_g_tx_context_destroy(&four_g_tx_context);
-        status_collector_destroy(&collector);
-        return EXIT_FAILURE;
-    }
-
     linux_epoch = make_linux_epoch();
     err = linux_shm_ipc_map(&ipc, 0u, PUT_SHM_REGION_SIZE, NULL);
     if (err != UNIFIED_OK) {
@@ -401,7 +387,9 @@ int main(int argc, char **argv)
     egress_config.adapters[PUT_SHM_INTERFACE_WIFI] = &wifi_adapter;
     egress_config.adapter_contexts[PUT_SHM_INTERFACE_WIFI] = &wifi_tx_context;
     egress_config.enabled[PUT_SHM_INTERFACE_WIFI] = config.wifi_enabled;
-    egress_config.enabled[PUT_SHM_INTERFACE_BLUETOOTH] = false;
+    egress_config.adapters[PUT_SHM_INTERFACE_BLUETOOTH] = &bluetooth_adapter;
+    egress_config.adapter_contexts[PUT_SHM_INTERFACE_BLUETOOTH] = NULL;
+    egress_config.enabled[PUT_SHM_INTERFACE_BLUETOOTH] = config.bluetooth_enabled;
     egress_config.adapters[PUT_SHM_INTERFACE_4G] = &four_g_adapter;
     egress_config.adapter_contexts[PUT_SHM_INTERFACE_4G] = &four_g_tx_context;
     egress_config.enabled[PUT_SHM_INTERFACE_4G] = config.four_g_enabled;
@@ -685,6 +673,29 @@ int main(int argc, char **argv)
         }
     }
 
+    if (!g_should_stop && config.bluetooth_enabled) {
+        bluetooth_config_t bt_config;
+
+        memset(&bt_config, 0, sizeof(bt_config));
+        bt_config.ipc = &ipc;
+        bt_config.collector = &collector;
+        bt_config.linux_epoch = linux_epoch;
+        bt_config.channel = config.bluetooth_channel;
+
+        if (bluetooth_server_start(&bt_config) != 0) {
+            fprintf(stderr,
+                    "failed to start bluetooth service on channel %u\n",
+                    (unsigned)config.bluetooth_channel);
+            exit_code = EXIT_FAILURE;
+            g_should_stop = 1;
+        } else {
+            bluetooth_started = true;
+            printf("linux_app: Bluetooth RFCOMM listening on channel %u, linux_epoch=%u\n",
+                   (unsigned)config.bluetooth_channel,
+                   linux_epoch);
+        }
+    }
+
     while (!g_should_stop) {
         linux_shm_ipc_stats_t stats;
 
@@ -720,6 +731,9 @@ int main(int argc, char **argv)
     }
     if (four_g_tcp_started) {
         four_g_tcp_server_stop();
+    }
+    if (bluetooth_started) {
+        bluetooth_server_stop();
     }
     if (rs485_started) {
         rs485_adapter_stop();

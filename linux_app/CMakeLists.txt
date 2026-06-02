@@ -39,6 +39,7 @@ add_library(linux_app_core STATIC
     core/status_collector.c
     egress/egress_manager.c
     egress/egress_worker.c
+    adapters/bluetooth_adapter.c
     adapters/can_adapter.c
     adapters/ethernet_adapter.c
     adapters/four_g_adapter.c
