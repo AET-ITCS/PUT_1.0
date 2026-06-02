@@ -1,6 +1,8 @@
 #include "bluetooth_adapter.h"
 #include "physical_interface_adapter.h"
 #include "status_collector.h"
+#include "shared_memory_ipc.h"
+#include "anymsg_frame.h"
 #include <pthread.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -8,173 +10,258 @@
 #include <time.h>
 #include <bluetooth/bluetooth.h>
 #include <bluetooth/rfcomm.h>
+#include <errno.h>
 
 /**
  * @brief 蓝牙模块内部上下文结构体
- * 
- * 维护蓝牙模块运行所需的底层描述符、线程状态以及统计指标上下文。
  */
 typedef struct {
-    int listen_fd;                 /**< 蓝牙服务端监听套接字描述符 */
-    int client_fd;                 /**< 当前配对连接的客户端套接字描述符 */
-    pthread_t thread;              /**< 蓝牙服务异步接收子线程句柄 */
-    bool running;                  /**< 蓝牙服务端运行状态标志 */
-    bluetooth_status_t status;     /**< 集中上报的蓝牙状态与统计指标数据结构 */
-    status_collector_t *collector; /**< 全局集中式状态快照收集器指针 */
+    int listen_fd;
+    int client_fd;
+    pthread_t thread;
+    bool running;
+    bluetooth_config_t config;
+    unified_error_t last_tx_error;
+    const char *last_tx_error_stage;
+    uint64_t rx_count;
+    uint64_t tx_count;
+    uint64_t rx_bytes;
+    uint64_t started_at_ms;
+    uint64_t last_seen_ms;
+    uint64_t last_tx_ms;
+    char connected_client_addr[128];
 } bt_ctx_t;
 
-/**
- * @brief 蓝牙模块全局唯一私有上下文实例
- */
 static bt_ctx_t g_bt_ctx = { .listen_fd = -1, .client_fd = -1, .running = false };
 
-/**
- * @brief 获取当前系统单调时间戳（毫秒）
- * 
- * @return uint64_t 当前时间的毫秒数
- */
 static uint64_t now_ms(void) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (uint64_t)ts.tv_sec * 1000ull + ts.tv_nsec / 1000000ull;
 }
 
+static uint16_t read_le16(const uint8_t bytes[2])
+{
+    return (uint16_t)((uint16_t)bytes[0] | ((uint16_t)bytes[1] << 8u));
+}
+
+static void bt_tx_record_error(bt_ctx_t *ctx, const char *stage, unified_error_t err) {
+    if (ctx) {
+        ctx->last_tx_error_stage = stage;
+        ctx->last_tx_error = err;
+    }
+}
+
 /* ---------- 适配器回调接口实现 ---------- */
 
-/**
- * @brief 获取蓝牙物理接口的最大传输单元 (MTU)
- * 
- * 蓝牙适配器受限于 v2 共享内存单 frame_buffer 的 512B 限制。
- * 
- * @param ctx 蓝牙私有上下文指针 (未显式使用)
- * @return int 返回最大传输单元，固定为 512 字节
- */
-static int bluetooth_get_mtu(void *ctx) {
+static size_t bluetooth_get_mtu(void *ctx) {
     (void)ctx;
-    return 512; 
+    return PUT_SHM_FRAME_POOL_BLOCK_SIZE;
 }
 
-/**
- * @brief 物理接收数据包的解析与合法性校验
- * 
- * 校验 anyMSG 帧的总长度是否落在合法的 [40, 512] 字节区间。
- * 
- * @param ctx 蓝牙私有上下文指针 (未显式使用)
- * @param input 待解析的原始数据缓冲区
- * @param input_len 原始数据缓冲区长度
- * @param out 解析与校验后的 anyMSG 结构输出指针 (待具体业务逻辑填充)
- * @return int 0 成功，-1 长度校验失败
- */
 static int bluetooth_decode_rx(void *ctx, const uint8_t *input, size_t input_len, adapter_rx_result_t *out) {
-    if (input_len < 40 || input_len > 512) return -1;
-    // 占位逻辑：未来在此处进行 anyMSG 头部的严格校验与输出结构填充
-    (void)ctx; (void)out;
+    const anymsg_header_t *header;
+    uint16_t msg_length;
+    uint16_t payload_length;
+    unified_error_t err;
+
+    if ((input == 0) || (out == 0)) return -1;
+    if (input_len < ANYMSG_HEADER_SIZE || input_len > PUT_SHM_FRAME_POOL_BLOCK_SIZE) return -1;
+
+    header = (const anymsg_header_t *)input;
+    msg_length = read_le16(header->msg_length);
+    payload_length = read_le16(header->payload_length);
+
+    err = anymsg_validate_normalized_lengths(msg_length, payload_length, input_len);
+    if (err != UNIFIED_OK) return -1;
+
+    err = anymsg_validate_header_static_fields(header);
+    if (err != UNIFIED_OK) return -1;
+
+    if (anymsg_cid_segment_from_first_byte(anymsg_source_cid_first_byte(header)) != ANYMSG_CID_SEGMENT_BLUETOOTH) {
+        return -1;
+    }
+
+    memset(out, 0, sizeof(*out));
+    out->data = input;
+    out->len = input_len;
+    out->msg_length = msg_length;
+    out->payload_length = payload_length;
+    memcpy(out->source_cid, header->source_cid, ANYMSG_CID_LENGTH);
+    memcpy(out->destination_cid, header->destination_cid, ANYMSG_CID_LENGTH);
+    out->type = header->type;
+
+    (void)ctx;
     return 0;
 }
 
-/**
- * @brief 经典蓝牙流式物理链路下的分包重组接口
- * 
- * 蓝牙采用两阶段精准 `recv_all` 的防黏包分包切帧策略，因此直接调用解码即可。
- * 
- * @param ctx 蓝牙私有上下文指针
- * @param input 接收数据缓冲区
- * @param input_len 数据长度
- * @param out 重组及校验输出结果
- * @return int 0 成功，非 0 失败
- */
-static int bluetooth_reassemble(void *ctx, const uint8_t *input, size_t input_len, adapter_rx_result_t *out) {
-    return bluetooth_decode_rx(ctx, input, input_len, out);
+static int bluetooth_reassemble(void *ctx, const adapter_fragment_t *fragment, anymsg_buffer_t *out_complete_msg) {
+    adapter_rx_result_t rx;
+    if ((fragment == 0) || (out_complete_msg == 0)) return -1;
+    if (bluetooth_decode_rx(ctx, fragment->data, fragment->len, &rx) != 0) return -1;
+    out_complete_msg->data = fragment->data;
+    out_complete_msg->len = fragment->len;
+    return 0;
 }
 
-/**
- * @brief 将 ready 的 anyMSG 帧打包为 RFCOMM 物理发送封包
- * 
- * @param ctx 蓝牙私有上下文指针
- * @param msg 待发送的 anyMSG 数据帧
- * @param out_packet 打包后的输出物理包
- * @return int 0 成功，非 0 失败
- */
 static int bluetooth_encapsulate(void *ctx, const anymsg_buffer_t *msg, adapter_tx_packet_t *out_packet) {
-    (void)ctx; (void)msg; (void)out_packet;
-    // 业务占位：若有蓝牙特有的物理打包封包逻辑在此实现
+    if ((msg == 0) || (out_packet == 0) || (msg->data == 0) || (msg->len == 0u)) return -1;
+    (void)ctx;
+    out_packet->data = msg->data;
+    out_packet->len = msg->len;
     return 0;
 }
 
-/**
- * @brief 发送帧超出物理 MTU 时的拆包分片接口
- * 
- * @param ctx 蓝牙私有上下文指针
- * @param msg 待拆包的 anyMSG 数据帧
- * @param out_packets 拆分后的物理分包链表
- * @return int 0 成功，非 0 失败
- */
 static int bluetooth_fragment_tx(void *ctx, const anymsg_buffer_t *msg, adapter_tx_packet_list_t *out_packets) {
-    (void)ctx; (void)msg; (void)out_packets;
-    // 业务占位：若 anyMSG 载荷超过最大物理单元，可在此执行分片拆包
+    static adapter_tx_packet_t packet;
+    if ((msg == 0) || (out_packets == 0) || (msg->data == 0) || (msg->len == 0u) || (msg->len > PUT_SHM_FRAME_POOL_BLOCK_SIZE)) return -1;
+    (void)ctx;
+    packet.data = msg->data;
+    packet.len = msg->len;
+    out_packets->packets = &packet;
+    out_packets->count = 1u;
     return 0;
 }
 
-/**
- * @brief 通过经典蓝牙 RFCOMM 通道真实发送物理数据包
- * 
- * @param ctx 蓝牙私有上下文指针（指向内部 `bt_ctx_t`）
- * @param packet 待发送的物理包描述符
- * @return int 0 发送成功，-1 链路未连接或物理发送失败
- */
 static int bluetooth_send(void *ctx, const adapter_tx_packet_t *packet) {
-    bt_ctx_t *c = (bt_ctx_t *)ctx;
-    if (!c->status.connected) return -1;
+    bt_ctx_t *c = (ctx == 0) ? &g_bt_ctx : (bt_ctx_t *)ctx;
+    
+    if ((packet == 0) || (packet->data == 0) || (packet->len < ANYMSG_HEADER_SIZE) || (packet->len > PUT_SHM_FRAME_POOL_BLOCK_SIZE)) {
+        bt_tx_record_error(c, "bt_send_packet", UNIFIED_ERR_INVALID_ARG);
+        return -1;
+    }
+
+    if (c->client_fd < 0) {
+        bt_tx_record_error(c, "bt_send_no_client", UNIFIED_ERR_IPC_OFFLINE);
+        return -1;
+    }
+    
     ssize_t sent = send(c->client_fd, packet->data, packet->len, 0);
-    if (sent != (ssize_t)packet->len) return -1;
-    c->status.tx_count++;
-    c->status.last_tx_ms = now_ms();
+    if (sent == (ssize_t)packet->len) {
+        c->tx_count++;
+        c->last_tx_ms = now_ms();
+        bt_tx_record_error(c, 0, UNIFIED_OK);
+        return 0;
+    }
+    
+    if (sent >= 0) {
+        bt_tx_record_error(c, "bt_send_short", UNIFIED_ERR_LENGTH);
+    } else if ((errno == EAGAIN) || (errno == EWOULDBLOCK) || (errno == ENOBUFS)) {
+        bt_tx_record_error(c, "bt_send_busy", UNIFIED_ERR_IPC_QUEUE_FULL);
+    } else {
+        bt_tx_record_error(c, "bt_send", UNIFIED_ERR_IPC_OFFLINE);
+    }
+    
+    return -1;
+}
+
+static int bluetooth_get_tx_error(void *ctx, adapter_tx_error_t *out_error) {
+    bt_ctx_t *c = (ctx == 0) ? &g_bt_ctx : (bt_ctx_t *)ctx;
+    if (out_error == 0) return -1;
+    if (c->last_tx_error_stage == 0 || c->last_tx_error_stage[0] == '\0') return -1;
+    out_error->stage = c->last_tx_error_stage;
+    out_error->err = c->last_tx_error;
     return 0;
 }
 
-/**
- * @brief 获取蓝牙模块当前最新的运行状态快照
- * 
- * @param ctx 蓝牙私有上下文指针
- * @param out 外部状态输出结构体指针
- * @return int 0 获取成功，-1 参数非法
- */
-static int bluetooth_get_status(void *ctx, bluetooth_status_t *out) {
-    if (!out) return -1;
-    bt_ctx_t *c = (bt_ctx_t *)ctx;
-    memcpy(out, &c->status, sizeof(bluetooth_status_t));
+static int bluetooth_status(void *ctx, void *out_status) {
+    bt_ctx_t *c = (ctx == 0) ? &g_bt_ctx : (bt_ctx_t *)ctx;
+    if (out_status == 0) return -1;
+    adapter_status_t *status = (adapter_status_t *)out_status;
+    memset(status, 0, sizeof(*status));
+    status->name = "bluetooth";
+    status->interface_id = (uint8_t)PUT_SHM_INTERFACE_BLUETOOTH;
+    status->state = c->running ? (c->client_fd >= 0 ? "connected" : "listening") : "offline";
     return 0;
+}
+
+static put_shm_interface_t route_hint_from_destination_cid(const uint8_t cid[ANYMSG_CID_LENGTH])
+{
+    switch (anymsg_cid_segment_from_first_byte(cid[0])) {
+    case ANYMSG_CID_SEGMENT_CAN: return PUT_SHM_INTERFACE_CAN;
+    case ANYMSG_CID_SEGMENT_ETHERNET: return PUT_SHM_INTERFACE_ETHERNET;
+    case ANYMSG_CID_SEGMENT_WIFI: return PUT_SHM_INTERFACE_WIFI;
+    case ANYMSG_CID_SEGMENT_BLUETOOTH: return PUT_SHM_INTERFACE_BLUETOOTH;
+    case ANYMSG_CID_SEGMENT_4G: return PUT_SHM_INTERFACE_4G;
+    case ANYMSG_CID_SEGMENT_RS485: return PUT_SHM_INTERFACE_RS485;
+    default: return PUT_SHM_INTERFACE_BLUETOOTH;
+    }
+}
+
+static unified_error_t bluetooth_adapter_submit_to_ipc(bt_ctx_t *ctx,
+                                                const uint8_t *frame,
+                                                const adapter_rx_result_t *rx)
+{
+    uint32_t frame_id;
+    uint8_t *frame_buffer;
+    uint16_t frame_capacity;
+    unified_error_t err;
+    put_shm_interface_t target_interface;
+
+    if ((ctx == 0) || (ctx->config.ipc == 0) || (frame == 0) || (rx == 0)) {
+        return UNIFIED_ERR_NULL;
+    }
+
+    err = linux_shm_frame_alloc(ctx->config.ipc,
+                                PUT_SHM_INTERFACE_BLUETOOTH,
+                                &frame_id,
+                                &frame_buffer,
+                                &frame_capacity);
+    if (err != UNIFIED_OK) {
+        return err;
+    }
+
+    if (rx->len > frame_capacity) {
+        (void)linux_shm_frame_release(ctx->config.ipc, frame_id, PUT_SHM_RECLAIM_REASON_INVALID_FRAME);
+        return UNIFIED_ERR_LENGTH;
+    }
+
+    memcpy(frame_buffer, frame, rx->len);
+    target_interface = route_hint_from_destination_cid(rx->destination_cid);
+    err = linux_shm_frame_commit_rx(ctx->config.ipc,
+                                    frame_id,
+                                    (uint16_t)rx->len,
+                                    PUT_SHM_INTERFACE_BLUETOOTH,
+                                    target_interface,
+                                    rx->source_cid,
+                                    rx->destination_cid,
+                                    rx->type,
+                                    1u, // priority normal
+                                    255u, // TTL
+                                    ctx->config.linux_epoch,
+                                    0u);
+    if (err != UNIFIED_OK) {
+        (void)linux_shm_frame_release(ctx->config.ipc, frame_id, PUT_SHM_RECLAIM_REASON_QUEUE_FULL);
+        return err;
+    }
+
+    return UNIFIED_OK;
 }
 
 /* ---------- 蓝牙服务后台接收线程 ---------- */
 
-/**
- * @brief 蓝牙服务端后台独立接收线程函数
- * 
- * 采用“动态两阶段阻塞接收”防御式设计：
- * 1. 阶段一：阻塞读取前 2 字节以获取 anyMSG 的 `msg_length`；
- * 2. 对 `msg_length` 进行边界范围校验（[40, 512] 字节），异常时断开链路触发重连；
- * 3. 阶段二：根据解析出的长度，精准读满剩余字节，规避流式套接字黏包和滑窗错位。
- * 
- * @param arg 传入的 `bt_ctx_t` 上下文指针
- * @return void* 线程返回值 (NULL)
- */
 static void *bluetooth_thread(void *arg) {
     bt_ctx_t *c = (bt_ctx_t *)arg;
+    
+    if (c->config.collector != 0) {
+        status_collector_mark_running(c->config.collector, STATUS_MODULE_BLUETOOTH);
+    }
+
     while (c->running) {
-        uint16_t msg_len = 0;
+        uint8_t len_bytes[2];
         // 阶段一：读取 2 字节的消息长度字段
-        ssize_t r = recv(c->client_fd, &msg_len, 2, MSG_WAITALL);
+        ssize_t r = recv(c->client_fd, len_bytes, 2, MSG_WAITALL);
         if (r != 2) { goto reconnect; }
         
         // 字节序转换（小端转主机字节序）
-        msg_len = le16toh(msg_len);
+        uint16_t msg_len = read_le16(len_bytes);
         
         // 消息长度合法性校验，避免脏报文影响或内存越界
-        if (msg_len < 40 || msg_len > 512) { goto reconnect; }
+        if (msg_len < ANYMSG_HEADER_SIZE || msg_len > PUT_SHM_FRAME_POOL_BLOCK_SIZE) { goto reconnect; }
         
-        uint8_t buf[512];
-        *(uint16_t *)buf = htole16(msg_len);
+        uint8_t buf[PUT_SHM_FRAME_POOL_BLOCK_SIZE];
+        buf[0] = len_bytes[0];
+        buf[1] = len_bytes[1];
         
         // 阶段二：精准接收剩余的 bytes
         r = recv(c->client_fd, buf + 2, msg_len - 2, MSG_WAITALL);
@@ -183,12 +270,19 @@ static void *bluetooth_thread(void *arg) {
         // 完整包解析与校验
         adapter_rx_result_t rx_res;
         if (bluetooth_decode_rx(c, buf, msg_len, &rx_res) == 0) {
-            // 业务占位：此处分配共享内存（Frame Pool），并将帧写入大小核 Descriptor RX Ring
-            c->status.rx_count++;
-            c->status.rx_bytes += msg_len;
-            c->status.last_seen_ms = now_ms();
-        } else {
-            c->status.parse_error_count++;
+            unified_error_t ipc_err = bluetooth_adapter_submit_to_ipc(c, buf, &rx_res);
+            if (ipc_err == UNIFIED_OK) {
+                c->rx_count++;
+                c->rx_bytes += msg_len;
+                c->last_seen_ms = now_ms();
+                if (c->config.collector) {
+                    status_collector_record_rx(c->config.collector, STATUS_MODULE_BLUETOOTH, msg_len);
+                }
+            } else if (c->config.collector) {
+                status_collector_record_error(c->config.collector, STATUS_MODULE_BLUETOOTH, "bt_ipc_submit", ipc_err);
+            }
+        } else if (c->config.collector) {
+            status_collector_record_error(c->config.collector, STATUS_MODULE_BLUETOOTH, "bt_decode", UNIFIED_ERR_INVALID_ARG);
         }
         continue;
 
@@ -196,7 +290,6 @@ static void *bluetooth_thread(void *arg) {
         // 当物理链路断开、读取失败或流对齐损坏时进入重连处理
         close(c->client_fd);
         c->client_fd = -1;
-        c->status.connected = false;
         
         // 阻塞等待外部蓝牙调试终端发起连接
         struct sockaddr_rc rem_addr;
@@ -204,23 +297,22 @@ static void *bluetooth_thread(void *arg) {
         c->client_fd = accept(c->listen_fd, (struct sockaddr *)&rem_addr, &opt);
         if (c->client_fd < 0) { sleep(1); continue; }
         
-        c->status.connected = true;
-        // 将配对客户端的 MAC 地址转换为可读字符串，存入运行状态中
-        ba2str(&rem_addr.rc_bdaddr, c->status.connected_client_addr);
+        // 将配对客户端的 MAC 地址转换为可读字符串
+        ba2str(&rem_addr.rc_bdaddr, c->connected_client_addr);
     }
+    
+    if (c->config.collector != 0) {
+        status_collector_mark_stopped(c->config.collector, STATUS_MODULE_BLUETOOTH, "bluetooth stopped");
+    }
+    
     return NULL;
 }
 
 /* ---------- 外部生命周期管理 API ---------- */
 
-/**
- * @brief 启动大核经典蓝牙 RFCOMM 服务端监听线程并注册至集中式状态收集器
- * 
- * @param collector 全局集中式状态收集器指针
- * @return int 0 启动成功，-1 启动失败
- */
-int bluetooth_server_start(status_collector_t *collector) {
+int bluetooth_server_start(const bluetooth_config_t *config) {
     if (g_bt_ctx.running) return 0;
+    if (config == 0) return -1;
     
     // 创建经典蓝牙 RFCOMM 协议族的套接字
     int s = socket(AF_BLUETOOTH, SOCK_STREAM, BTPROTO_RFCOMM);
@@ -229,61 +321,51 @@ int bluetooth_server_start(status_collector_t *collector) {
     struct sockaddr_rc loc_addr = { 0 };
     loc_addr.rc_family = AF_BLUETOOTH;
     loc_addr.rc_bdaddr = *BDADDR_ANY;
-    loc_addr.rc_channel = 1; // 默认绑定 RFCOMM Channel 1
+    loc_addr.rc_channel = config->channel > 0 ? config->channel : 1; 
     
     if (bind(s, (struct sockaddr *)&loc_addr, sizeof(loc_addr)) < 0) { close(s); return -1; }
     if (listen(s, 1) < 0) { close(s); return -1; }
     
+    memset(&g_bt_ctx, 0, sizeof(g_bt_ctx));
+    g_bt_ctx.config = *config;
     g_bt_ctx.listen_fd = s;
     g_bt_ctx.client_fd = -1;
     g_bt_ctx.running = true;
-    g_bt_ctx.collector = collector;
-    g_bt_ctx.status.enabled = true;
-    g_bt_ctx.status.listening = true;
-    g_bt_ctx.status.started_at_ms = now_ms();
-    
-    if (collector) {
-        // 注册到全局状态收集器，便于 put-webd 读取蓝牙通道的统计与连通性快照
-        status_collector_register_adapter(collector, "bluetooth", &g_bt_ctx.status);
-    }
+    g_bt_ctx.started_at_ms = now_ms();
     
     // 创建异步后台服务接收线程，保证数据切帧逻辑不阻塞主业务线程
     pthread_create(&g_bt_ctx.thread, NULL, bluetooth_thread, &g_bt_ctx);
     return 0;
 }
 
-/**
- * @brief 优雅关闭蓝牙监听服务，断开当前连接，释放系统套接字与子线程资源
- */
 void bluetooth_server_stop(void) {
     if (!g_bt_ctx.running) return;
     g_bt_ctx.running = false;
     
-    if (g_bt_ctx.client_fd >= 0) close(g_bt_ctx.client_fd);
-    if (g_bt_ctx.listen_fd >= 0) close(g_bt_ctx.listen_fd);
+    if (g_bt_ctx.client_fd >= 0) {
+        shutdown(g_bt_ctx.client_fd, SHUT_RDWR);
+        close(g_bt_ctx.client_fd);
+    }
+    if (g_bt_ctx.listen_fd >= 0) {
+        shutdown(g_bt_ctx.listen_fd, SHUT_RDWR);
+        close(g_bt_ctx.listen_fd);
+    }
     
     pthread_join(g_bt_ctx.thread, NULL);
-    g_bt_ctx.status.stopped = true;
-    
-    if (g_bt_ctx.collector) {
-        status_collector_unregister_adapter(g_bt_ctx.collector, "bluetooth");
-    }
 }
 
 /**
  * @brief 统一物理接口适配器全局实例 (Bluetooth)
- * 
- * 挂载至协议管理器后，使其拥有与其他 5 类物理介质完全一致的路由寻址和收发特征。
  */
 physical_interface_adapter_t bluetooth_adapter = {
     .name = "Bluetooth",
-    .interface_id = 0x03,
+    .interface_id = (uint8_t)PUT_SHM_INTERFACE_BLUETOOTH,
     .get_mtu = bluetooth_get_mtu,
     .decode_rx = bluetooth_decode_rx,
     .reassemble = bluetooth_reassemble,
     .encapsulate = bluetooth_encapsulate,
     .fragment_tx = bluetooth_fragment_tx,
     .send = bluetooth_send,
-    .status = (int(*)(void*, void*))bluetooth_get_status
+    .get_tx_error = bluetooth_get_tx_error,
+    .status = bluetooth_status
 };
-
