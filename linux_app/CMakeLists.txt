@@ -42,6 +42,7 @@ add_library(linux_app_core STATIC
     adapters/bluetooth_adapter.c
     adapters/can_adapter.c
     adapters/ethernet_adapter.c
+    adapters/four_g_adapter.c
     adapters/rs485_adapter.c
     adapters/wifi_adapter.c
 )
@@ -110,6 +111,13 @@ if(LINUX_APP_BUILD_TESTS)
         linux_app_core
     )
 
+    add_executable(four_g_adapter_test
+        test/four_g_adapter_test.c
+    )
+    target_link_libraries(four_g_adapter_test PRIVATE
+        linux_app_core
+    )
+
     add_executable(app_config_test
         test/app_config_test.c
     )
@@ -136,6 +144,7 @@ if(LINUX_APP_BUILD_TESTS)
         target_compile_options(ethernet_adapter_test PRIVATE -Wall -Wextra)
         target_compile_options(can_adapter_test PRIVATE -Wall -Wextra)
         target_compile_options(wifi_adapter_test PRIVATE -Wall -Wextra)
+        target_compile_options(four_g_adapter_test PRIVATE -Wall -Wextra)
         target_compile_options(app_config_test PRIVATE -Wall -Wextra)
         target_compile_options(status_collector_test PRIVATE -Wall -Wextra)
         target_compile_options(egress_worker_test PRIVATE -Wall -Wextra)
@@ -145,6 +154,7 @@ if(LINUX_APP_BUILD_TESTS)
     add_test(NAME ethernet_adapter_test COMMAND ethernet_adapter_test)
     add_test(NAME can_adapter_test COMMAND can_adapter_test)
     add_test(NAME wifi_adapter_test COMMAND wifi_adapter_test)
+    add_test(NAME four_g_adapter_test COMMAND four_g_adapter_test)
     add_test(NAME app_config_test COMMAND app_config_test)
     add_test(NAME status_collector_test COMMAND status_collector_test)
     add_test(NAME egress_worker_test COMMAND egress_worker_test)
