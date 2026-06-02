@@ -389,6 +389,7 @@ unified_error_t can_adapter_submit_to_ipc(linux_shm_ipc_t *ipc,
     uint16_t frame_capacity;
     unified_error_t err;
     put_shm_interface_t target_interface;
+    uint32_t descriptor_flags; /* 写入 RX descriptor 的 trust flags。 */
 
     if ((ipc == 0) || (frame == 0) || (rx == 0)) {
         return UNIFIED_ERR_NULL;
@@ -410,6 +411,9 @@ unified_error_t can_adapter_submit_to_ipc(linux_shm_ipc_t *ipc,
 
     memcpy(frame_buffer, frame, rx->len);
     target_interface = route_hint_from_destination_cid(rx->destination_cid);
+    descriptor_flags = (rx->trust_flags & PUT_SHM_DESCRIPTOR_TRUST_FLAG_MASK) |
+                       PUT_SHM_DESCRIPTOR_FLAG_INTERNAL_TRUSTED |
+                       PUT_SHM_DESCRIPTOR_FLAG_CONTROL_ALLOWED;
     err = linux_shm_frame_commit_rx(ipc,
                                     frame_id,
                                     (uint16_t)rx->len,
@@ -421,7 +425,7 @@ unified_error_t can_adapter_submit_to_ipc(linux_shm_ipc_t *ipc,
                                     CAN_ADAPTER_DEFAULT_PRIORITY,
                                     CAN_ADAPTER_DEFAULT_TTL,
                                     linux_epoch,
-                                    0u);
+                                    descriptor_flags);
     if (err != UNIFIED_OK) {
         (void)linux_shm_frame_release(ipc, frame_id, PUT_SHM_RECLAIM_REASON_QUEUE_FULL);
         return err;

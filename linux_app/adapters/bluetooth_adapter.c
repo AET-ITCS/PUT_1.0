@@ -220,6 +220,7 @@ static unified_error_t bluetooth_adapter_submit_to_ipc(bt_ctx_t *ctx,
     uint16_t frame_capacity;
     unified_error_t err;
     put_shm_interface_t target_interface;
+    uint32_t descriptor_flags; /* 写入 RX descriptor 的 trust flags。 */
 
     if ((ctx == 0) || (ctx->config.ipc == 0) || (frame == 0) || (rx == 0)) {
         return UNIFIED_ERR_NULL;
@@ -241,6 +242,7 @@ static unified_error_t bluetooth_adapter_submit_to_ipc(bt_ctx_t *ctx,
 
     memcpy(frame_buffer, frame, rx->len);
     target_interface = route_hint_from_destination_cid(rx->destination_cid);
+    descriptor_flags = rx->trust_flags & PUT_SHM_DESCRIPTOR_TRUST_FLAG_MASK;
     err = linux_shm_frame_commit_rx(ctx->config.ipc,
                                     frame_id,
                                     (uint16_t)rx->len,
@@ -252,7 +254,7 @@ static unified_error_t bluetooth_adapter_submit_to_ipc(bt_ctx_t *ctx,
                                     1u, // priority normal
                                     255u, // TTL
                                     ctx->config.linux_epoch,
-                                    0u);
+                                    descriptor_flags);
     if (err != UNIFIED_OK) {
         (void)linux_shm_frame_release(ctx->config.ipc, frame_id, PUT_SHM_RECLAIM_REASON_QUEUE_FULL);
         return err;

@@ -19,6 +19,11 @@
         }                                                                           \
     } while (0)
 
+/** @brief recovery 测试默认授权 trust flags。 */
+#define TEST_DESCRIPTOR_TRUST_FLAGS                                                \
+    (PUT_SHM_DESCRIPTOR_FLAG_AUTH_OK | PUT_SHM_DESCRIPTOR_FLAG_INTEGRITY_OK |       \
+     PUT_SHM_DESCRIPTOR_FLAG_REPLAY_OK | PUT_SHM_DESCRIPTOR_FLAG_CONTROL_ALLOWED)
+
 typedef struct {
     uint32_t now_ms; /**< 当前测试时间。 */
 } test_clock_t;
@@ -119,7 +124,7 @@ static int publish_frame(linux_shm_ipc_t *linux_ipc,
                                     2u,
                                     0u,
                                     11u,
-                                    0u) == UNIFIED_OK);
+                                    TEST_DESCRIPTOR_TRUST_FLAGS) == UNIFIED_OK);
     return 0;
 }
 

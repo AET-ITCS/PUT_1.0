@@ -203,6 +203,8 @@ static int test_ipc_route_hints_enter_can_rx_ring(void)
         CHECK(ring->descriptors[i].priority == CAN_ADAPTER_DEFAULT_PRIORITY);
         CHECK(ring->descriptors[i].ttl == CAN_ADAPTER_DEFAULT_TTL);
         CHECK(ring->descriptors[i].epoch == 1234u);
+        CHECK((ring->descriptors[i].flags & PUT_SHM_DESCRIPTOR_FLAG_INTERNAL_TRUSTED) != 0u);
+        CHECK((ring->descriptors[i].flags & PUT_SHM_DESCRIPTOR_FLAG_CONTROL_ALLOWED) != 0u);
     }
 
     CHECK(ring->producer.write_seq == 8u);

@@ -21,6 +21,14 @@
         }                                                                           \
     } while (0)
 
+/** @brief 测试 descriptor 诊断高位，避开低 5 位 trust flags。 */
+#define TEST_DESCRIPTOR_DIAGNOSTIC_FLAGS (0x55000000u)
+
+/** @brief 测试默认授权 trust flags。 */
+#define TEST_DESCRIPTOR_TRUST_FLAGS                                                \
+    (PUT_SHM_DESCRIPTOR_FLAG_AUTH_OK | PUT_SHM_DESCRIPTOR_FLAG_INTEGRITY_OK |       \
+     PUT_SHM_DESCRIPTOR_FLAG_REPLAY_OK | PUT_SHM_DESCRIPTOR_FLAG_CONTROL_ALLOWED)
+
 /**
  * @brief 测试时钟。
  */
@@ -267,21 +275,23 @@ static int setup_system(linux_shm_ipc_t *linux_ipc,
  * @param epoch Linux epoch。
  * @param local_time local_time。
  * @param payload_length payload 长度。
+ * @param descriptor_flags descriptor flags。
  * @param out_frame_id 输出 frame_id。
  * @return 0 表示成功。
  */
-static int publish_frame(linux_shm_ipc_t *linux_ipc,
-                         put_shm_interface_t source_interface,
-                         put_shm_interface_t target_interface,
-                         const uint8_t source_cid[ANYMSG_CID_LENGTH],
-                         const uint8_t destination_cid[ANYMSG_CID_LENGTH],
-                         uint8_t type,
-                         uint8_t priority,
-                         uint8_t ttl,
-                         uint32_t epoch,
-                         uint32_t local_time,
-                         uint16_t payload_length,
-                         uint32_t *out_frame_id)
+static int publish_frame_with_flags(linux_shm_ipc_t *linux_ipc,
+                                    put_shm_interface_t source_interface,
+                                    put_shm_interface_t target_interface,
+                                    const uint8_t source_cid[ANYMSG_CID_LENGTH],
+                                    const uint8_t destination_cid[ANYMSG_CID_LENGTH],
+                                    uint8_t type,
+                                    uint8_t priority,
+                                    uint8_t ttl,
+                                    uint32_t epoch,
+                                    uint32_t local_time,
+                                    uint16_t payload_length,
+                                    uint32_t descriptor_flags,
+                                    uint32_t *out_frame_id)
 {
     uint8_t *buffer;       /**< Frame Pool buffer。 */
     uint16_t capacity;     /**< Frame Pool block 容量。 */
@@ -310,8 +320,56 @@ static int publish_frame(linux_shm_ipc_t *linux_ipc,
                                     priority,
                                     ttl,
                                     epoch,
-                                    0x55000000u | *out_frame_id) == UNIFIED_OK);
+                                    descriptor_flags) == UNIFIED_OK);
     return 0;
+}
+
+/**
+ * @brief 分配并发布一帧已授权 RX descriptor。
+ *
+ * @param linux_ipc Linux IPC。
+ * @param source_interface 来源接口。
+ * @param target_interface descriptor 初始目标接口。
+ * @param source_cid source CID。
+ * @param destination_cid destination CID。
+ * @param type anyMSG type。
+ * @param priority priority。
+ * @param ttl ttl。
+ * @param epoch Linux epoch。
+ * @param local_time local_time。
+ * @param payload_length payload 长度。
+ * @param out_frame_id 输出 frame_id。
+ * @return 0 表示成功。
+ */
+static int publish_frame(linux_shm_ipc_t *linux_ipc,
+                         put_shm_interface_t source_interface,
+                         put_shm_interface_t target_interface,
+                         const uint8_t source_cid[ANYMSG_CID_LENGTH],
+                         const uint8_t destination_cid[ANYMSG_CID_LENGTH],
+                         uint8_t type,
+                         uint8_t priority,
+                         uint8_t ttl,
+                         uint32_t epoch,
+                         uint32_t local_time,
+                         uint16_t payload_length,
+                         uint32_t *out_frame_id)
+{
+    uint32_t descriptor_flags; /**< 显式授权的 descriptor flags。 */
+
+    descriptor_flags = TEST_DESCRIPTOR_DIAGNOSTIC_FLAGS | TEST_DESCRIPTOR_TRUST_FLAGS;
+    return publish_frame_with_flags(linux_ipc,
+                                    source_interface,
+                                    target_interface,
+                                    source_cid,
+                                    destination_cid,
+                                    type,
+                                    priority,
+                                    ttl,
+                                    epoch,
+                                    local_time,
+                                    payload_length,
+                                    descriptor_flags,
+                                    out_frame_id);
 }
 
 /**
@@ -579,6 +637,161 @@ static int test_invalid_descriptor_no_reclaim(void)
     CHECK(g_region.reclaim_ring.producer.write_seq == 0u);
     rtos_tasks_get_statistics(&tasks, &statistics);
     CHECK(statistics.invalid_descriptor_no_reclaim_count == 1u);
+    return 0;
+}
+
+/**
+ * @brief 验证外部入口 trust flags 保护控制路径。
+ *
+ * @return 0 表示通过。
+ */
+static int test_external_trust_flags_gate_control_path(void)
+{
+    linux_shm_ipc_t linux_ipc;             /**< Linux IPC。 */
+    rtos_shm_ipc_t rtos_ipc;               /**< RTOS IPC。 */
+    rtos_tasks_context_t tasks;            /**< P2 task 上下文。 */
+    test_clock_t clock;                    /**< 测试时钟。 */
+    uint8_t source_cid[ANYMSG_CID_LENGTH]; /**< Wi-Fi source CID。 */
+    uint8_t destination_cid[ANYMSG_CID_LENGTH]; /**< CAN destination CID。 */
+    uint32_t frame_id;                     /**< frame_id。 */
+    uint32_t auth_only_flags;              /**< 缺少 CONTROL_ALLOWED 的外部授权 flags。 */
+    uint32_t full_control_flags;           /**< 完整控制授权 flags。 */
+    rtos_router_statistics_t router_stats; /**< 路由统计。 */
+
+    make_cid(ANYMSG_CID_WIFI_MIN, 1u, source_cid);
+    make_cid(ANYMSG_CID_CAN_MIN, 2u, destination_cid);
+
+    CHECK(setup_system(&linux_ipc, &rtos_ipc, &tasks, 0, &clock) == 0);
+    CHECK(publish_frame_with_flags(&linux_ipc,
+                                   PUT_SHM_INTERFACE_WIFI,
+                                   PUT_SHM_INTERFACE_CAN,
+                                   source_cid,
+                                   destination_cid,
+                                   ANYMSG_TYPE_RAW_CAN,
+                                   2u,
+                                   0u,
+                                   11u,
+                                   1u,
+                                   0u,
+                                   0u,
+                                   &frame_id) == 0);
+    CHECK(rtos_ipc_event_task_run_once(&tasks, RTOS_IPC_EVENT_TRIGGER_PERIODIC) == 1u);
+    CHECK(g_region.reclaim_ring.descriptors[0].reason ==
+          (uint32_t)PUT_SHM_RECLAIM_REASON_INVALID_FRAME);
+    rtos_router_get_statistics(&tasks.router, &router_stats);
+    CHECK(router_stats.auth_failed_count == 1u);
+
+    auth_only_flags = PUT_SHM_DESCRIPTOR_FLAG_AUTH_OK |
+                      PUT_SHM_DESCRIPTOR_FLAG_INTEGRITY_OK |
+                      PUT_SHM_DESCRIPTOR_FLAG_REPLAY_OK;
+    CHECK(setup_system(&linux_ipc, &rtos_ipc, &tasks, 0, &clock) == 0);
+    CHECK(publish_frame_with_flags(&linux_ipc,
+                                   PUT_SHM_INTERFACE_WIFI,
+                                   PUT_SHM_INTERFACE_CAN,
+                                   source_cid,
+                                   destination_cid,
+                                   ANYMSG_TYPE_RAW_CAN,
+                                   2u,
+                                   0u,
+                                   11u,
+                                   1u,
+                                   0u,
+                                   auth_only_flags,
+                                   &frame_id) == 0);
+    CHECK(rtos_ipc_event_task_run_once(&tasks, RTOS_IPC_EVENT_TRIGGER_PERIODIC) == 1u);
+    CHECK(g_region.reclaim_ring.descriptors[0].reason ==
+          (uint32_t)PUT_SHM_RECLAIM_REASON_INVALID_FRAME);
+    rtos_router_get_statistics(&tasks.router, &router_stats);
+    CHECK(router_stats.auth_failed_count == 1u);
+
+    full_control_flags = auth_only_flags | PUT_SHM_DESCRIPTOR_FLAG_CONTROL_ALLOWED;
+    CHECK(setup_system(&linux_ipc, &rtos_ipc, &tasks, 0, &clock) == 0);
+    CHECK(publish_frame_with_flags(&linux_ipc,
+                                   PUT_SHM_INTERFACE_WIFI,
+                                   PUT_SHM_INTERFACE_CAN,
+                                   source_cid,
+                                   destination_cid,
+                                   ANYMSG_TYPE_RAW_CAN,
+                                   2u,
+                                   0u,
+                                   11u,
+                                   1u,
+                                   0u,
+                                   full_control_flags,
+                                   &frame_id) == 0);
+    CHECK(rtos_ipc_event_task_run_once(&tasks, RTOS_IPC_EVENT_TRIGGER_PERIODIC) == 1u);
+    CHECK(g_region.reclaim_ring.producer.write_seq == 0u);
+    CHECK(rtos_router_scheduler_task_run_once(&tasks, 1u) == 1u);
+    CHECK(g_region.tx_rings[PUT_SHM_INTERFACE_CAN].producer.write_seq == 1u);
+    return 0;
+}
+
+/**
+ * @brief 验证完整性和重放 trust flags 映射到独立统计。
+ *
+ * @return 0 表示通过。
+ */
+static int test_external_integrity_and_replay_flags_are_required(void)
+{
+    linux_shm_ipc_t linux_ipc;             /**< Linux IPC。 */
+    rtos_shm_ipc_t rtos_ipc;               /**< RTOS IPC。 */
+    rtos_tasks_context_t tasks;            /**< P2 task 上下文。 */
+    test_clock_t clock;                    /**< 测试时钟。 */
+    uint8_t source_cid[ANYMSG_CID_LENGTH]; /**< Wi-Fi source CID。 */
+    uint8_t destination_cid[ANYMSG_CID_LENGTH]; /**< CAN destination CID。 */
+    uint32_t frame_id;                     /**< frame_id。 */
+    uint32_t missing_integrity_flags;      /**< 缺少 INTEGRITY_OK 的 flags。 */
+    uint32_t missing_replay_flags;         /**< 缺少 REPLAY_OK 的 flags。 */
+    rtos_router_statistics_t router_stats; /**< 路由统计。 */
+
+    make_cid(ANYMSG_CID_WIFI_MIN, 1u, source_cid);
+    make_cid(ANYMSG_CID_CAN_MIN, 2u, destination_cid);
+    missing_integrity_flags = PUT_SHM_DESCRIPTOR_FLAG_AUTH_OK |
+                              PUT_SHM_DESCRIPTOR_FLAG_REPLAY_OK |
+                              PUT_SHM_DESCRIPTOR_FLAG_CONTROL_ALLOWED;
+    missing_replay_flags = PUT_SHM_DESCRIPTOR_FLAG_AUTH_OK |
+                           PUT_SHM_DESCRIPTOR_FLAG_INTEGRITY_OK |
+                           PUT_SHM_DESCRIPTOR_FLAG_CONTROL_ALLOWED;
+
+    CHECK(setup_system(&linux_ipc, &rtos_ipc, &tasks, 0, &clock) == 0);
+    CHECK(publish_frame_with_flags(&linux_ipc,
+                                   PUT_SHM_INTERFACE_WIFI,
+                                   PUT_SHM_INTERFACE_CAN,
+                                   source_cid,
+                                   destination_cid,
+                                   ANYMSG_TYPE_RAW_CAN,
+                                   2u,
+                                   0u,
+                                   11u,
+                                   1u,
+                                   0u,
+                                   missing_integrity_flags,
+                                   &frame_id) == 0);
+    CHECK(rtos_ipc_event_task_run_once(&tasks, RTOS_IPC_EVENT_TRIGGER_PERIODIC) == 1u);
+    rtos_router_get_statistics(&tasks.router, &router_stats);
+    CHECK(router_stats.integrity_failed_count == 1u);
+    CHECK(g_region.reclaim_ring.descriptors[0].reason ==
+          (uint32_t)PUT_SHM_RECLAIM_REASON_INVALID_FRAME);
+
+    CHECK(setup_system(&linux_ipc, &rtos_ipc, &tasks, 0, &clock) == 0);
+    CHECK(publish_frame_with_flags(&linux_ipc,
+                                   PUT_SHM_INTERFACE_WIFI,
+                                   PUT_SHM_INTERFACE_CAN,
+                                   source_cid,
+                                   destination_cid,
+                                   ANYMSG_TYPE_RAW_CAN,
+                                   2u,
+                                   0u,
+                                   11u,
+                                   1u,
+                                   0u,
+                                   missing_replay_flags,
+                                   &frame_id) == 0);
+    CHECK(rtos_ipc_event_task_run_once(&tasks, RTOS_IPC_EVENT_TRIGGER_PERIODIC) == 1u);
+    rtos_router_get_statistics(&tasks.router, &router_stats);
+    CHECK(router_stats.replay_dropped_count == 1u);
+    CHECK(g_region.reclaim_ring.descriptors[0].reason ==
+          (uint32_t)PUT_SHM_RECLAIM_REASON_INVALID_FRAME);
     return 0;
 }
 
@@ -901,6 +1114,8 @@ int main(void)
     CHECK(test_heartbeat_reclaim() == 0);
     CHECK(test_reclaim_reasons() == 0);
     CHECK(test_invalid_descriptor_no_reclaim() == 0);
+    CHECK(test_external_trust_flags_gate_control_path() == 0);
+    CHECK(test_external_integrity_and_replay_flags_are_required() == 0);
     CHECK(test_periodic_drain_after_pending_failure() == 0);
     CHECK(test_tx_ring_full_reclaims() == 0);
     CHECK(test_reclaim_full_blocks_and_recovers() == 0);

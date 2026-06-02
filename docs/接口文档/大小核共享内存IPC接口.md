@@ -154,6 +154,26 @@ Frame Pool 当前采用固定 block 模型：`frame_offset` 必须等于 `frame_
 
 接口一致性是 descriptor 格式校验的一部分：RX ring 出队时要求 `source_interface == ring.interface_id`，TX ring 出队时要求 `target_interface == ring.interface_id`。校验失败时消费坏 descriptor、递增 `format_error_count`，避免 ring 被坏元素永久卡住。
 
+### 3.5 descriptor trust flags
+
+`flags` 的低 5 位冻结为入口可信性 ABI，其他高位仍保留给诊断或后续业务标志。Linux 入口适配层写 RX descriptor 时必须显式设置这些位，RTOS 只根据这些位判断是否允许进入路由调度：
+
+| flag | bit | 含义 |
+| ---- | ---: | ---- |
+| `PUT_SHM_DESCRIPTOR_FLAG_AUTH_OK` | 0 | Linux 已完成外部入口鉴权 |
+| `PUT_SHM_DESCRIPTOR_FLAG_INTEGRITY_OK` | 1 | Linux 已完成业务完整性检查 |
+| `PUT_SHM_DESCRIPTOR_FLAG_REPLAY_OK` | 2 | Linux 已完成重放保护检查 |
+| `PUT_SHM_DESCRIPTOR_FLAG_INTERNAL_TRUSTED` | 3 | Linux 明确标记为内部可信入口 |
+| `PUT_SHM_DESCRIPTOR_FLAG_CONTROL_ALLOWED` | 4 | Linux 明确授权进入高优先级或 CAN/RS485 控制路径 |
+
+入口规则：
+
+1. Wi-Fi、Ethernet、Bluetooth、4G 默认不带任何 trust flag；接入层完成鉴权、完整性和重放检查后，才可设置 `AUTH_OK | INTEGRITY_OK | REPLAY_OK`。
+2. CAN、RS485 等内部入口可设置 `INTERNAL_TRUSTED`；需要进入控制路径时还应设置 `CONTROL_ALLOWED`。
+3. 外部入口访问 priority 0/1 或目的 CID 落入 CAN/RS485 段时，除 `AUTH_OK | INTEGRITY_OK | REPLAY_OK` 外，还必须设置 `CONTROL_ALLOWED`。
+4. RTOS 不使用 anyMSG `verify_string` 作为共享内存入口鉴权依据；descriptor CRC 只保护共享内存元数据搬运。
+5. 未通过 trust 检查的 descriptor 按非法帧处理，RTOS 不进入 Router Scheduler，并通过 reclaim ring 通知 Linux 回收 Frame Pool。
+
 ---
 
 ## 4. Pending Bitmap 与 Doorbell

@@ -308,6 +308,7 @@ static unified_error_t rs485_adapter_submit_to_ipc(rs485_adapter_state_t *state,
     unified_error_t err;
     anymsg_header_t *header;
     uint16_t msg_length;
+    uint32_t descriptor_flags; /* 写入 RX descriptor 的 trust flags。 */
 
     if ((state == 0) || (state->config.ipc == 0) || (payload == 0) || (payload_len == 0u)) {
         return UNIFIED_ERR_NULL;
@@ -348,6 +349,8 @@ static unified_error_t rs485_adapter_submit_to_ipc(rs485_adapter_state_t *state,
 
     /* 3. 拷贝裸数据到 payload 区域 */
     memcpy(frame_buffer + ANYMSG_HEADER_SIZE, payload, payload_len);
+    descriptor_flags = PUT_SHM_DESCRIPTOR_FLAG_INTERNAL_TRUSTED |
+                       PUT_SHM_DESCRIPTOR_FLAG_CONTROL_ALLOWED;
 
     /* 4. 提交该帧到共享内存接收环形队列 */
     err = linux_shm_frame_commit_rx(state->config.ipc,
@@ -361,7 +364,7 @@ static unified_error_t rs485_adapter_submit_to_ipc(rs485_adapter_state_t *state,
                                     0u,
                                     0u,
                                     state->config.linux_epoch,
-                                    0u);
+                                    descriptor_flags);
     if (err != UNIFIED_OK) {
         /* 如果队列满了提交失败，则必须主动释放释放占用的缓冲区 */
         (void)linux_shm_frame_release(state->config.ipc, frame_id, PUT_SHM_RECLAIM_REASON_QUEUE_FULL);

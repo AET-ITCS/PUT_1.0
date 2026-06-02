@@ -19,6 +19,14 @@
         }                                                                           \
     } while (0)
 
+/** @brief host loop 测试默认授权 trust flags。 */
+#define TEST_DESCRIPTOR_TRUST_FLAGS                                                \
+    (PUT_SHM_DESCRIPTOR_FLAG_AUTH_OK | PUT_SHM_DESCRIPTOR_FLAG_INTEGRITY_OK |       \
+     PUT_SHM_DESCRIPTOR_FLAG_REPLAY_OK | PUT_SHM_DESCRIPTOR_FLAG_CONTROL_ALLOWED)
+
+/** @brief host loop 测试 descriptor 诊断高位，避开 trust 低位。 */
+#define TEST_DESCRIPTOR_DIAGNOSTIC_FLAGS (0x66000000u)
+
 /**
  * @brief 测试时钟。
  */
@@ -183,6 +191,7 @@ static int publish_frame(linux_shm_ipc_t *linux_ipc,
     uint8_t *buffer;       /**< Frame Pool buffer。 */
     uint16_t capacity;     /**< Frame Pool block 容量。 */
     uint16_t frame_length; /**< 完整帧长度。 */
+    uint32_t descriptor_flags; /**< 写入 RX descriptor 的 flags。 */
 
     CHECK(linux_shm_frame_alloc(linux_ipc,
                                 source_interface,
@@ -196,6 +205,7 @@ static int publish_frame(linux_shm_ipc_t *linux_ipc,
                                 destination_cid,
                                 type,
                                 local_time);
+    descriptor_flags = TEST_DESCRIPTOR_DIAGNOSTIC_FLAGS | TEST_DESCRIPTOR_TRUST_FLAGS;
     CHECK(linux_shm_frame_commit_rx(linux_ipc,
                                     *out_frame_id,
                                     frame_length,
@@ -207,7 +217,7 @@ static int publish_frame(linux_shm_ipc_t *linux_ipc,
                                     priority,
                                     ttl,
                                     epoch,
-                                    0x66000000u | *out_frame_id) == UNIFIED_OK);
+                                    descriptor_flags) == UNIFIED_OK);
     return 0;
 }
 

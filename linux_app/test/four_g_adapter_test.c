@@ -92,6 +92,7 @@ static int test_valid_udp_anymsg_enters_four_g_rx_ring(void)
     CHECK(descriptor->priority == FOUR_G_ADAPTER_DEFAULT_PRIORITY);
     CHECK(descriptor->ttl == FOUR_G_ADAPTER_DEFAULT_TTL);
     CHECK(descriptor->epoch == 1234u);
+    CHECK((descriptor->flags & PUT_SHM_DESCRIPTOR_TRUST_FLAG_MASK) == 0u);
 
     linux_shm_ipc_get_stats(&ipc, &stats);
     CHECK(stats.frame_pool.used == 1u);

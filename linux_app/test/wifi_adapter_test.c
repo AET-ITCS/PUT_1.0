@@ -92,11 +92,37 @@ static int test_valid_udp_anymsg_enters_wifi_rx_ring(void)
     CHECK(descriptor->priority == WIFI_ADAPTER_DEFAULT_PRIORITY);
     CHECK(descriptor->ttl == WIFI_ADAPTER_DEFAULT_TTL);
     CHECK(descriptor->epoch == 1234u);
+    CHECK((descriptor->flags & PUT_SHM_DESCRIPTOR_TRUST_FLAG_MASK) == 0u);
 
     linux_shm_ipc_get_stats(&ipc, &stats);
     CHECK(stats.frame_pool.used == 1u);
     CHECK(stats.frame_pool.high_watermark == 1u);
     CHECK(stats.rx_rings[PUT_SHM_INTERFACE_WIFI].used == 1u);
+    return 0;
+}
+
+static int test_explicit_wifi_trust_flags_enter_descriptor(void)
+{
+    linux_shm_ipc_t ipc;
+    adapter_rx_result_t rx;
+    put_shm_descriptor_ring_t *ring;
+    uint8_t frame[PUT_SHM_FRAME_POOL_BLOCK_SIZE + 1u];
+    size_t frame_len;
+    uint32_t trust_flags;
+
+    CHECK(setup_ipc(&ipc, 1235u) == 0);
+    frame_len = make_anymsg(frame, 4u, 0x60u, 0x20u);
+    CHECK(wifi_adapter_decode_datagram(frame, frame_len, &rx) == UNIFIED_OK);
+    trust_flags = PUT_SHM_DESCRIPTOR_FLAG_AUTH_OK |
+                  PUT_SHM_DESCRIPTOR_FLAG_INTEGRITY_OK |
+                  PUT_SHM_DESCRIPTOR_FLAG_REPLAY_OK |
+                  PUT_SHM_DESCRIPTOR_FLAG_CONTROL_ALLOWED;
+    rx.trust_flags = trust_flags;
+
+    CHECK(wifi_adapter_submit_to_ipc(&ipc, frame, &rx, 1235u) == UNIFIED_OK);
+    ring = &g_region.rx_rings[PUT_SHM_INTERFACE_WIFI];
+    CHECK((ring->descriptors[0].flags & PUT_SHM_DESCRIPTOR_TRUST_FLAG_MASK) ==
+          trust_flags);
     return 0;
 }
 
@@ -470,6 +496,9 @@ int main(void)
         return 1;
     }
     if (test_decode_rejects_invalid_udp_anymsg() != 0) {
+        return 1;
+    }
+    if (test_explicit_wifi_trust_flags_enter_descriptor() != 0) {
         return 1;
     }
     if (test_decode_errors_are_counted() != 0) {
