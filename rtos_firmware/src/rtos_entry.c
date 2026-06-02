@@ -38,3 +38,40 @@ unified_error_t rtos_firmware_main(void)
 
     return UNIFIED_OK;
 }
+
+/**
+ * @brief 初始化正式 runtime 入口上下文。
+ *
+ * @param runtime runtime 上下文。
+ * @param config runtime 初始化配置。
+ * @return UNIFIED_OK 表示初始化成功，否则返回公共错误码。
+ */
+unified_error_t rtos_firmware_runtime_init(rtos_runtime_context_t *runtime,
+                                           const rtos_runtime_config_t *config)
+{
+    unified_error_t result; /**< 当前 runtime 初始化结果。 */
+
+    result = rtos_runtime_init(runtime, config);
+    if (result != UNIFIED_OK) {
+        /* runtime 初始化失败时由调用方决定是否进入板级 recovery。 */
+        return result;
+    }
+
+    return UNIFIED_OK;
+}
+
+/**
+ * @brief 单步执行正式 runtime 入口。
+ *
+ * @param runtime runtime 上下文。
+ * @param trigger 本轮触发来源。
+ * @return 本轮处理动作数量。
+ */
+uint32_t rtos_firmware_runtime_run_once(rtos_runtime_context_t *runtime,
+                                        rtos_runtime_trigger_t trigger)
+{
+    uint32_t processed_count; /**< 本轮处理动作数量。 */
+
+    processed_count = rtos_runtime_run_once(runtime, trigger);
+    return processed_count;
+}

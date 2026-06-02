@@ -7,6 +7,7 @@
 #include <stdint.h>
 
 #include "error_code.h"
+#include "four_g_adapter.h"
 #include "wifi_adapter.h"
 
 #ifdef __cplusplus
@@ -36,6 +37,16 @@ extern "C" {
 #define APP_CONFIG_WIFI_DEFAULT_TCP_ENABLED true
 #define APP_CONFIG_WIFI_DEFAULT_TX_PEER_ADDR ""
 #define APP_CONFIG_WIFI_DEFAULT_TX_PEER_PORT APP_CONFIG_WIFI_DEFAULT_PORT
+#define APP_CONFIG_FOUR_G_IFNAME_MAX FOUR_G_ADAPTER_IFNAME_MAX
+#define APP_CONFIG_FOUR_G_DEFAULT_IFNAME FOUR_G_ADAPTER_DEFAULT_IFNAME
+#define APP_CONFIG_FOUR_G_BIND_ADDR_MAX 64u
+#define APP_CONFIG_FOUR_G_DEFAULT_BIND_ADDR FOUR_G_ADAPTER_DEFAULT_BIND_ADDR
+#define APP_CONFIG_FOUR_G_DEFAULT_PORT FOUR_G_ADAPTER_DEFAULT_PORT
+#define APP_CONFIG_FOUR_G_DEFAULT_UDP_ENABLED true
+#define APP_CONFIG_FOUR_G_DEFAULT_TCP_ENABLED true
+#define APP_CONFIG_FOUR_G_DEFAULT_BIND_TO_DEVICE true
+#define APP_CONFIG_FOUR_G_DEFAULT_TX_PEER_ADDR ""
+#define APP_CONFIG_FOUR_G_DEFAULT_TX_PEER_PORT APP_CONFIG_FOUR_G_DEFAULT_PORT
 #define APP_CONFIG_RS485_UART_DEVICE_MAX 64u
 #define APP_CONFIG_RS485_DEFAULT_UART_DEVICE "/dev/ttyS4"
 #define APP_CONFIG_RS485_DEFAULT_BAUDRATE 115200u
@@ -73,6 +84,18 @@ typedef struct {
 
     bool bluetooth_enabled;
     uint8_t bluetooth_channel;
+
+    bool four_g_enabled;
+    char four_g_ifname[APP_CONFIG_FOUR_G_IFNAME_MAX];
+    bool four_g_bind_to_device;
+    bool four_g_udp_enabled;
+    bool four_g_tcp_enabled;
+    char four_g_bind_addr[APP_CONFIG_FOUR_G_BIND_ADDR_MAX];
+    uint16_t four_g_port;
+    char four_g_tx_peer_addr[APP_CONFIG_FOUR_G_BIND_ADDR_MAX];
+    uint16_t four_g_tx_peer_port;
+    size_t four_g_tx_peer_count;
+    four_g_tx_peer_t four_g_tx_peers[FOUR_G_TX_PEER_MAX];
 
     bool rs485_enabled;
     char rs485_uart_device[APP_CONFIG_RS485_UART_DEVICE_MAX];
