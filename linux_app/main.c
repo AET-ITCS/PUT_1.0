@@ -15,6 +15,7 @@
 #include "egress_manager.h"
 #include "ethernet_adapter.h"
 #include "linux_shm_ipc.h"
+#include "rs485_adapter.h"
 #include "status_collector.h"
 #include "wifi_adapter.h"
 
@@ -131,9 +132,9 @@ static void configure_status_modules(status_collector_t *collector, const app_co
     status_collector_configure_module(collector,
                                       STATUS_MODULE_RS485,
                                       true,
-                                      false,
-                                      "RS485",
-                                      "RS485 egress placeholder is observable and releases TX frames");
+                                      config->rs485_enabled,
+                                      "RS485 raw",
+                                      "RS485 UART raw payload bridge; RX to Linux SHM v2");
 }
 
 static uint32_t make_linux_epoch(void)
@@ -194,6 +195,7 @@ int main(int argc, char **argv)
     bool ethernet_tcp_started = false;
     bool wifi_udp_started = false;
     bool wifi_tcp_started = false;
+    bool rs485_started = false;
     int exit_code = EXIT_SUCCESS;
 
     if (find_config_arg(argc, argv, &config_path, &config_explicit) != 0) {
@@ -348,7 +350,8 @@ int main(int argc, char **argv)
     egress_config.enabled[PUT_SHM_INTERFACE_WIFI] = config.wifi_enabled;
     egress_config.enabled[PUT_SHM_INTERFACE_BLUETOOTH] = false;
     egress_config.enabled[PUT_SHM_INTERFACE_4G] = false;
-    egress_config.enabled[PUT_SHM_INTERFACE_RS485] = false;
+    egress_config.adapters[PUT_SHM_INTERFACE_RS485] = &rs485_adapter;
+    egress_config.enabled[PUT_SHM_INTERFACE_RS485] = config.rs485_enabled;
     err = egress_manager_start(&egress_manager, &egress_config);
     if (err != UNIFIED_OK) {
         fprintf(stderr, "failed to start linux egress manager: error=%d\n", (int)err);
@@ -394,6 +397,37 @@ int main(int argc, char **argv)
                    config.can_ifname,
                    (unsigned)config.can_bitrate,
                    (unsigned)config.can_tx_can_id,
+                   linux_epoch);
+        }
+    }
+
+    if (!g_should_stop && config.rs485_enabled) {
+        rs485_adapter_config_t rs485_config;
+
+        rs485_adapter_config_set_defaults(&rs485_config);
+        rs485_config.enabled = true;
+        (void)snprintf(rs485_config.uart_device,
+                       sizeof(rs485_config.uart_device),
+                       "%s",
+                       config.rs485_uart_device);
+        rs485_config.baudrate = config.rs485_baudrate;
+        rs485_config.rs485_flags = config.rs485_flags;
+        rs485_config.ipc = &ipc;
+        rs485_config.collector = &collector;
+        rs485_config.linux_epoch = linux_epoch;
+
+        if (rs485_adapter_start(&rs485_config) != 0) {
+            fprintf(stderr,
+                    "failed to start RS485 RX service on %s\n",
+                    config.rs485_uart_device);
+            exit_code = EXIT_FAILURE;
+            g_should_stop = 1;
+        } else {
+            rs485_started = true;
+            printf("linux_app: RS485 RX listening on %s, baudrate=%u, flags=0x%X, linux_epoch=%u\n",
+                   config.rs485_uart_device,
+                   (unsigned)config.rs485_baudrate,
+                   (unsigned)config.rs485_flags,
                    linux_epoch);
         }
     }
@@ -549,6 +583,9 @@ int main(int argc, char **argv)
     }
     if (wifi_tcp_started) {
         wifi_tcp_server_stop();
+    }
+    if (rs485_started) {
+        rs485_adapter_stop();
     }
 
     {

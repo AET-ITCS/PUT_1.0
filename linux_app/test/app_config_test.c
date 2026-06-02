@@ -1,6 +1,7 @@
 #include "app_config.h"
 
 #include <arpa/inet.h>
+#include <linux/serial.h>
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
@@ -19,7 +20,7 @@ static int test_default_ethernet_config(void)
     app_config_t config;
 
     app_config_set_defaults(&config);
-    CHECK(!config.can_enabled);
+    CHECK(config.can_enabled);
     CHECK(strcmp(config.can_ifname, "can0") == 0);
     CHECK(config.can_bitrate == 500000u);
     CHECK(config.can_tx_can_id == 0x321u);
@@ -34,7 +35,7 @@ static int test_default_ethernet_config(void)
     CHECK(config.ethernet_port == 5000u);
     CHECK(strcmp(config.ethernet_tx_peer_addr, "") == 0);
     CHECK(config.ethernet_tx_peer_port == 5000u);
-    CHECK(!config.wifi_enabled);
+    CHECK(config.wifi_enabled);
     CHECK(config.wifi_udp_enabled);
     CHECK(config.wifi_tcp_enabled);
     CHECK(strcmp(config.wifi_bind_addr, "0.0.0.0") == 0);
@@ -42,6 +43,10 @@ static int test_default_ethernet_config(void)
     CHECK(strcmp(config.wifi_tx_peer_addr, "") == 0);
     CHECK(config.wifi_tx_peer_port == 5001u);
     CHECK(config.wifi_tx_peer_count == 0u);
+    CHECK(config.rs485_enabled);
+    CHECK(strcmp(config.rs485_uart_device, "/dev/ttyS1") == 0);
+    CHECK(config.rs485_baudrate == 115200u);
+    CHECK(config.rs485_flags == (uint32_t)(SER_RS485_ENABLED | SER_RS485_RTS_AFTER_SEND));
     CHECK(app_config_validate(&config) == UNIFIED_OK);
     return 0;
 }
@@ -76,6 +81,32 @@ static int test_load_can_config(void)
     CHECK(config.can_rx_filter_mask == 0x1FFFFFFFu);
     CHECK(config.can_extended_id);
     CHECK(config.can_reassembly_timeout_ms == 1000u);
+    (void)remove(path);
+    return 0;
+}
+
+static int test_load_rs485_config(void)
+{
+    app_config_t config;
+    char path[128];
+    FILE *fp;
+
+    (void)snprintf(path, sizeof(path), "/tmp/put_app_config_rs485_test_%ld.ini", (long)getpid());
+    fp = fopen(path, "w");
+    CHECK(fp != NULL);
+    fputs("[rs485]\n", fp);
+    fputs("enabled = true\n", fp);
+    fputs("uart_device = \"/dev/ttyUSB0\"\n", fp);
+    fputs("baudrate = 57600\n", fp);
+    fputs("rs485_flags = 0\n", fp);
+    CHECK(fclose(fp) == 0);
+
+    app_config_set_defaults(&config);
+    CHECK(app_config_load_file(&config, path) == UNIFIED_OK);
+    CHECK(config.rs485_enabled);
+    CHECK(strcmp(config.rs485_uart_device, "/dev/ttyUSB0") == 0);
+    CHECK(config.rs485_baudrate == 57600u);
+    CHECK(config.rs485_flags == 0u);
     (void)remove(path);
     return 0;
 }
@@ -188,6 +219,22 @@ static int test_reject_invalid_can_config(void)
     app_config_set_defaults(&config);
     config.can_enabled = true;
     config.can_ifname[0] = '\0';
+    CHECK(app_config_validate(&config) == UNIFIED_ERR_INVALID_ARG);
+    return 0;
+}
+
+static int test_reject_invalid_rs485_config(void)
+{
+    app_config_t config;
+
+    app_config_set_defaults(&config);
+    config.rs485_enabled = true;
+    config.rs485_uart_device[0] = '\0';
+    CHECK(app_config_validate(&config) == UNIFIED_ERR_INVALID_ARG);
+
+    app_config_set_defaults(&config);
+    config.rs485_enabled = true;
+    config.rs485_baudrate = 12345u;
     CHECK(app_config_validate(&config) == UNIFIED_ERR_INVALID_ARG);
     return 0;
 }
@@ -320,12 +367,48 @@ static int test_ignore_tx_peer_when_interface_disabled(void)
     return 0;
 }
 
+static int test_ignore_invalid_rs485_fields_when_disabled(void)
+{
+    app_config_t config;
+    char path[128];
+    FILE *fp;
+
+    app_config_set_defaults(&config);
+    config.rs485_enabled = false;
+    config.rs485_uart_device[0] = '\0';
+    config.rs485_baudrate = 0u;
+    CHECK(app_config_validate(&config) == UNIFIED_OK);
+
+    (void)snprintf(path,
+                   sizeof(path),
+                   "/tmp/put_app_config_disabled_rs485_%ld.ini",
+                   (long)getpid());
+    fp = fopen(path, "w");
+    CHECK(fp != NULL);
+    fputs("[rs485]\n", fp);
+    fputs("enabled = false\n", fp);
+    fputs("uart_device = \"\"\n", fp);
+    fputs("baudrate = 0\n", fp);
+    CHECK(fclose(fp) == 0);
+
+    app_config_set_defaults(&config);
+    CHECK(app_config_load_file(&config, path) == UNIFIED_OK);
+    CHECK(!config.rs485_enabled);
+    CHECK(strcmp(config.rs485_uart_device, "") == 0);
+    CHECK(config.rs485_baudrate == 0u);
+    (void)remove(path);
+    return 0;
+}
+
 int main(void)
 {
     if (test_default_ethernet_config() != 0) {
         return 1;
     }
     if (test_load_can_config() != 0) {
+        return 1;
+    }
+    if (test_load_rs485_config() != 0) {
         return 1;
     }
     if (test_load_ethernet_config() != 0) {
@@ -340,6 +423,9 @@ int main(void)
     if (test_reject_invalid_can_config() != 0) {
         return 1;
     }
+    if (test_reject_invalid_rs485_config() != 0) {
+        return 1;
+    }
     if (test_reject_wifi_with_no_transport() != 0) {
         return 1;
     }
@@ -350,6 +436,9 @@ int main(void)
         return 1;
     }
     if (test_ignore_tx_peer_when_interface_disabled() != 0) {
+        return 1;
+    }
+    if (test_ignore_invalid_rs485_fields_when_disabled() != 0) {
         return 1;
     }
     puts("app_config_test: OK");

@@ -36,6 +36,8 @@ typedef struct {
     bool stop_requested;                /* 外部是否请求停止线程的标志 */
     rs485_adapter_config_t config;      /* 模块的当前配置副本 */
     rs485_status_t status;              /* 运行时状态统计信息 */
+    char last_tx_error_stage[64];       /* 最近一次发送错误阶段，供 egress 统一上报 */
+    unified_error_t last_tx_error;       /* 最近一次发送错误码 */
 } rs485_adapter_state_t;
 
 /* 全局唯一的RS485适配器状态实例 */
@@ -179,6 +181,8 @@ static void record_tx_ok(rs485_status_t *status,
                          size_t bytes)
 {
     uint64_t now_ms;
+
+    (void)collector;
     now_ms = now_monotonic_ms();
     if (status != 0) {
         status->tx_frames++;
@@ -186,9 +190,37 @@ static void record_tx_ok(rs485_status_t *status,
         status->last_tx_ms = now_ms;
         status->updated_at_ms = now_ms;
     }
-    if (collector != 0) {
-        status_collector_record_tx_ok(collector, STATUS_MODULE_RS485, bytes);
+}
+
+static void clear_tx_error(rs485_adapter_state_t *state)
+{
+    if (state == 0) {
+        return;
     }
+
+    (void)pthread_mutex_lock(&state->lock);
+    state->last_tx_error_stage[0] = '\0';
+    state->last_tx_error = UNIFIED_OK;
+    (void)pthread_mutex_unlock(&state->lock);
+}
+
+static void record_tx_error(rs485_adapter_state_t *state,
+                            const char *stage,
+                            unified_error_t err)
+{
+    if (state == 0) {
+        return;
+    }
+
+    (void)pthread_mutex_lock(&state->lock);
+    (void)snprintf(state->last_tx_error_stage,
+                   sizeof(state->last_tx_error_stage),
+                   "%s",
+                   (stage == 0) ? "rs485_send" : stage);
+    state->last_tx_error = err;
+    (void)pthread_mutex_unlock(&state->lock);
+
+    record_error(&state->status, 0, stage, err);
 }
 
 /**
@@ -706,10 +738,13 @@ static int rs485_encapsulate(void *ctx,
 
     (void)ctx;
     if ((msg == 0) || (msg->data == 0) || (out_packet == 0)) {
+        record_tx_error(&g_rs485_state, "rs485_encapsulate_packet", UNIFIED_ERR_INVALID_ARG);
         return -1;
     }
 
+    clear_tx_error(&g_rs485_state);
     if (msg->len < ANYMSG_HEADER_SIZE) {
+        record_tx_error(&g_rs485_state, "rs485_encapsulate_length", UNIFIED_ERR_LENGTH);
         return -1;
     }
 
@@ -747,22 +782,24 @@ static int rs485_send(void *ctx, const adapter_tx_packet_t *packet)
 
     (void)ctx;
     if ((packet == 0) || (packet->data == 0)) {
+        record_tx_error(&g_rs485_state, "rs485_send_packet", UNIFIED_ERR_INVALID_ARG);
         return -1;
     }
 
+    clear_tx_error(&g_rs485_state);
     (void)pthread_mutex_lock(&g_rs485_state.lock);
     fd = g_rs485_state.fd;
     (void)pthread_mutex_unlock(&g_rs485_state.lock);
 
     if (fd < 0) {
-        record_error(&g_rs485_state.status, g_rs485_state.config.collector, "rs485_send_offline", UNIFIED_ERR_IPC_OFFLINE);
+        record_tx_error(&g_rs485_state, "rs485_send_offline", UNIFIED_ERR_IPC_OFFLINE);
         return -1;
     }
 
     /* 物理写入串口设备 */
     written = write(fd, packet->data, packet->len);
     if ((written < 0) || ((size_t)written != packet->len)) {
-        record_error(&g_rs485_state.status, g_rs485_state.config.collector, "rs485_uart_write", UNIFIED_ERR_INVALID_ARG);
+        record_tx_error(&g_rs485_state, "rs485_uart_write", UNIFIED_ERR_INVALID_ARG);
         return -1;
     }
 
@@ -790,6 +827,25 @@ static int rs485_status(void *ctx, void *out_status)
     return 0;
 }
 
+static int rs485_get_tx_error(void *ctx, adapter_tx_error_t *out_error)
+{
+    (void)ctx;
+    if (out_error == 0) {
+        return -1;
+    }
+
+    (void)pthread_mutex_lock(&g_rs485_state.lock);
+    if (g_rs485_state.last_tx_error_stage[0] == '\0') {
+        (void)pthread_mutex_unlock(&g_rs485_state.lock);
+        return -1;
+    }
+
+    out_error->stage = g_rs485_state.last_tx_error_stage;
+    out_error->err = g_rs485_state.last_tx_error;
+    (void)pthread_mutex_unlock(&g_rs485_state.lock);
+    return 0;
+}
+
 /* 导出全局 RS485 适配器实例及操作虚函数表 */
 physical_interface_adapter_t rs485_adapter = {
     .name = "RS485",
@@ -801,4 +857,5 @@ physical_interface_adapter_t rs485_adapter = {
     .fragment_tx = rs485_fragment_tx,
     .send = rs485_send,
     .status = rs485_status,
+    .get_tx_error = rs485_get_tx_error,
 };

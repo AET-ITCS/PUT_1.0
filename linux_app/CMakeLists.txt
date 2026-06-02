@@ -41,6 +41,7 @@ add_library(linux_app_core STATIC
     egress/egress_worker.c
     adapters/can_adapter.c
     adapters/ethernet_adapter.c
+    adapters/rs485_adapter.c
     adapters/wifi_adapter.c
 )
 target_include_directories(linux_app_core PUBLIC

@@ -36,6 +36,9 @@ extern "C" {
 #define APP_CONFIG_WIFI_DEFAULT_TCP_ENABLED true
 #define APP_CONFIG_WIFI_DEFAULT_TX_PEER_ADDR ""
 #define APP_CONFIG_WIFI_DEFAULT_TX_PEER_PORT APP_CONFIG_WIFI_DEFAULT_PORT
+#define APP_CONFIG_RS485_UART_DEVICE_MAX 64u
+#define APP_CONFIG_RS485_DEFAULT_UART_DEVICE "/dev/ttyS1"
+#define APP_CONFIG_RS485_DEFAULT_BAUDRATE 115200u
 
 typedef struct {
     bool status_enabled;
@@ -70,6 +73,11 @@ typedef struct {
 
     bool bluetooth_enabled;
     uint8_t bluetooth_channel;
+
+    bool rs485_enabled;
+    char rs485_uart_device[APP_CONFIG_RS485_UART_DEVICE_MAX];
+    uint32_t rs485_baudrate;
+    uint32_t rs485_flags;
 
     uint32_t max_packets;
 } app_config_t;

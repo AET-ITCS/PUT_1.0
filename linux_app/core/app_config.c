@@ -4,6 +4,7 @@
 #include <ctype.h>
 #include <errno.h>
 #include <arpa/inet.h>
+#include <linux/serial.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -131,6 +132,20 @@ static bool is_valid_ipv4_address(const char *text)
     return inet_pton(AF_INET, text, &addr) == 1;
 }
 
+static bool is_supported_rs485_baudrate(uint32_t baudrate)
+{
+    switch (baudrate) {
+    case 9600u:
+    case 19200u:
+    case 38400u:
+    case 57600u:
+    case 115200u:
+        return true;
+    default:
+        return false;
+    }
+}
+
 static int parse_wifi_cid(const char *text, uint8_t cid[ANYMSG_CID_LENGTH])
 {
     uint32_t value;
@@ -213,7 +228,7 @@ void app_config_set_defaults(app_config_t *config)
     memset(config, 0, sizeof(*config));
     config->status_enabled = true;
     copy_string(config->status_dir, sizeof(config->status_dir), "/run/put/status");
-    config->can_enabled = false;
+    config->can_enabled = true;
     copy_string(config->can_ifname, sizeof(config->can_ifname), APP_CONFIG_CAN_DEFAULT_IFNAME);
     config->can_bitrate = APP_CONFIG_CAN_DEFAULT_BITRATE;
     config->can_tx_can_id = APP_CONFIG_CAN_DEFAULT_TX_CAN_ID;
@@ -232,7 +247,7 @@ void app_config_set_defaults(app_config_t *config)
                 sizeof(config->ethernet_tx_peer_addr),
                 APP_CONFIG_ETHERNET_DEFAULT_TX_PEER_ADDR);
     config->ethernet_tx_peer_port = (uint16_t)APP_CONFIG_ETHERNET_DEFAULT_TX_PEER_PORT;
-    config->wifi_enabled = false;
+    config->wifi_enabled = true;
     config->wifi_udp_enabled = APP_CONFIG_WIFI_DEFAULT_UDP_ENABLED;
     config->wifi_tcp_enabled = APP_CONFIG_WIFI_DEFAULT_TCP_ENABLED;
     copy_string(config->wifi_bind_addr,
@@ -245,6 +260,12 @@ void app_config_set_defaults(app_config_t *config)
     config->wifi_tx_peer_port = (uint16_t)APP_CONFIG_WIFI_DEFAULT_TX_PEER_PORT;
     config->bluetooth_enabled = false;
     config->bluetooth_channel = 1u;
+    config->rs485_enabled = true;
+    copy_string(config->rs485_uart_device,
+                sizeof(config->rs485_uart_device),
+                APP_CONFIG_RS485_DEFAULT_UART_DEVICE);
+    config->rs485_baudrate = APP_CONFIG_RS485_DEFAULT_BAUDRATE;
+    config->rs485_flags = (uint32_t)(SER_RS485_ENABLED | SER_RS485_RTS_AFTER_SEND);
     config->max_packets = 0u;
 }
 
@@ -473,6 +494,35 @@ static unified_error_t apply_key_value(app_config_t *config,
             config->bluetooth_channel = (uint8_t)u32_value;
             return UNIFIED_OK;
         }
+    } else if (strcmp(section, "rs485") == 0) {
+        if (strcmp(key, "enabled") == 0) {
+            if (parse_bool(value, &bool_value) != 0) {
+                return UNIFIED_ERR_INVALID_ARG;
+            }
+            config->rs485_enabled = bool_value;
+            return UNIFIED_OK;
+        }
+
+        if (strcmp(key, "uart_device") == 0) {
+            copy_string(config->rs485_uart_device, sizeof(config->rs485_uart_device), value);
+            return UNIFIED_OK;
+        }
+
+        if (strcmp(key, "baudrate") == 0) {
+            if (parse_u32(value, &u32_value) != 0) {
+                return UNIFIED_ERR_INVALID_ARG;
+            }
+            config->rs485_baudrate = u32_value;
+            return UNIFIED_OK;
+        }
+
+        if (strcmp(key, "rs485_flags") == 0) {
+            if (parse_u32(value, &u32_value) != 0) {
+                return UNIFIED_ERR_INVALID_ARG;
+            }
+            config->rs485_flags = u32_value;
+            return UNIFIED_OK;
+        }
     } else if (strcmp(section, "runtime") == 0) {
         if (strcmp(key, "max_packets") == 0) {
             if (parse_u32(value, &u32_value) != 0) {
@@ -623,6 +673,13 @@ unified_error_t app_config_validate(const app_config_t *config)
 
     if (config->bluetooth_enabled && (config->bluetooth_channel == 0u)) {
         return UNIFIED_ERR_INVALID_ARG;
+    }
+
+    if (config->rs485_enabled) {
+        if ((config->rs485_uart_device[0] == '\0') ||
+            !is_supported_rs485_baudrate(config->rs485_baudrate)) {
+            return UNIFIED_ERR_INVALID_ARG;
+        }
     }
 
     return UNIFIED_OK;
