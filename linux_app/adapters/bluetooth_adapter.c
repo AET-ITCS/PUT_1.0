@@ -339,15 +339,26 @@ int bluetooth_server_start(const bluetooth_config_t *config) {
     
     // 创建经典蓝牙 RFCOMM 协议族的套接字
     int s = socket(AF_BLUETOOTH, SOCK_STREAM, BTPROTO_RFCOMM);
-    if (s < 0) return -1;
+    if (s < 0) {
+        fprintf(stderr, "bluetooth socket() failed: %s\n", strerror(errno));
+        return -1;
+    }
     
     struct sockaddr_rc loc_addr;
     memset(&loc_addr, 0, sizeof(loc_addr));
     loc_addr.rc_family = AF_BLUETOOTH;
     loc_addr.rc_channel = config->channel > 0 ? config->channel : 1; 
     
-    if (bind(s, (struct sockaddr *)&loc_addr, sizeof(loc_addr)) < 0) { close(s); return -1; }
-    if (listen(s, 1) < 0) { close(s); return -1; }
+    if (bind(s, (struct sockaddr *)&loc_addr, sizeof(loc_addr)) < 0) { 
+        fprintf(stderr, "bluetooth bind() on channel %d failed: %s\n", loc_addr.rc_channel, strerror(errno));
+        close(s); 
+        return -1; 
+    }
+    if (listen(s, 1) < 0) { 
+        fprintf(stderr, "bluetooth listen() failed: %s\n", strerror(errno));
+        close(s); 
+        return -1; 
+    }
     
     memset(&g_bt_ctx, 0, sizeof(g_bt_ctx));
     g_bt_ctx.config = *config;
