@@ -477,6 +477,44 @@ unified_error_t wifi_adapter_decode_datagram(const uint8_t *input,
     return UNIFIED_OK;
 }
 
+/**
+ * @brief 计算 Wi-Fi 外部入口 trust flags。
+ *
+ * @param ctx Wi-Fi RX 上下文。
+ * @param input 完整 anyMSG。
+ * @param input_len 完整 anyMSG 长度。
+ * @param rx RX 解析结果。
+ * @return UNIFIED_OK 表示评估完成。
+ */
+static unified_error_t wifi_apply_ingress_security(wifi_rx_context_t *ctx,
+                                                   const uint8_t *input,
+                                                   size_t input_len,
+                                                   adapter_rx_result_t *rx)
+{
+    ingress_security_input_t security_input; /**< 安全评估输入。 */
+    uint32_t trust_flags;                    /**< 安全评估输出 flags。 */
+    unified_error_t err;                     /**< 安全评估结果。 */
+
+    if ((ctx == 0) || (rx == 0)) {
+        return UNIFIED_ERR_NULL;
+    }
+
+    memset(&security_input, 0, sizeof(security_input));
+    security_input.source_interface = PUT_SHM_INTERFACE_WIFI;
+    security_input.frame = input;
+    security_input.frame_length = input_len;
+    security_input.now_ms = 0u;
+    err = ingress_security_evaluate(ctx->security_policy,
+                                    &security_input,
+                                    &trust_flags);
+    if (err != UNIFIED_OK) {
+        return err;
+    }
+
+    rx->trust_flags = trust_flags;
+    return UNIFIED_OK;
+}
+
 unified_error_t wifi_adapter_submit_to_ipc(linux_shm_ipc_t *ipc,
                                                const uint8_t *frame,
                                                const adapter_rx_result_t *rx,
@@ -487,6 +525,7 @@ unified_error_t wifi_adapter_submit_to_ipc(linux_shm_ipc_t *ipc,
     uint16_t frame_capacity;
     unified_error_t err;
     put_shm_interface_t target_interface;
+    uint32_t descriptor_flags; /* 写入 RX descriptor 的 trust flags。 */
 
     if ((ipc == 0) || (frame == 0) || (rx == 0)) {
         return UNIFIED_ERR_NULL;
@@ -508,6 +547,7 @@ unified_error_t wifi_adapter_submit_to_ipc(linux_shm_ipc_t *ipc,
 
     memcpy(frame_buffer, frame, rx->len);
     target_interface = route_hint_from_destination_cid(rx->destination_cid);
+    descriptor_flags = rx->trust_flags & PUT_SHM_DESCRIPTOR_TRUST_FLAG_MASK;
     err = linux_shm_frame_commit_rx(ipc,
                                     frame_id,
                                     (uint16_t)rx->len,
@@ -519,7 +559,7 @@ unified_error_t wifi_adapter_submit_to_ipc(linux_shm_ipc_t *ipc,
                                     WIFI_ADAPTER_DEFAULT_PRIORITY,
                                     WIFI_ADAPTER_DEFAULT_TTL,
                                     linux_epoch,
-                                    0u);
+                                    descriptor_flags);
     if (err != UNIFIED_OK) {
         (void)linux_shm_frame_release(ipc, frame_id, PUT_SHM_RECLAIM_REASON_QUEUE_FULL);
         return err;
@@ -545,6 +585,17 @@ unified_error_t wifi_adapter_handle_datagram(wifi_rx_context_t *ctx,
             status_collector_record_error(ctx->collector,
                                           STATUS_MODULE_WIFI,
                                           error_stage_from_result(err),
+                                          err);
+        }
+        return err;
+    }
+
+    err = wifi_apply_ingress_security(ctx, input, input_len, &rx);
+    if (err != UNIFIED_OK) {
+        if (ctx->collector != 0) {
+            status_collector_record_error(ctx->collector,
+                                          STATUS_MODULE_WIFI,
+                                          "wifi_ingress_security",
                                           err);
         }
         return err;
@@ -676,6 +727,7 @@ static void *wifi_udp_thread(void *arg)
     server = (wifi_udp_server_state_t *)arg;
     rx_ctx.ipc = server->config.ipc;
     rx_ctx.collector = server->config.collector;
+    rx_ctx.security_policy = server->config.security_policy;
     rx_ctx.linux_epoch = server->config.linux_epoch;
 
     if (rx_ctx.collector != 0) {
@@ -843,6 +895,7 @@ static void handle_tcp_client(wifi_tcp_server_state_t *server, int client_fd)
 
     rx_ctx.ipc = server->config.ipc;
     rx_ctx.collector = server->config.collector;
+    rx_ctx.security_policy = server->config.security_policy;
     rx_ctx.linux_epoch = server->config.linux_epoch;
     wifi_tcp_stream_init(&stream_ctx, &rx_ctx);
     configure_recv_timeout(client_fd);
@@ -883,6 +936,7 @@ static void *wifi_tcp_thread(void *arg)
     server = (wifi_tcp_server_state_t *)arg;
     rx_ctx.ipc = server->config.ipc;
     rx_ctx.collector = server->config.collector;
+    rx_ctx.security_policy = server->config.security_policy;
     rx_ctx.linux_epoch = server->config.linux_epoch;
 
     if (rx_ctx.collector != 0) {

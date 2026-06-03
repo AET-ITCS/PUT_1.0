@@ -151,6 +151,27 @@ typedef enum {
     PUT_SHM_RECLAIM_REASON_QUEUE_FULL = 6u,         /**< 本地队列或目标 ring 已满。 */
 } put_shm_reclaim_reason_t;
 
+/** @brief Linux 已完成入口鉴权，外部入口可被小核视为 AUTH_OK。 */
+#define PUT_SHM_DESCRIPTOR_FLAG_AUTH_OK (1u << 0u)
+
+/** @brief Linux 已完成业务完整性校验，外部入口可被小核视为 INTEGRITY_OK。 */
+#define PUT_SHM_DESCRIPTOR_FLAG_INTEGRITY_OK (1u << 1u)
+
+/** @brief Linux 已完成重放保护检查，外部入口可被小核视为 REPLAY_OK。 */
+#define PUT_SHM_DESCRIPTOR_FLAG_REPLAY_OK (1u << 2u)
+
+/** @brief Linux 明确标记该帧来自内部可信入口，可跳过外部入口鉴权要求。 */
+#define PUT_SHM_DESCRIPTOR_FLAG_INTERNAL_TRUSTED (1u << 3u)
+
+/** @brief Linux 明确允许该帧进入高优先级或 CAN/RS485 控制路径。 */
+#define PUT_SHM_DESCRIPTOR_FLAG_CONTROL_ALLOWED (1u << 4u)
+
+/** @brief descriptor trust 低位标志 mask，其他高位保留给后续诊断或业务标志。 */
+#define PUT_SHM_DESCRIPTOR_TRUST_FLAG_MASK \
+    (PUT_SHM_DESCRIPTOR_FLAG_AUTH_OK | PUT_SHM_DESCRIPTOR_FLAG_INTEGRITY_OK | \
+     PUT_SHM_DESCRIPTOR_FLAG_REPLAY_OK | PUT_SHM_DESCRIPTOR_FLAG_INTERNAL_TRUSTED | \
+     PUT_SHM_DESCRIPTOR_FLAG_CONTROL_ALLOWED)
+
 /**
  * @brief Frame Pool 固定 block。
  */

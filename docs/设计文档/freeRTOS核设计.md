@@ -276,8 +276,8 @@ control_area
 | `ttl` | 16 bit | little-endian / 2B | 覆盖 | 内部转发 TTL，防止异常循环 |
 | `epoch` | 32 bit | little-endian / 4B | 覆盖 | Linux 启动纪元，用于重启恢复 |
 | `route_epoch` | 32 bit | little-endian / 4B | 覆盖 | descriptor 入队时看到的路由表 epoch |
-| `auth_state` | 16 bit | little-endian / 2B | 覆盖 | Linux 接入层写入的鉴权 / 完整性 / 重放检查结果 |
-| `flags` | 32 bit | little-endian / 4B | 覆盖 | 分片重组完成、是否需要回执、是否可路由等内部标志 |
+| `auth_state` | 16 bit | little-endian / 2B | 覆盖 | 历史设计字段；v2 ABI 不再单独使用，可信性转入 `flags` 低位 |
+| `flags` | 32 bit | little-endian / 4B | 覆盖 | 低 5 位固定为入口可信性标志，高位保留给诊断或后续业务标志 |
 | `crc16` | 16 bit | little-endian / 2B | 不覆盖自身 | descriptor 元数据校验，不替代 anyMSG 业务完整性校验 |
 
 reclaim descriptor 小核依赖字段：
@@ -330,8 +330,6 @@ descriptor 信任分级：
 
 ### 6.2 drop reason 与入口可信性
 
-> TODO 对齐：P0-1、P0-3 统一丢弃原因、鉴权失败和重放失败的回收路径，保证非法输入不进入小核调度。
-
 小核可写入的 `drop_reason` 建议固定为：
 
 | drop reason | 触发场景 |
@@ -355,11 +353,12 @@ descriptor 信任分级：
 
 1. `verify_string[16]` 当前在 anyMSG 文档中未定义真实算法，小核不得把它当作有效鉴权依据。
 2. Ethernet、Wi-Fi、4G、Bluetooth 等外部入口必须由 Linux 接入层完成 token/MAC 或等价鉴权，并使用 timestamp/sequence/nonce/session_id 或等价机制做重放保护。
-3. descriptor 可信状态固定为 `AUTH_OK`、`INTERNAL_TRUSTED`、`AUTH_FAILED`、`INTEGRITY_FAILED`、`REPLAY_DROPPED`。
-4. priority 0/1 控制帧只接受 `AUTH_OK` 或明确可信的 `INTERNAL_TRUSTED` 来源。
-5. Linux 只有在鉴权、完整性和重放检查通过后，才允许把外部入口 descriptor 标记为 `AUTH_OK`。
-6. 小核发现 descriptor 未通过可信性状态时，不进入 Router Scheduler；仅当 descriptor 达到 `FRAME_REF_TRUSTED` 时写 reclaim，否则记录 `INVALID_DESCRIPTOR_NO_RECLAIM`。
-7. descriptor CRC 只保护共享内存搬运元数据，不替代链路层 CRC 或 anyMSG 业务完整性校验。
+3. descriptor 可信状态由 `flags` 低 5 位表达：`AUTH_OK`、`INTEGRITY_OK`、`REPLAY_OK`、`INTERNAL_TRUSTED`、`CONTROL_ALLOWED`。
+4. Linux 只有在鉴权、完整性和重放检查均通过后，才允许把外部入口 descriptor 标记为 `AUTH_OK | INTEGRITY_OK | REPLAY_OK`。
+5. priority 0/1、目的 CID 落入 CAN/RS485 段的外部入口必须额外设置 `CONTROL_ALLOWED`，否则小核按 `AUTH_FAILED` 处理。
+6. CAN、RS485 等内部入口可由 Linux 标记 `INTERNAL_TRUSTED`；小核不再无条件把所有 descriptor 视为 `AUTH_OK`。
+7. 小核发现 descriptor 未通过可信性状态时，不进入 Router Scheduler；仅当 descriptor 达到 `FRAME_REF_TRUSTED` 时写 reclaim，否则记录 `INVALID_DESCRIPTOR_NO_RECLAIM`。
+8. descriptor CRC 只保护共享内存搬运元数据，不替代链路层 CRC 或 anyMSG 业务完整性校验。
 
 ---
 

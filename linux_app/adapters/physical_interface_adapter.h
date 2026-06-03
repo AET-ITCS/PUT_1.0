@@ -1,3 +1,8 @@
+/**
+ * @file physical_interface_adapter.h
+ * @brief Linux 物理接口适配层公共入口结果与 TX 抽象。
+ * @author Yukikaze
+ */
 #ifndef PHYSICAL_INTERFACE_ADAPTER_H
 #define PHYSICAL_INTERFACE_ADAPTER_H
 
@@ -6,19 +11,21 @@
 
 #include "anymsg_frame.h"
 #include "error_code.h"
+#include "shared_memory_ipc.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 typedef struct {
-    const uint8_t *data;
-    size_t len;
-    uint16_t msg_length;
-    uint16_t payload_length;
-    uint8_t source_cid[ANYMSG_CID_LENGTH];
-    uint8_t destination_cid[ANYMSG_CID_LENGTH];
-    uint8_t type;
+    const uint8_t *data;                             /* 完整 anyMSG 起始地址。 */
+    size_t len;                                      /* 完整 anyMSG 字节数。 */
+    uint16_t msg_length;                             /* anyMSG msg_length 字段。 */
+    uint16_t payload_length;                         /* anyMSG payload_length 字段。 */
+    uint8_t source_cid[ANYMSG_CID_LENGTH];           /* anyMSG source CID。 */
+    uint8_t destination_cid[ANYMSG_CID_LENGTH];      /* anyMSG destination CID。 */
+    uint8_t type;                                    /* anyMSG payload type。 */
+    uint32_t trust_flags;                            /* descriptor trust flags，见 PUT_SHM_DESCRIPTOR_FLAG_*。 */
 } adapter_rx_result_t;
 
 typedef struct {

@@ -36,6 +36,8 @@ typedef struct {
     bool stop_requested;                /* 外部是否请求停止线程的标志 */
     rs485_adapter_config_t config;      /* 模块的当前配置副本 */
     rs485_status_t status;              /* 运行时状态统计信息 */
+    char last_tx_error_stage[64];       /* 最近一次发送错误阶段，供 egress 统一上报 */
+    unified_error_t last_tx_error;       /* 最近一次发送错误码 */
 } rs485_adapter_state_t;
 
 /* 全局唯一的RS485适配器状态实例 */
@@ -179,6 +181,8 @@ static void record_tx_ok(rs485_status_t *status,
                          size_t bytes)
 {
     uint64_t now_ms;
+
+    (void)collector;
     now_ms = now_monotonic_ms();
     if (status != 0) {
         status->tx_frames++;
@@ -186,9 +190,37 @@ static void record_tx_ok(rs485_status_t *status,
         status->last_tx_ms = now_ms;
         status->updated_at_ms = now_ms;
     }
-    if (collector != 0) {
-        status_collector_record_tx_ok(collector, STATUS_MODULE_RS485, bytes);
+}
+
+static void clear_tx_error(rs485_adapter_state_t *state)
+{
+    if (state == 0) {
+        return;
     }
+
+    (void)pthread_mutex_lock(&state->lock);
+    state->last_tx_error_stage[0] = '\0';
+    state->last_tx_error = UNIFIED_OK;
+    (void)pthread_mutex_unlock(&state->lock);
+}
+
+static void record_tx_error(rs485_adapter_state_t *state,
+                            const char *stage,
+                            unified_error_t err)
+{
+    if (state == 0) {
+        return;
+    }
+
+    (void)pthread_mutex_lock(&state->lock);
+    (void)snprintf(state->last_tx_error_stage,
+                   sizeof(state->last_tx_error_stage),
+                   "%s",
+                   (stage == 0) ? "rs485_send" : stage);
+    state->last_tx_error = err;
+    (void)pthread_mutex_unlock(&state->lock);
+
+    record_error(&state->status, 0, stage, err);
 }
 
 /**
@@ -251,8 +283,8 @@ void rs485_adapter_config_set_defaults(rs485_adapter_config_t *config)
     config->enabled = false;
     (void)snprintf(config->uart_device, sizeof(config->uart_device), "%s", RS485_ADAPTER_DEFAULT_DEVICE);
     config->baudrate = RS485_ADAPTER_DEFAULT_BAUDRATE;
-    /* 默认启用RS485，并在发送完毕后自动拉低RTS释放总线控制权（硬件自动流控） */
-    config->rs485_flags = SER_RS485_ENABLED | SER_RS485_RTS_AFTER_SEND;
+    /* 默认启用RS485，IOB 板 U14 的 DE/RE 由 GPIO15 高电平使能发送。 */
+    config->rs485_flags = SER_RS485_ENABLED | SER_RS485_RTS_ON_SEND;
 }
 
 /**
@@ -276,6 +308,7 @@ static unified_error_t rs485_adapter_submit_to_ipc(rs485_adapter_state_t *state,
     unified_error_t err;
     anymsg_header_t *header;
     uint16_t msg_length;
+    uint32_t descriptor_flags; /* 写入 RX descriptor 的 trust flags。 */
 
     if ((state == 0) || (state->config.ipc == 0) || (payload == 0) || (payload_len == 0u)) {
         return UNIFIED_ERR_NULL;
@@ -316,6 +349,8 @@ static unified_error_t rs485_adapter_submit_to_ipc(rs485_adapter_state_t *state,
 
     /* 3. 拷贝裸数据到 payload 区域 */
     memcpy(frame_buffer + ANYMSG_HEADER_SIZE, payload, payload_len);
+    descriptor_flags = PUT_SHM_DESCRIPTOR_FLAG_INTERNAL_TRUSTED |
+                       PUT_SHM_DESCRIPTOR_FLAG_CONTROL_ALLOWED;
 
     /* 4. 提交该帧到共享内存接收环形队列 */
     err = linux_shm_frame_commit_rx(state->config.ipc,
@@ -329,7 +364,7 @@ static unified_error_t rs485_adapter_submit_to_ipc(rs485_adapter_state_t *state,
                                     0u,
                                     0u,
                                     state->config.linux_epoch,
-                                    0u);
+                                    descriptor_flags);
     if (err != UNIFIED_OK) {
         /* 如果队列满了提交失败，则必须主动释放释放占用的缓冲区 */
         (void)linux_shm_frame_release(state->config.ipc, frame_id, PUT_SHM_RECLAIM_REASON_QUEUE_FULL);
@@ -442,18 +477,24 @@ static int open_uart(const rs485_adapter_config_t *config, rs485_status_t *statu
 
     /* 5. 硬件流控设置，通过 ioctl 激活 Linux 驱动的 RS485 模式 */
     if (config->rs485_flags != 0u) {
+        uint32_t managed_flags;
+
         memset(&rs485conf, 0, sizeof(rs485conf));
         if (ioctl(fd, TIOCGRS485, &rs485conf) < 0) {
             record_error(status, collector, "rs485_ioctl_get", UNIFIED_ERR_INVALID_ARG);
-        } else {
-            rs485conf.flags |= config->rs485_flags;
-            /* 保证发送完毕后 RTS 引脚能够准确指示接收/发送状态(DE低电平使能接收) */
-            if ((rs485conf.flags & SER_RS485_RTS_AFTER_SEND) != 0u) {
-                rs485conf.flags &= (uint32_t)~SER_RS485_RTS_ON_SEND;
-            }
-            if (ioctl(fd, TIOCSRS485, &rs485conf) < 0) {
-                record_error(status, collector, "rs485_ioctl_set", UNIFIED_ERR_INVALID_ARG);
-            }
+            (void)close(fd);
+            return -1;
+        }
+
+        managed_flags = (uint32_t)(SER_RS485_ENABLED |
+                                   SER_RS485_RTS_ON_SEND |
+                                   SER_RS485_RTS_AFTER_SEND);
+        rs485conf.flags = (uint32_t)((rs485conf.flags & ~managed_flags) |
+                                     config->rs485_flags);
+        if (ioctl(fd, TIOCSRS485, &rs485conf) < 0) {
+            record_error(status, collector, "rs485_ioctl_set", UNIFIED_ERR_INVALID_ARG);
+            (void)close(fd);
+            return -1;
         }
     }
 
@@ -668,6 +709,11 @@ static int rs485_decode_rx(void *ctx,
         return -1;
     }
 
+    if (anymsg_cid_segment_from_first_byte(anymsg_source_cid_first_byte(header)) !=
+        ANYMSG_CID_SEGMENT_RS485) {
+        return -1;
+    }
+
     memset(out, 0, sizeof(*out));
     out->data = input;
     out->len = input_len;
@@ -706,10 +752,13 @@ static int rs485_encapsulate(void *ctx,
 
     (void)ctx;
     if ((msg == 0) || (msg->data == 0) || (out_packet == 0)) {
+        record_tx_error(&g_rs485_state, "rs485_encapsulate_packet", UNIFIED_ERR_INVALID_ARG);
         return -1;
     }
 
+    clear_tx_error(&g_rs485_state);
     if (msg->len < ANYMSG_HEADER_SIZE) {
+        record_tx_error(&g_rs485_state, "rs485_encapsulate_length", UNIFIED_ERR_LENGTH);
         return -1;
     }
 
@@ -747,22 +796,24 @@ static int rs485_send(void *ctx, const adapter_tx_packet_t *packet)
 
     (void)ctx;
     if ((packet == 0) || (packet->data == 0)) {
+        record_tx_error(&g_rs485_state, "rs485_send_packet", UNIFIED_ERR_INVALID_ARG);
         return -1;
     }
 
+    clear_tx_error(&g_rs485_state);
     (void)pthread_mutex_lock(&g_rs485_state.lock);
     fd = g_rs485_state.fd;
     (void)pthread_mutex_unlock(&g_rs485_state.lock);
 
     if (fd < 0) {
-        record_error(&g_rs485_state.status, g_rs485_state.config.collector, "rs485_send_offline", UNIFIED_ERR_IPC_OFFLINE);
+        record_tx_error(&g_rs485_state, "rs485_send_offline", UNIFIED_ERR_IPC_OFFLINE);
         return -1;
     }
 
     /* 物理写入串口设备 */
     written = write(fd, packet->data, packet->len);
     if ((written < 0) || ((size_t)written != packet->len)) {
-        record_error(&g_rs485_state.status, g_rs485_state.config.collector, "rs485_uart_write", UNIFIED_ERR_INVALID_ARG);
+        record_tx_error(&g_rs485_state, "rs485_uart_write", UNIFIED_ERR_INVALID_ARG);
         return -1;
     }
 
@@ -790,6 +841,25 @@ static int rs485_status(void *ctx, void *out_status)
     return 0;
 }
 
+static int rs485_get_tx_error(void *ctx, adapter_tx_error_t *out_error)
+{
+    (void)ctx;
+    if (out_error == 0) {
+        return -1;
+    }
+
+    (void)pthread_mutex_lock(&g_rs485_state.lock);
+    if (g_rs485_state.last_tx_error_stage[0] == '\0') {
+        (void)pthread_mutex_unlock(&g_rs485_state.lock);
+        return -1;
+    }
+
+    out_error->stage = g_rs485_state.last_tx_error_stage;
+    out_error->err = g_rs485_state.last_tx_error;
+    (void)pthread_mutex_unlock(&g_rs485_state.lock);
+    return 0;
+}
+
 /* 导出全局 RS485 适配器实例及操作虚函数表 */
 physical_interface_adapter_t rs485_adapter = {
     .name = "RS485",
@@ -801,4 +871,5 @@ physical_interface_adapter_t rs485_adapter = {
     .fragment_tx = rs485_fragment_tx,
     .send = rs485_send,
     .status = rs485_status,
+    .get_tx_error = rs485_get_tx_error,
 };

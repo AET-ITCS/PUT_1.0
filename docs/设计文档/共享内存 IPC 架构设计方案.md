@@ -18,6 +18,7 @@
 - `rx_pending_bitmap`、`tx_pending_bitmap`、`reclaim_pending` 分别独占一个 cache line。
 - pending bitmap 的 `bits` 必须通过平台 atomic bit operation 更新，不能使用整条 cache line 的普通 RMW。
 - reclaim ring 由 RTOS 写、Linux 读，用于通知 Linux 回收 Frame Pool block。
+- descriptor `flags` 低 5 位冻结为入口可信性 ABI：`AUTH_OK`、`INTEGRITY_OK`、`REPLAY_OK`、`INTERNAL_TRUSTED`、`CONTROL_ALLOWED`。
 
 ## Data Flow
 
@@ -72,6 +73,9 @@ Linux 回收 Frame Pool block
 - descriptor 出队时按 ring 类型校验接口一致性：RX 要求 `source_interface == ring.interface_id`，TX 要求 `target_interface == ring.interface_id`。
 - RTOS 不释放 Frame Pool，不清零 payload，只通过 reclaim ring 给 Linux 明确回收原因。
 - priority 是 descriptor 元数据，不写入 anyMSG 保留字段。
+- Wi-Fi、Ethernet、Bluetooth、4G 外部入口默认不可信；只有 Linux 接入层完成鉴权、完整性和重放检查后，才可设置 `AUTH_OK | INTEGRITY_OK | REPLAY_OK`。
+- 外部入口访问 priority 0/1 或 CAN/RS485 控制路径时必须额外设置 `CONTROL_ALLOWED`，否则 RTOS 按非法帧 reclaim。
+- CAN、RS485 等内部入口可由 Linux 标记 `INTERNAL_TRUSTED`，RTOS 不再无条件把所有 descriptor 视为 `AUTH_OK`。
 
 ## RTOS Implementation
 

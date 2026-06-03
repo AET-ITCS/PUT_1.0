@@ -4,6 +4,7 @@
 #include <ctype.h>
 #include <errno.h>
 #include <arpa/inet.h>
+#include <linux/serial.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -131,6 +132,29 @@ static bool is_valid_ipv4_address(const char *text)
     return inet_pton(AF_INET, text, &addr) == 1;
 }
 
+static bool is_supported_rs485_baudrate(uint32_t baudrate)
+{
+    switch (baudrate) {
+    case 9600u:
+    case 19200u:
+    case 38400u:
+    case 57600u:
+    case 115200u:
+        return true;
+    default:
+        return false;
+    }
+}
+
+static bool is_valid_rs485_flags(uint32_t flags)
+{
+    if (flags == 0u) {
+        return true;
+    }
+
+    return (flags & (uint32_t)SER_RS485_ENABLED) != 0u;
+}
+
 static int parse_wifi_cid(const char *text, uint8_t cid[ANYMSG_CID_LENGTH])
 {
     uint32_t value;
@@ -145,6 +169,22 @@ static int parse_wifi_cid(const char *text, uint8_t cid[ANYMSG_CID_LENGTH])
     cid[3] = (uint8_t)(value & 0xFFu);
 
     return (anymsg_cid_segment_from_first_byte(cid[0]) == ANYMSG_CID_SEGMENT_WIFI) ? 0 : -1;
+}
+
+static int parse_four_g_cid(const char *text, uint8_t cid[ANYMSG_CID_LENGTH])
+{
+    uint32_t value;
+
+    if ((text == NULL) || (cid == NULL) || (parse_u32(text, &value) != 0)) {
+        return -1;
+    }
+
+    cid[0] = (uint8_t)((value >> 24u) & 0xFFu);
+    cid[1] = (uint8_t)((value >> 16u) & 0xFFu);
+    cid[2] = (uint8_t)((value >> 8u) & 0xFFu);
+    cid[3] = (uint8_t)(value & 0xFFu);
+
+    return (anymsg_cid_segment_from_first_byte(cid[0]) == ANYMSG_CID_SEGMENT_4G) ? 0 : -1;
 }
 
 static int parse_wifi_tx_peer(app_config_t *config, const char *value)
@@ -204,6 +244,63 @@ static int parse_wifi_tx_peer(app_config_t *config, const char *value)
     return 0;
 }
 
+static int parse_four_g_tx_peer(app_config_t *config, const char *value)
+{
+    char line[CONFIG_LINE_MAX];
+    char *cid_text;
+    char *ip_text;
+    char *port_text;
+    char *comma_a;
+    char *comma_b;
+    four_g_tx_peer_t peer;
+    struct in_addr addr;
+    uint32_t port_value;
+
+    if ((config == NULL) || (value == NULL) || (strlen(value) >= sizeof(line)) ||
+        (config->four_g_tx_peer_count >= FOUR_G_TX_PEER_MAX)) {
+        return -1;
+    }
+
+    copy_string(line, sizeof(line), value);
+    comma_a = strchr(line, ',');
+    if (comma_a == NULL) {
+        return -1;
+    }
+    *comma_a = '\0';
+
+    comma_b = strchr(comma_a + 1, ',');
+    if ((comma_b == NULL) || (strchr(comma_b + 1, ',') != NULL)) {
+        return -1;
+    }
+    *comma_b = '\0';
+
+    cid_text = trim(line);
+    ip_text = trim(comma_a + 1);
+    port_text = trim(comma_b + 1);
+    if ((cid_text == NULL) || (cid_text[0] == '\0') ||
+        (ip_text == NULL) || (ip_text[0] == '\0') ||
+        (port_text == NULL) || (port_text[0] == '\0')) {
+        return -1;
+    }
+
+    memset(&peer, 0, sizeof(peer));
+    if (parse_four_g_cid(cid_text, peer.destination_cid) != 0) {
+        return -1;
+    }
+    if ((inet_pton(AF_INET, ip_text, &addr) != 1) || (addr.s_addr == 0u)) {
+        return -1;
+    }
+    if ((parse_u32(port_text, &port_value) != 0) || (port_value > UINT16_MAX)) {
+        return -1;
+    }
+
+    peer.ipv4_addr_be = addr.s_addr;
+    peer.port = (uint16_t)port_value;
+    config->four_g_tx_peers[config->four_g_tx_peer_count] = peer;
+    config->four_g_tx_peer_count++;
+    return 0;
+}
+
 void app_config_set_defaults(app_config_t *config)
 {
     if (config == NULL) {
@@ -213,7 +310,7 @@ void app_config_set_defaults(app_config_t *config)
     memset(config, 0, sizeof(*config));
     config->status_enabled = true;
     copy_string(config->status_dir, sizeof(config->status_dir), "/run/put/status");
-    config->can_enabled = false;
+    config->can_enabled = true;
     copy_string(config->can_ifname, sizeof(config->can_ifname), APP_CONFIG_CAN_DEFAULT_IFNAME);
     config->can_bitrate = APP_CONFIG_CAN_DEFAULT_BITRATE;
     config->can_tx_can_id = APP_CONFIG_CAN_DEFAULT_TX_CAN_ID;
@@ -232,7 +329,7 @@ void app_config_set_defaults(app_config_t *config)
                 sizeof(config->ethernet_tx_peer_addr),
                 APP_CONFIG_ETHERNET_DEFAULT_TX_PEER_ADDR);
     config->ethernet_tx_peer_port = (uint16_t)APP_CONFIG_ETHERNET_DEFAULT_TX_PEER_PORT;
-    config->wifi_enabled = false;
+    config->wifi_enabled = true;
     config->wifi_udp_enabled = APP_CONFIG_WIFI_DEFAULT_UDP_ENABLED;
     config->wifi_tcp_enabled = APP_CONFIG_WIFI_DEFAULT_TCP_ENABLED;
     copy_string(config->wifi_bind_addr,
@@ -245,6 +342,27 @@ void app_config_set_defaults(app_config_t *config)
     config->wifi_tx_peer_port = (uint16_t)APP_CONFIG_WIFI_DEFAULT_TX_PEER_PORT;
     config->bluetooth_enabled = false;
     config->bluetooth_channel = 1u;
+    config->four_g_enabled = false;
+    copy_string(config->four_g_ifname,
+                sizeof(config->four_g_ifname),
+                APP_CONFIG_FOUR_G_DEFAULT_IFNAME);
+    config->four_g_bind_to_device = APP_CONFIG_FOUR_G_DEFAULT_BIND_TO_DEVICE;
+    config->four_g_udp_enabled = APP_CONFIG_FOUR_G_DEFAULT_UDP_ENABLED;
+    config->four_g_tcp_enabled = APP_CONFIG_FOUR_G_DEFAULT_TCP_ENABLED;
+    copy_string(config->four_g_bind_addr,
+                sizeof(config->four_g_bind_addr),
+                APP_CONFIG_FOUR_G_DEFAULT_BIND_ADDR);
+    config->four_g_port = (uint16_t)APP_CONFIG_FOUR_G_DEFAULT_PORT;
+    copy_string(config->four_g_tx_peer_addr,
+                sizeof(config->four_g_tx_peer_addr),
+                APP_CONFIG_FOUR_G_DEFAULT_TX_PEER_ADDR);
+    config->four_g_tx_peer_port = (uint16_t)APP_CONFIG_FOUR_G_DEFAULT_TX_PEER_PORT;
+    config->rs485_enabled = true;
+    copy_string(config->rs485_uart_device,
+                sizeof(config->rs485_uart_device),
+                APP_CONFIG_RS485_DEFAULT_UART_DEVICE);
+    config->rs485_baudrate = APP_CONFIG_RS485_DEFAULT_BAUDRATE;
+    config->rs485_flags = (uint32_t)(SER_RS485_ENABLED | SER_RS485_RTS_ON_SEND);
     config->max_packets = 0u;
 }
 
@@ -457,6 +575,84 @@ static unified_error_t apply_key_value(app_config_t *config,
             }
             return UNIFIED_OK;
         }
+    } else if ((strcmp(section, "4g") == 0) || (strcmp(section, "four_g") == 0)) {
+        if (strcmp(key, "enabled") == 0) {
+            if (parse_bool(value, &bool_value) != 0) {
+                return UNIFIED_ERR_INVALID_ARG;
+            }
+            config->four_g_enabled = bool_value;
+            return UNIFIED_OK;
+        }
+
+        if (strcmp(key, "ifname") == 0) {
+            if (value[0] == '\0') {
+                return UNIFIED_ERR_INVALID_ARG;
+            }
+            copy_string(config->four_g_ifname, sizeof(config->four_g_ifname), value);
+            return UNIFIED_OK;
+        }
+
+        if (strcmp(key, "bind_to_device") == 0) {
+            if (parse_bool(value, &bool_value) != 0) {
+                return UNIFIED_ERR_INVALID_ARG;
+            }
+            config->four_g_bind_to_device = bool_value;
+            return UNIFIED_OK;
+        }
+
+        if (strcmp(key, "udp_enabled") == 0) {
+            if (parse_bool(value, &bool_value) != 0) {
+                return UNIFIED_ERR_INVALID_ARG;
+            }
+            config->four_g_udp_enabled = bool_value;
+            return UNIFIED_OK;
+        }
+
+        if (strcmp(key, "tcp_enabled") == 0) {
+            if (parse_bool(value, &bool_value) != 0) {
+                return UNIFIED_ERR_INVALID_ARG;
+            }
+            config->four_g_tcp_enabled = bool_value;
+            return UNIFIED_OK;
+        }
+
+        if (strcmp(key, "bind_addr") == 0) {
+            if (value[0] == '\0') {
+                return UNIFIED_ERR_INVALID_ARG;
+            }
+            copy_string(config->four_g_bind_addr, sizeof(config->four_g_bind_addr), value);
+            return UNIFIED_OK;
+        }
+
+        if (strcmp(key, "port") == 0) {
+            if ((parse_u32(value, &u32_value) != 0) || (u32_value == 0u) || (u32_value > UINT16_MAX)) {
+                return UNIFIED_ERR_INVALID_ARG;
+            }
+            config->four_g_port = (uint16_t)u32_value;
+            return UNIFIED_OK;
+        }
+
+        if (strcmp(key, "tx_peer_addr") == 0) {
+            copy_string(config->four_g_tx_peer_addr,
+                        sizeof(config->four_g_tx_peer_addr),
+                        value);
+            return UNIFIED_OK;
+        }
+
+        if (strcmp(key, "tx_peer_port") == 0) {
+            if ((parse_u32(value, &u32_value) != 0) || (u32_value == 0u) || (u32_value > UINT16_MAX)) {
+                return UNIFIED_ERR_INVALID_ARG;
+            }
+            config->four_g_tx_peer_port = (uint16_t)u32_value;
+            return UNIFIED_OK;
+        }
+
+        if (strcmp(key, "tx_peer") == 0) {
+            if (parse_four_g_tx_peer(config, value) != 0) {
+                return UNIFIED_ERR_INVALID_ARG;
+            }
+            return UNIFIED_OK;
+        }
     } else if (strcmp(section, "bluetooth") == 0) {
         if (strcmp(key, "enabled") == 0) {
             if (parse_bool(value, &bool_value) != 0) {
@@ -471,6 +667,35 @@ static unified_error_t apply_key_value(app_config_t *config,
                 return UNIFIED_ERR_INVALID_ARG;
             }
             config->bluetooth_channel = (uint8_t)u32_value;
+            return UNIFIED_OK;
+        }
+    } else if (strcmp(section, "rs485") == 0) {
+        if (strcmp(key, "enabled") == 0) {
+            if (parse_bool(value, &bool_value) != 0) {
+                return UNIFIED_ERR_INVALID_ARG;
+            }
+            config->rs485_enabled = bool_value;
+            return UNIFIED_OK;
+        }
+
+        if (strcmp(key, "uart_device") == 0) {
+            copy_string(config->rs485_uart_device, sizeof(config->rs485_uart_device), value);
+            return UNIFIED_OK;
+        }
+
+        if (strcmp(key, "baudrate") == 0) {
+            if (parse_u32(value, &u32_value) != 0) {
+                return UNIFIED_ERR_INVALID_ARG;
+            }
+            config->rs485_baudrate = u32_value;
+            return UNIFIED_OK;
+        }
+
+        if (strcmp(key, "rs485_flags") == 0) {
+            if (parse_u32(value, &u32_value) != 0) {
+                return UNIFIED_ERR_INVALID_ARG;
+            }
+            config->rs485_flags = u32_value;
             return UNIFIED_OK;
         }
     } else if (strcmp(section, "runtime") == 0) {
@@ -623,6 +848,45 @@ unified_error_t app_config_validate(const app_config_t *config)
 
     if (config->bluetooth_enabled && (config->bluetooth_channel == 0u)) {
         return UNIFIED_ERR_INVALID_ARG;
+    }
+
+    if (config->four_g_enabled) {
+        if ((config->four_g_ifname[0] == '\0') ||
+            (config->four_g_bind_addr[0] == '\0') ||
+            (config->four_g_port == 0u)) {
+            return UNIFIED_ERR_INVALID_ARG;
+        }
+        if (!config->four_g_udp_enabled && !config->four_g_tcp_enabled) {
+            return UNIFIED_ERR_INVALID_ARG;
+        }
+        if (config->four_g_tx_peer_addr[0] != '\0') {
+            if ((config->four_g_tx_peer_port == 0u) ||
+                !is_valid_ipv4_address(config->four_g_tx_peer_addr)) {
+                return UNIFIED_ERR_INVALID_ARG;
+            }
+        }
+    }
+
+    if (config->four_g_tx_peer_count > FOUR_G_TX_PEER_MAX) {
+        return UNIFIED_ERR_INVALID_ARG;
+    }
+    for (size_t i = 0u; i < config->four_g_tx_peer_count; ++i) {
+        const four_g_tx_peer_t *peer = &config->four_g_tx_peers[i];
+
+        if ((anymsg_cid_segment_from_first_byte(peer->destination_cid[0]) !=
+             ANYMSG_CID_SEGMENT_4G) ||
+            (peer->ipv4_addr_be == 0u) ||
+            ((peer->port == 0u) && (config->four_g_port == 0u))) {
+            return UNIFIED_ERR_INVALID_ARG;
+        }
+    }
+
+    if (config->rs485_enabled) {
+        if ((config->rs485_uart_device[0] == '\0') ||
+            !is_supported_rs485_baudrate(config->rs485_baudrate) ||
+            !is_valid_rs485_flags(config->rs485_flags)) {
+            return UNIFIED_ERR_INVALID_ARG;
+        }
     }
 
     return UNIFIED_OK;

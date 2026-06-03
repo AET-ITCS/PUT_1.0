@@ -11,10 +11,13 @@
 #include <unistd.h>
 
 #include "app_config.h"
+#include "bluetooth_adapter.h"
 #include "can_adapter.h"
 #include "egress_manager.h"
 #include "ethernet_adapter.h"
+#include "four_g_adapter.h"
 #include "linux_shm_ipc.h"
+#include "rs485_adapter.h"
 #include "status_collector.h"
 #include "wifi_adapter.h"
 
@@ -121,19 +124,19 @@ static void configure_status_modules(status_collector_t *collector, const app_co
                                       true,
                                       config->bluetooth_enabled,
                                       "Bluetooth RFCOMM",
-                                      "Bluetooth egress unavailable until adapter binding is implemented");
+                                      "Bluetooth RFCOMM channel carries complete anyMSG; RX to Linux SHM v2");
     status_collector_configure_module(collector,
                                       STATUS_MODULE_4G,
                                       true,
-                                      false,
-                                      "4G",
-                                      "4G egress placeholder is observable and releases TX frames");
+                                      config->four_g_enabled,
+                                      "4G EC20 USB UDP/TCP raw",
+                                      "EC20 USB network interface carries complete anyMSG; RX to Linux SHM v2");
     status_collector_configure_module(collector,
                                       STATUS_MODULE_RS485,
                                       true,
-                                      false,
-                                      "RS485",
-                                      "RS485 egress placeholder is observable and releases TX frames");
+                                      config->rs485_enabled,
+                                      "RS485 raw",
+                                      "RS485 UART raw payload bridge; RX to Linux SHM v2");
 }
 
 static uint32_t make_linux_epoch(void)
@@ -187,6 +190,7 @@ int main(int argc, char **argv)
     can_tx_context_t can_tx_context;
     ethernet_tx_context_t ethernet_tx_context;
     wifi_tx_context_t wifi_tx_context;
+    four_g_tx_context_t four_g_tx_context;
     uint32_t linux_epoch;
     bool egress_started = false;
     bool can_started = false;
@@ -194,6 +198,10 @@ int main(int argc, char **argv)
     bool ethernet_tcp_started = false;
     bool wifi_udp_started = false;
     bool wifi_tcp_started = false;
+    bool four_g_udp_started = false;
+    bool four_g_tcp_started = false;
+    bool bluetooth_started = false;
+    bool rs485_started = false;
     int exit_code = EXIT_SUCCESS;
 
     if (find_config_arg(argc, argv, &config_path, &config_explicit) != 0) {
@@ -237,12 +245,37 @@ int main(int argc, char **argv)
     can_tx_context_init(&can_tx_context, config.can_tx_can_id, config.can_extended_id);
     ethernet_tx_context_init(&ethernet_tx_context, config.ethernet_port);
     wifi_tx_context_init(&wifi_tx_context, config.wifi_port);
+    four_g_tx_context_init(&four_g_tx_context, config.four_g_port);
+    err = four_g_tx_context_set_interface(&four_g_tx_context,
+                                          config.four_g_ifname,
+                                          config.four_g_bind_to_device);
+    if (err != UNIFIED_OK) {
+        fprintf(stderr, "invalid 4G interface config\n");
+        egress_manager_destroy(&egress_manager);
+        ethernet_tx_context_destroy(&ethernet_tx_context);
+        wifi_tx_context_destroy(&wifi_tx_context);
+        four_g_tx_context_destroy(&four_g_tx_context);
+        status_collector_destroy(&collector);
+        return EXIT_FAILURE;
+    }
     for (size_t i = 0u; i < config.wifi_tx_peer_count; ++i) {
         if (wifi_tx_context_add_peer(&wifi_tx_context, &config.wifi_tx_peers[i]) != 0) {
             fprintf(stderr, "invalid wifi tx peer at index %zu\n", i);
             egress_manager_destroy(&egress_manager);
             ethernet_tx_context_destroy(&ethernet_tx_context);
             wifi_tx_context_destroy(&wifi_tx_context);
+            four_g_tx_context_destroy(&four_g_tx_context);
+            status_collector_destroy(&collector);
+            return EXIT_FAILURE;
+        }
+    }
+    for (size_t i = 0u; i < config.four_g_tx_peer_count; ++i) {
+        if (four_g_tx_context_add_peer(&four_g_tx_context, &config.four_g_tx_peers[i]) != 0) {
+            fprintf(stderr, "invalid 4G tx peer at index %zu\n", i);
+            egress_manager_destroy(&egress_manager);
+            ethernet_tx_context_destroy(&ethernet_tx_context);
+            wifi_tx_context_destroy(&wifi_tx_context);
+            four_g_tx_context_destroy(&four_g_tx_context);
             status_collector_destroy(&collector);
             return EXIT_FAILURE;
         }
@@ -262,6 +295,7 @@ int main(int argc, char **argv)
             egress_manager_destroy(&egress_manager);
             ethernet_tx_context_destroy(&ethernet_tx_context);
             wifi_tx_context_destroy(&wifi_tx_context);
+            four_g_tx_context_destroy(&four_g_tx_context);
             status_collector_destroy(&collector);
             return EXIT_FAILURE;
         }
@@ -280,24 +314,29 @@ int main(int argc, char **argv)
             egress_manager_destroy(&egress_manager);
             ethernet_tx_context_destroy(&ethernet_tx_context);
             wifi_tx_context_destroy(&wifi_tx_context);
+            four_g_tx_context_destroy(&four_g_tx_context);
             status_collector_destroy(&collector);
             return EXIT_FAILURE;
         }
     }
-
-    if (config.bluetooth_enabled) {
-        err = UNIFIED_ERR_IPC_NOT_READY;
-        fprintf(stderr, "bluetooth adapter unavailable: adapter binding is not implemented\n");
-        status_collector_record_error(&collector,
-                                      STATUS_MODULE_BLUETOOTH,
-                                      "bluetooth_adapter_unavailable",
-                                      err);
-        (void)status_collector_write_all(&collector);
-        egress_manager_destroy(&egress_manager);
-        ethernet_tx_context_destroy(&ethernet_tx_context);
-        wifi_tx_context_destroy(&wifi_tx_context);
-        status_collector_destroy(&collector);
-        return EXIT_FAILURE;
+    if (config.four_g_tx_peer_addr[0] != '\0') {
+        err = four_g_tx_context_set_default_peer(&four_g_tx_context,
+                                                 config.four_g_tx_peer_addr,
+                                                 config.four_g_tx_peer_port);
+        if (err != UNIFIED_OK) {
+            fprintf(stderr, "invalid 4G tx peer config\n");
+            status_collector_record_error(&collector,
+                                          STATUS_MODULE_4G,
+                                          "four_g_peer_config",
+                                          err);
+            (void)status_collector_write_all(&collector);
+            egress_manager_destroy(&egress_manager);
+            ethernet_tx_context_destroy(&ethernet_tx_context);
+            wifi_tx_context_destroy(&wifi_tx_context);
+            four_g_tx_context_destroy(&four_g_tx_context);
+            status_collector_destroy(&collector);
+            return EXIT_FAILURE;
+        }
     }
 
     linux_epoch = make_linux_epoch();
@@ -312,6 +351,7 @@ int main(int argc, char **argv)
         egress_manager_destroy(&egress_manager);
         ethernet_tx_context_destroy(&ethernet_tx_context);
         wifi_tx_context_destroy(&wifi_tx_context);
+        four_g_tx_context_destroy(&four_g_tx_context);
         status_collector_destroy(&collector);
         return EXIT_FAILURE;
     }
@@ -328,6 +368,7 @@ int main(int argc, char **argv)
         egress_manager_destroy(&egress_manager);
         ethernet_tx_context_destroy(&ethernet_tx_context);
         wifi_tx_context_destroy(&wifi_tx_context);
+        four_g_tx_context_destroy(&four_g_tx_context);
         status_collector_destroy(&collector);
         return EXIT_FAILURE;
     }
@@ -346,9 +387,14 @@ int main(int argc, char **argv)
     egress_config.adapters[PUT_SHM_INTERFACE_WIFI] = &wifi_adapter;
     egress_config.adapter_contexts[PUT_SHM_INTERFACE_WIFI] = &wifi_tx_context;
     egress_config.enabled[PUT_SHM_INTERFACE_WIFI] = config.wifi_enabled;
-    egress_config.enabled[PUT_SHM_INTERFACE_BLUETOOTH] = false;
-    egress_config.enabled[PUT_SHM_INTERFACE_4G] = false;
-    egress_config.enabled[PUT_SHM_INTERFACE_RS485] = false;
+    egress_config.adapters[PUT_SHM_INTERFACE_BLUETOOTH] = &bluetooth_adapter;
+    egress_config.adapter_contexts[PUT_SHM_INTERFACE_BLUETOOTH] = NULL;
+    egress_config.enabled[PUT_SHM_INTERFACE_BLUETOOTH] = config.bluetooth_enabled;
+    egress_config.adapters[PUT_SHM_INTERFACE_4G] = &four_g_adapter;
+    egress_config.adapter_contexts[PUT_SHM_INTERFACE_4G] = &four_g_tx_context;
+    egress_config.enabled[PUT_SHM_INTERFACE_4G] = config.four_g_enabled;
+    egress_config.adapters[PUT_SHM_INTERFACE_RS485] = &rs485_adapter;
+    egress_config.enabled[PUT_SHM_INTERFACE_RS485] = config.rs485_enabled;
     err = egress_manager_start(&egress_manager, &egress_config);
     if (err != UNIFIED_OK) {
         fprintf(stderr, "failed to start linux egress manager: error=%d\n", (int)err);
@@ -361,6 +407,7 @@ int main(int argc, char **argv)
         egress_manager_destroy(&egress_manager);
         ethernet_tx_context_destroy(&ethernet_tx_context);
         wifi_tx_context_destroy(&wifi_tx_context);
+        four_g_tx_context_destroy(&four_g_tx_context);
         status_collector_destroy(&collector);
         return EXIT_FAILURE;
     }
@@ -394,6 +441,37 @@ int main(int argc, char **argv)
                    config.can_ifname,
                    (unsigned)config.can_bitrate,
                    (unsigned)config.can_tx_can_id,
+                   linux_epoch);
+        }
+    }
+
+    if (!g_should_stop && config.rs485_enabled) {
+        rs485_adapter_config_t rs485_config;
+
+        rs485_adapter_config_set_defaults(&rs485_config);
+        rs485_config.enabled = true;
+        (void)snprintf(rs485_config.uart_device,
+                       sizeof(rs485_config.uart_device),
+                       "%s",
+                       config.rs485_uart_device);
+        rs485_config.baudrate = config.rs485_baudrate;
+        rs485_config.rs485_flags = config.rs485_flags;
+        rs485_config.ipc = &ipc;
+        rs485_config.collector = &collector;
+        rs485_config.linux_epoch = linux_epoch;
+
+        if (rs485_adapter_start(&rs485_config) != 0) {
+            fprintf(stderr,
+                    "failed to start RS485 RX service on %s\n",
+                    config.rs485_uart_device);
+            exit_code = EXIT_FAILURE;
+            g_should_stop = 1;
+        } else {
+            rs485_started = true;
+            printf("linux_app: RS485 RX listening on %s, baudrate=%u, flags=0x%X, linux_epoch=%u\n",
+                   config.rs485_uart_device,
+                   (unsigned)config.rs485_baudrate,
+                   (unsigned)config.rs485_flags,
                    linux_epoch);
         }
     }
@@ -520,6 +598,104 @@ int main(int argc, char **argv)
         }
     }
 
+    if (!g_should_stop && config.four_g_enabled && config.four_g_udp_enabled) {
+        four_g_udp_config_t four_g_udp_config;
+
+        memset(&four_g_udp_config, 0, sizeof(four_g_udp_config));
+        four_g_udp_config.enabled = true;
+        (void)snprintf(four_g_udp_config.ifname,
+                       sizeof(four_g_udp_config.ifname),
+                       "%s",
+                       config.four_g_ifname);
+        four_g_udp_config.bind_to_device = config.four_g_bind_to_device;
+        (void)snprintf(four_g_udp_config.bind_addr,
+                       sizeof(four_g_udp_config.bind_addr),
+                       "%s",
+                       config.four_g_bind_addr);
+        four_g_udp_config.port = config.four_g_port;
+        four_g_udp_config.ipc = &ipc;
+        four_g_udp_config.collector = &collector;
+        four_g_udp_config.linux_epoch = linux_epoch;
+
+        if (four_g_udp_server_start(&four_g_udp_config) != 0) {
+            fprintf(stderr,
+                    "failed to start 4G UDP RX service on %s/%s:%u\n",
+                    config.four_g_ifname,
+                    config.four_g_bind_addr,
+                    (unsigned)config.four_g_port);
+            exit_code = EXIT_FAILURE;
+            g_should_stop = 1;
+        } else {
+            four_g_udp_started = true;
+            printf("linux_app: 4G UDP RX listening on %s/%s:%u, linux_epoch=%u\n",
+                   config.four_g_ifname,
+                   config.four_g_bind_addr,
+                   (unsigned)config.four_g_port,
+                   linux_epoch);
+        }
+    }
+
+    if (!g_should_stop && config.four_g_enabled && config.four_g_tcp_enabled) {
+        four_g_tcp_config_t four_g_tcp_config;
+
+        memset(&four_g_tcp_config, 0, sizeof(four_g_tcp_config));
+        four_g_tcp_config.enabled = true;
+        (void)snprintf(four_g_tcp_config.ifname,
+                       sizeof(four_g_tcp_config.ifname),
+                       "%s",
+                       config.four_g_ifname);
+        four_g_tcp_config.bind_to_device = config.four_g_bind_to_device;
+        (void)snprintf(four_g_tcp_config.bind_addr,
+                       sizeof(four_g_tcp_config.bind_addr),
+                       "%s",
+                       config.four_g_bind_addr);
+        four_g_tcp_config.port = config.four_g_port;
+        four_g_tcp_config.listen_backlog = FOUR_G_ADAPTER_DEFAULT_TCP_BACKLOG;
+        four_g_tcp_config.ipc = &ipc;
+        four_g_tcp_config.collector = &collector;
+        four_g_tcp_config.linux_epoch = linux_epoch;
+
+        if (four_g_tcp_server_start(&four_g_tcp_config) != 0) {
+            fprintf(stderr,
+                    "failed to start 4G TCP RX service on %s/%s:%u\n",
+                    config.four_g_ifname,
+                    config.four_g_bind_addr,
+                    (unsigned)config.four_g_port);
+            exit_code = EXIT_FAILURE;
+            g_should_stop = 1;
+        } else {
+            four_g_tcp_started = true;
+            printf("linux_app: 4G TCP RX listening on %s/%s:%u, linux_epoch=%u\n",
+                   config.four_g_ifname,
+                   config.four_g_bind_addr,
+                   (unsigned)config.four_g_port,
+                   linux_epoch);
+        }
+    }
+
+    if (!g_should_stop && config.bluetooth_enabled) {
+        bluetooth_config_t bt_config;
+
+        memset(&bt_config, 0, sizeof(bt_config));
+        bt_config.ipc = &ipc;
+        bt_config.collector = &collector;
+        bt_config.linux_epoch = linux_epoch;
+        bt_config.channel = config.bluetooth_channel;
+
+        if (bluetooth_server_start(&bt_config) != 0) {
+            fprintf(stderr,
+                    "failed to start bluetooth service on channel %u\n",
+                    (unsigned)config.bluetooth_channel);
+            exit_code = EXIT_FAILURE;
+            g_should_stop = 1;
+        } else {
+            bluetooth_started = true;
+            printf("linux_app: Bluetooth RFCOMM listening on channel %u, linux_epoch=%u\n",
+                   (unsigned)config.bluetooth_channel,
+                   linux_epoch);
+        }
+    }
+
     while (!g_should_stop) {
         linux_shm_ipc_stats_t stats;
 
@@ -550,6 +726,18 @@ int main(int argc, char **argv)
     if (wifi_tcp_started) {
         wifi_tcp_server_stop();
     }
+    if (four_g_udp_started) {
+        four_g_udp_server_stop();
+    }
+    if (four_g_tcp_started) {
+        four_g_tcp_server_stop();
+    }
+    if (bluetooth_started) {
+        bluetooth_server_stop();
+    }
+    if (rs485_started) {
+        rs485_adapter_stop();
+    }
 
     {
         linux_shm_ipc_stats_t stats;
@@ -562,6 +750,7 @@ int main(int argc, char **argv)
     linux_shm_ipc_unmap(&ipc);
     ethernet_tx_context_destroy(&ethernet_tx_context);
     wifi_tx_context_destroy(&wifi_tx_context);
+    four_g_tx_context_destroy(&four_g_tx_context);
     status_collector_destroy(&collector);
     return exit_code;
 }

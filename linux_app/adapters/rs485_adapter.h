@@ -15,7 +15,7 @@ extern "C" {
 #endif
 
 /* 默认的RS485串口设备文件路径 */
-#define RS485_ADAPTER_DEFAULT_DEVICE "/dev/ttyS1"
+#define RS485_ADAPTER_DEFAULT_DEVICE "/dev/ttyS4"
 /* 默认串口波特率 */
 #define RS485_ADAPTER_DEFAULT_BAUDRATE 115200u
 /* RS485适配器支持的最大数据载荷长度（字节） */
@@ -28,7 +28,7 @@ extern "C" {
  */
 typedef struct {
     bool enabled;                       /* 是否启用该适配器 */
-    char uart_device[64];               /* 串口设备路径，例如 "/dev/ttyS1" */
+    char uart_device[64];               /* 串口设备路径，例如 "/dev/ttyS4" */
     uint32_t baudrate;                  /* 波特率，例如 115200 */
     uint32_t rs485_flags;               /* struct serial_rs485 的流控标志位 (TIOCSRS485) */
     uint32_t linux_epoch;               /* Linux 系统的启动时间戳（用于消息帧计时） */
@@ -70,7 +70,7 @@ extern physical_interface_adapter_t rs485_adapter;
 /**
  * @brief 设置配置结构体的默认值
  * 
- * 将配置结构体清零，并配置为禁用状态、默认串口设备 `/dev/ttyS1`、默认波特率 115200 以及基本的 RS485 流控标志。
+ * 将配置结构体清零，并配置为禁用状态、默认串口设备 `/dev/ttyS4`、默认波特率 115200 以及基本的 RS485 流控标志。
  * 
  * @param config 指向待初始化的配置结构体的指针
  */

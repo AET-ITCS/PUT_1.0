@@ -62,6 +62,116 @@ static bool descriptor_matches_header(const put_shm_descriptor_t *descriptor,
 }
 
 /**
+ * @brief 判断 descriptor 是否包含指定 flag。
+ *
+ * @param descriptor descriptor 元数据。
+ * @param flag 待检查 flag。
+ * @return true 表示 flag 已置位。
+ */
+static bool descriptor_has_flag(const put_shm_descriptor_t *descriptor, uint32_t flag)
+{
+    if (descriptor == 0) {
+        return false;
+    }
+
+    return (descriptor->flags & flag) != 0u;
+}
+
+/**
+ * @brief 判断来源接口是否属于外部入口。
+ *
+ * @param interface_id 来源接口 ID。
+ * @return true 表示 Ethernet/Wi-Fi/Bluetooth/4G 外部入口。
+ */
+static bool source_interface_is_external(uint8_t interface_id)
+{
+    return (interface_id == (uint8_t)PUT_SHM_INTERFACE_ETHERNET) ||
+           (interface_id == (uint8_t)PUT_SHM_INTERFACE_WIFI) ||
+           (interface_id == (uint8_t)PUT_SHM_INTERFACE_BLUETOOTH) ||
+           (interface_id == (uint8_t)PUT_SHM_INTERFACE_4G);
+}
+
+/**
+ * @brief 判断目的 CID 是否落入控制类物理接口段。
+ *
+ * @param destination_cid anyMSG destination CID。
+ * @return true 表示目标为 CAN 或 RS485 CID 段。
+ */
+static bool destination_cid_is_control_path(const uint8_t destination_cid[ANYMSG_CID_LENGTH])
+{
+    anymsg_cid_segment_t segment; /**< 目的 CID 地址段。 */
+
+    if (destination_cid == 0) {
+        return false;
+    }
+
+    segment = anymsg_cid_segment_from_first_byte(destination_cid[0]);
+    return (segment == ANYMSG_CID_SEGMENT_CAN) ||
+           (segment == ANYMSG_CID_SEGMENT_RS485);
+}
+
+/**
+ * @brief 判断 descriptor 是否需要 CONTROL_ALLOWED。
+ *
+ * @param descriptor descriptor 元数据。
+ * @return true 表示外部入口正在请求高优先级或控制接口路径。
+ */
+static bool descriptor_requires_control_allowed(const put_shm_descriptor_t *descriptor)
+{
+    if (descriptor == 0) {
+        return false;
+    }
+
+    if (!source_interface_is_external(descriptor->source_interface)) {
+        return false;
+    }
+
+    return (descriptor->priority <= 1u) ||
+           destination_cid_is_control_path(descriptor->destination_cid);
+}
+
+/**
+ * @brief 将 descriptor flags 映射为 RTOS 路由可信状态。
+ *
+ * @param descriptor descriptor 元数据。
+ * @return 路由可信状态。
+ */
+static rtos_route_trust_t descriptor_trust_from_flags(const put_shm_descriptor_t *descriptor)
+{
+    if (descriptor == 0) {
+        return RTOS_ROUTE_TRUST_AUTH_FAILED;
+    }
+
+    if (descriptor_has_flag(descriptor, PUT_SHM_DESCRIPTOR_FLAG_INTERNAL_TRUSTED)) {
+        /* 内部可信入口由 Linux 明确标记，允许绕过外部入口认证三件套。 */
+        return RTOS_ROUTE_TRUST_INTERNAL_TRUSTED;
+    }
+
+    if (!descriptor_has_flag(descriptor, PUT_SHM_DESCRIPTOR_FLAG_AUTH_OK)) {
+        /* 外部入口未完成鉴权时不得进入 Router Scheduler。 */
+        return RTOS_ROUTE_TRUST_AUTH_FAILED;
+    }
+
+    if (!descriptor_has_flag(descriptor, PUT_SHM_DESCRIPTOR_FLAG_INTEGRITY_OK)) {
+        /* 外部入口完整性检查失败时不得路由。 */
+        return RTOS_ROUTE_TRUST_INTEGRITY_FAILED;
+    }
+
+    if (!descriptor_has_flag(descriptor, PUT_SHM_DESCRIPTOR_FLAG_REPLAY_OK)) {
+        /* 外部入口重放检查失败时不得路由。 */
+        return RTOS_ROUTE_TRUST_REPLAY_DROPPED;
+    }
+
+    if (descriptor_requires_control_allowed(descriptor) &&
+        !descriptor_has_flag(descriptor, PUT_SHM_DESCRIPTOR_FLAG_CONTROL_ALLOWED)) {
+        /* 外部高优先级或 CAN/RS485 控制路径需要额外授权。 */
+        return RTOS_ROUTE_TRUST_AUTH_FAILED;
+    }
+
+    return RTOS_ROUTE_TRUST_AUTH_OK;
+}
+
+/**
  * @brief 校验 Frame Pool 中的 anyMSG header。
  *
  * @param descriptor descriptor 元数据。
@@ -164,7 +274,7 @@ unified_error_t rtos_router_adapter_descriptor_to_input(
     out_input->type = (header != 0) ? header->type : descriptor->type;
     out_input->priority = descriptor->priority;
     out_input->ttl = descriptor->ttl;
-    out_input->trust = RTOS_ROUTE_TRUST_AUTH_OK;
+    out_input->trust = descriptor_trust_from_flags(descriptor);
     out_input->epoch = descriptor->epoch;
     out_input->flags = descriptor->flags;
     out_input->receive_time_ms = now_ms;
