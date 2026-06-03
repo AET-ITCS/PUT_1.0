@@ -1111,6 +1111,34 @@ static int test_pending_same_interface_requeue_after_clear(void)
 }
 
 /**
+ * @brief 测试 devmem control ops 构造与未映射 cache 拒绝。
+ *
+ * @return 0 表示通过。
+ */
+static int test_devmem_control_ops_contract(void)
+{
+    linux_shm_platform_control_t control; /**< control ioctl 上下文。 */
+    linux_shm_platform_ops_t ops;         /**< 生成的平台操作集合。 */
+    uint8_t dummy_byte;                   /**< 未映射的临时字节。 */
+
+    linux_shm_platform_control_init(&control);
+    CHECK(linux_shm_platform_control_configure(&control, "") == UNIFIED_ERR_INVALID_ARG);
+    CHECK(linux_shm_platform_control_configure(&control, "/dev/put_shm_ipc") ==
+          UNIFIED_OK);
+    CHECK(linux_shm_platform_make_devmem_control_ops(&ops, &control) == UNIFIED_OK);
+    CHECK(ops.map_region != 0);
+    CHECK(ops.unmap_region != 0);
+    CHECK(ops.cache_flush != 0);
+    CHECK(ops.cache_invalidate != 0);
+    CHECK(ops.notify != 0);
+    CHECK(ops.user_context == &control);
+    CHECK(ops.cache_flush(&dummy_byte, sizeof(dummy_byte), ops.user_context) ==
+          UNIFIED_ERR_IPC_NOT_READY);
+    linux_shm_platform_control_close(&control);
+    return 0;
+}
+
+/**
  * @brief 测试程序入口。
  *
  * @return 0 表示全部通过。
@@ -1135,5 +1163,6 @@ int main(void)
     CHECK(test_reclaim_rejects_unpublished_and_mismatched_frame() == 0);
     CHECK(test_pending_cross_interface_set_survives_clear() == 0);
     CHECK(test_pending_same_interface_requeue_after_clear() == 0);
+    CHECK(test_devmem_control_ops_contract() == 0);
     return 0;
 }

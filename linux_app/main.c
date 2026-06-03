@@ -1,4 +1,8 @@
-/* linux_app 入口：大核 Linux v2 主线常驻服务。 */
+/**
+ * @file main.c
+ * @brief 大核 Linux v2 主线常驻服务入口。
+ * @author Yukikaze
+ */
 #define _POSIX_C_SOURCE 200809L
 
 #include <signal.h>
@@ -149,6 +153,78 @@ static uint32_t make_linux_epoch(void)
     return (uint32_t)now;
 }
 
+/**
+ * @brief 根据配置选择共享内存 IPC 平台后端。
+ *
+ * @param config 应用配置。
+ * @param control control ioctl 上下文。
+ * @param out_ops_storage 输出自定义平台操作集合。
+ * @param out_ops 输出平台操作集合，NULL 表示使用 IPC 库默认 host 后端。
+ * @return UNIFIED_OK 表示选择成功，否则返回公共错误码。
+ */
+static unified_error_t select_ipc_platform_ops(const app_config_t *config,
+                                               linux_shm_platform_control_t *control,
+                                               linux_shm_platform_ops_t *out_ops_storage,
+                                               const linux_shm_platform_ops_t **out_ops)
+{
+    unified_error_t result; /**< 平台操作选择结果。 */
+
+    if ((config == NULL) || (out_ops == NULL)) {
+        /* 配置和输出指针是选择平台后端的必要输入。 */
+        return UNIFIED_ERR_NULL;
+    }
+
+    *out_ops = NULL;
+    if (config->ipc_backend != APP_CONFIG_IPC_BACKEND_DEVMEM) {
+        /* 默认保持 host/mock 后端，方便本机运行和测试。 */
+        return UNIFIED_OK;
+    }
+
+    if (config->ipc_control_device[0] == '\0') {
+        /* 未配置 control 设备时，只启用 /dev/mem 映射后端。 */
+        *out_ops = linux_shm_platform_devmem_ops();
+        return UNIFIED_OK;
+    }
+
+    if ((control == NULL) || (out_ops_storage == NULL)) {
+        /* control 后端需要 caller 提供持久上下文和 ops 存储。 */
+        return UNIFIED_ERR_NULL;
+    }
+
+    linux_shm_platform_control_init(control);
+    result = linux_shm_platform_control_configure(control, config->ipc_control_device);
+    if (result != UNIFIED_OK) {
+        /* control 设备路径非法时不能启用真实 cache/doorbell ops。 */
+        return result;
+    }
+
+    result = linux_shm_platform_make_devmem_control_ops(out_ops_storage, control);
+    if (result != UNIFIED_OK) {
+        /* 构造 ops 失败说明 control 上下文仍未就绪。 */
+        return result;
+    }
+
+    *out_ops = out_ops_storage;
+    return UNIFIED_OK;
+}
+
+/**
+ * @brief 获取 IPC 后端名称。
+ *
+ * @param backend IPC 后端枚举。
+ * @return 后端名称字符串。
+ */
+static const char *ipc_backend_name(app_config_ipc_backend_t backend)
+{
+    if (backend == APP_CONFIG_IPC_BACKEND_DEVMEM) {
+        /* devmem 表示板端 /dev/mem 后端。 */
+        return "devmem";
+    }
+
+    /* 未知值也按 host 展示，避免错误路径打印空字符串。 */
+    return "host";
+}
+
 static void sleep_one_second(void)
 {
     struct timespec req;
@@ -192,6 +268,9 @@ int main(int argc, char **argv)
     wifi_tx_context_t wifi_tx_context;
     four_g_tx_context_t four_g_tx_context;
     uint32_t linux_epoch;
+    const linux_shm_platform_ops_t *ipc_ops; /* IPC 平台后端操作集合 */
+    linux_shm_platform_ops_t ipc_ops_storage; /* IPC 自定义平台后端存储 */
+    linux_shm_platform_control_t ipc_control; /* IPC control ioctl 上下文 */
     bool egress_started = false;
     bool can_started = false;
     bool ethernet_udp_started = false;
@@ -340,9 +419,39 @@ int main(int argc, char **argv)
     }
 
     linux_epoch = make_linux_epoch();
-    err = linux_shm_ipc_map(&ipc, 0u, PUT_SHM_REGION_SIZE, NULL);
+    memset(&ipc_ops_storage, 0, sizeof(ipc_ops_storage));
+    linux_shm_platform_control_init(&ipc_control);
+    err = select_ipc_platform_ops(&config, &ipc_control, &ipc_ops_storage, &ipc_ops);
     if (err != UNIFIED_OK) {
-        fprintf(stderr, "failed to map linux shm ipc region: error=%d\n", (int)err);
+        fprintf(stderr,
+                "failed to configure linux shm ipc platform ops: backend=%s control_device=%s error=%d\n",
+                ipc_backend_name(config.ipc_backend),
+                config.ipc_control_device,
+                (int)err);
+        status_collector_record_error(&collector,
+                                      STATUS_MODULE_ETHERNET,
+                                      "ipc_platform",
+                                      err);
+        (void)status_collector_write_all(&collector);
+        egress_manager_destroy(&egress_manager);
+        ethernet_tx_context_destroy(&ethernet_tx_context);
+        wifi_tx_context_destroy(&wifi_tx_context);
+        four_g_tx_context_destroy(&four_g_tx_context);
+        status_collector_destroy(&collector);
+        return EXIT_FAILURE;
+    }
+    /* 按配置映射共享内存；host 后端忽略物理地址，devmem 后端使用 DTS 地址。 */
+    err = linux_shm_ipc_map(&ipc,
+                            config.ipc_physical_base,
+                            config.ipc_region_size,
+                            ipc_ops);
+    if (err != UNIFIED_OK) {
+        fprintf(stderr,
+                "failed to map linux shm ipc region: backend=%s physical_base=0x%llX size=%u error=%d\n",
+                ipc_backend_name(config.ipc_backend),
+                (unsigned long long)config.ipc_physical_base,
+                (unsigned)config.ipc_region_size,
+                (int)err);
         status_collector_record_error(&collector,
                                       STATUS_MODULE_ETHERNET,
                                       "ipc_map",
@@ -356,12 +465,26 @@ int main(int argc, char **argv)
         return EXIT_FAILURE;
     }
 
-    err = linux_shm_ipc_format_region(&ipc, ipc.region, linux_epoch, 0u, NULL);
+    if (config.ipc_format_on_start) {
+        /* Linux 作为 Frame Pool owner，默认启动时重建 v2 region 和 epoch。 */
+        err = linux_shm_ipc_format_region(&ipc, ipc.region, linux_epoch, 0u, ipc_ops);
+    } else {
+        /* attach 模式用于调试或外部初始化场景，沿用共享 header 中的 epoch。 */
+        err = linux_shm_ipc_attach(&ipc, ipc.region, ipc_ops);
+        if (err == UNIFIED_OK) {
+            /* descriptor epoch 必须与共享 header 一致，否则 RTOS 会拒绝 frame。 */
+            linux_epoch = ipc.region->header.linux_epoch;
+        }
+    }
     if (err != UNIFIED_OK) {
-        fprintf(stderr, "failed to format linux shm ipc region: error=%d\n", (int)err);
+        fprintf(stderr,
+                "failed to %s linux shm ipc region: backend=%s error=%d\n",
+                config.ipc_format_on_start ? "format" : "attach",
+                ipc_backend_name(config.ipc_backend),
+                (int)err);
         status_collector_record_error(&collector,
                                       STATUS_MODULE_ETHERNET,
-                                      "ipc_format",
+                                      config.ipc_format_on_start ? "ipc_format" : "ipc_attach",
                                       err);
         (void)status_collector_write_all(&collector);
         linux_shm_ipc_unmap(&ipc);
@@ -372,6 +495,13 @@ int main(int argc, char **argv)
         status_collector_destroy(&collector);
         return EXIT_FAILURE;
     }
+    printf("linux_app: shared memory IPC backend=%s physical_base=0x%llX size=%u control_device=%s format_on_start=%s linux_epoch=%u\n",
+           ipc_backend_name(config.ipc_backend),
+           (unsigned long long)config.ipc_physical_base,
+           (unsigned)config.ipc_region_size,
+           config.ipc_control_device,
+           config.ipc_format_on_start ? "true" : "false",
+           linux_epoch);
 
     egress_config.ipc = &ipc;
     egress_config.collector = &collector;

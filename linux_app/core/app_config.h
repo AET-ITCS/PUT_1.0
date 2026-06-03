@@ -1,4 +1,8 @@
-/* linux_app 配置解析：读取协议入口和状态快照参数。 */
+/**
+ * @file app_config.h
+ * @brief linux_app 配置解析接口。
+ * @author Yukikaze
+ */
 #ifndef APP_CONFIG_H
 #define APP_CONFIG_H
 
@@ -8,6 +12,7 @@
 
 #include "error_code.h"
 #include "four_g_adapter.h"
+#include "linux_shm_platform.h"
 #include "wifi_adapter.h"
 
 #ifdef __cplusplus
@@ -50,10 +55,22 @@ extern "C" {
 #define APP_CONFIG_RS485_UART_DEVICE_MAX 64u
 #define APP_CONFIG_RS485_DEFAULT_UART_DEVICE "/dev/ttyS4"
 #define APP_CONFIG_RS485_DEFAULT_BAUDRATE 115200u
+#define APP_CONFIG_IPC_CONTROL_DEVICE_MAX LINUX_SHM_CONTROL_DEVICE_PATH_MAX
+
+typedef enum {
+    APP_CONFIG_IPC_BACKEND_HOST = 0u,   /**< host/mock 后端，使用进程内对齐内存。 */
+    APP_CONFIG_IPC_BACKEND_DEVMEM = 1u, /**< 板端 /dev/mem 后端，映射 reserved-memory。 */
+} app_config_ipc_backend_t;
 
 typedef struct {
     bool status_enabled;
     char status_dir[APP_CONFIG_PATH_MAX];
+
+    app_config_ipc_backend_t ipc_backend; /**< 共享内存 IPC 映射后端。 */
+    uintptr_t ipc_physical_base;          /**< reserved-memory 物理基地址。 */
+    uint32_t ipc_region_size;             /**< 共享内存 region 字节数。 */
+    bool ipc_format_on_start;             /**< 启动时是否由 Linux 格式化 region。 */
+    char ipc_control_device[APP_CONFIG_IPC_CONTROL_DEVICE_MAX]; /**< cache/doorbell control 设备路径。 */
 
     bool can_enabled;
     char can_ifname[APP_CONFIG_CAN_IFNAME_MAX];

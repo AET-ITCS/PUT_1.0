@@ -1,3 +1,8 @@
+/**
+ * @file app_config_test.c
+ * @brief linux_app 配置解析单元测试。
+ * @author Yukikaze
+ */
 #include "app_config.h"
 
 #include <arpa/inet.h>
@@ -28,6 +33,11 @@ static int test_default_ethernet_config(void)
     CHECK(config.can_rx_filter_mask == 0x7FFu);
     CHECK(!config.can_extended_id);
     CHECK(config.can_reassembly_timeout_ms == 500u);
+    CHECK(config.ipc_backend == APP_CONFIG_IPC_BACKEND_HOST);
+    CHECK(config.ipc_physical_base == 0u);
+    CHECK(config.ipc_region_size == PUT_SHM_REGION_SIZE);
+    CHECK(config.ipc_format_on_start);
+    CHECK(strcmp(config.ipc_control_device, "") == 0);
     CHECK(config.ethernet_enabled);
     CHECK(config.ethernet_udp_enabled);
     CHECK(config.ethernet_tcp_enabled);
@@ -58,6 +68,39 @@ static int test_default_ethernet_config(void)
     CHECK(config.rs485_baudrate == 115200u);
     CHECK(config.rs485_flags == (uint32_t)(SER_RS485_ENABLED | SER_RS485_RTS_ON_SEND));
     CHECK(app_config_validate(&config) == UNIFIED_OK);
+    return 0;
+}
+
+/**
+ * @brief 测试 IPC 板端映射配置解析。
+ *
+ * @return 0 表示测试通过，1 表示测试失败。
+ */
+static int test_load_ipc_config(void)
+{
+    app_config_t config; /* 应用配置对象 */
+    char path[128];      /* 临时配置文件路径 */
+    FILE *fp;            /* 临时配置文件句柄 */
+
+    (void)snprintf(path, sizeof(path), "/tmp/put_app_config_ipc_test_%ld.ini", (long)getpid());
+    fp = fopen(path, "w");
+    CHECK(fp != NULL);
+    fputs("[ipc]\n", fp);
+    fputs("backend = \"devmem\"\n", fp);
+    fputs("physical_base = 0x8F000000\n", fp);
+    fputs("region_size = 65536\n", fp);
+    fputs("format_on_start = false\n", fp);
+    fputs("control_device = \"/dev/put_shm_ipc\"\n", fp);
+    CHECK(fclose(fp) == 0);
+
+    app_config_set_defaults(&config);
+    CHECK(app_config_load_file(&config, path) == UNIFIED_OK);
+    CHECK(config.ipc_backend == APP_CONFIG_IPC_BACKEND_DEVMEM);
+    CHECK(config.ipc_physical_base == (uintptr_t)0x8F000000u);
+    CHECK(config.ipc_region_size == PUT_SHM_REGION_SIZE);
+    CHECK(!config.ipc_format_on_start);
+    CHECK(strcmp(config.ipc_control_device, "/dev/put_shm_ipc") == 0);
+    (void)remove(path);
     return 0;
 }
 
@@ -280,6 +323,48 @@ static int test_reject_invalid_can_config(void)
     config.can_enabled = true;
     config.can_ifname[0] = '\0';
     CHECK(app_config_validate(&config) == UNIFIED_ERR_INVALID_ARG);
+    return 0;
+}
+
+/**
+ * @brief 测试非法 IPC 映射配置会被拒绝。
+ *
+ * @return 0 表示测试通过，1 表示测试失败。
+ */
+static int test_reject_invalid_ipc_config(void)
+{
+    app_config_t config; /* 应用配置对象 */
+
+    app_config_set_defaults(&config);
+    config.ipc_region_size = PUT_SHM_REGION_SIZE + 1u;
+    CHECK(app_config_validate(&config) == UNIFIED_ERR_INVALID_ARG);
+
+    app_config_set_defaults(&config);
+    config.ipc_backend = APP_CONFIG_IPC_BACKEND_DEVMEM;
+    config.ipc_physical_base = 0u;
+    CHECK(app_config_validate(&config) == UNIFIED_ERR_INVALID_ARG);
+
+    app_config_set_defaults(&config);
+    config.ipc_backend = APP_CONFIG_IPC_BACKEND_DEVMEM;
+    config.ipc_physical_base = (uintptr_t)(PUT_SHM_CACHE_LINE_SIZE + 1u);
+    CHECK(app_config_validate(&config) == UNIFIED_ERR_INVALID_ARG);
+
+    app_config_set_defaults(&config);
+    (void)snprintf(config.ipc_control_device,
+                   sizeof(config.ipc_control_device),
+                   "%s",
+                   "/dev/put_shm_ipc");
+    CHECK(app_config_validate(&config) == UNIFIED_ERR_INVALID_ARG);
+
+    app_config_set_defaults(&config);
+    config.ipc_backend = APP_CONFIG_IPC_BACKEND_DEVMEM;
+    config.ipc_physical_base = (uintptr_t)0x8F000000u;
+    (void)snprintf(config.ipc_control_device,
+                   sizeof(config.ipc_control_device),
+                   "%s",
+                   "relative-control");
+    CHECK(app_config_validate(&config) == UNIFIED_ERR_INVALID_ARG);
+
     return 0;
 }
 
@@ -573,6 +658,9 @@ int main(void)
     if (test_load_can_config() != 0) {
         return 1;
     }
+    if (test_load_ipc_config() != 0) {
+        return 1;
+    }
     if (test_load_rs485_config() != 0) {
         return 1;
     }
@@ -589,6 +677,9 @@ int main(void)
         return 1;
     }
     if (test_reject_invalid_can_config() != 0) {
+        return 1;
+    }
+    if (test_reject_invalid_ipc_config() != 0) {
         return 1;
     }
     if (test_reject_invalid_rs485_config() != 0) {

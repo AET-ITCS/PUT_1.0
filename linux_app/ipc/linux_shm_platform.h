@@ -6,8 +6,10 @@
 #ifndef LINUX_SHM_PLATFORM_H
 #define LINUX_SHM_PLATFORM_H
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <sys/ioctl.h>
 
 #include "error_code.h"
 #include "shared_memory_ipc.h"
@@ -15,6 +17,41 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/** @brief Linux shared memory control 设备路径最大长度。 */
+#define LINUX_SHM_CONTROL_DEVICE_PATH_MAX 128u
+
+/** @brief Linux shared memory control ioctl magic。 */
+#define LINUX_SHM_CONTROL_IOCTL_MAGIC 'P'
+
+/**
+ * @brief cache maintenance ioctl 的地址范围。
+ */
+typedef struct {
+    uint64_t physical_address; /**< 待同步物理地址。 */
+    uint64_t offset;           /**< 相对共享内存 region 起点的偏移。 */
+    uint64_t length;           /**< 待同步字节数。 */
+} linux_shm_control_range_t;
+
+/**
+ * @brief doorbell/mailbox ioctl 请求。
+ */
+typedef struct {
+    uint32_t direction; /**< put_shm_direction_t 通知方向。 */
+    uint32_t reserved;  /**< 保留字段，必须写 0。 */
+} linux_shm_control_notify_t;
+
+/** @brief flush cache range ioctl。 */
+#define LINUX_SHM_CONTROL_IOCTL_CACHE_FLUSH \
+    _IOW(LINUX_SHM_CONTROL_IOCTL_MAGIC, 1, linux_shm_control_range_t)
+
+/** @brief invalidate cache range ioctl。 */
+#define LINUX_SHM_CONTROL_IOCTL_CACHE_INVALIDATE \
+    _IOW(LINUX_SHM_CONTROL_IOCTL_MAGIC, 2, linux_shm_control_range_t)
+
+/** @brief Linux -> RTOS doorbell/mailbox ioctl。 */
+#define LINUX_SHM_CONTROL_IOCTL_NOTIFY \
+    _IOW(LINUX_SHM_CONTROL_IOCTL_MAGIC, 3, linux_shm_control_notify_t)
 
 /**
  * @brief 共享内存区域映射函数类型。
@@ -127,6 +164,19 @@ typedef struct {
 } linux_shm_platform_ops_t;
 
 /**
+ * @brief `/dev/mem` 映射 + 内核 control ioctl 平台上下文。
+ */
+typedef struct {
+    uint32_t context_magic;                                  /**< 上下文 magic。 */
+    char control_device_path[LINUX_SHM_CONTROL_DEVICE_PATH_MAX]; /**< control 设备路径。 */
+    uintptr_t physical_base;                                /**< 当前映射物理基地址。 */
+    size_t region_size;                                     /**< 当前映射大小。 */
+    void *mapped_base;                                      /**< 当前映射虚拟基地址。 */
+    int control_fd;                                         /**< control 设备 fd。 */
+    bool control_enabled;                                   /**< 是否启用 control ioctl。 */
+} linux_shm_platform_control_t;
+
+/**
  * @brief 获取 host/mock 默认平台操作集合。
  *
  * @return 默认平台操作集合。
@@ -139,6 +189,42 @@ const linux_shm_platform_ops_t *linux_shm_platform_default_ops(void);
  * @return /dev/mem 平台操作集合。
  */
 const linux_shm_platform_ops_t *linux_shm_platform_devmem_ops(void);
+
+/**
+ * @brief 初始化 Linux shared memory control 上下文。
+ *
+ * @param context control 上下文。
+ */
+void linux_shm_platform_control_init(linux_shm_platform_control_t *context);
+
+/**
+ * @brief 配置 Linux shared memory control 设备路径。
+ *
+ * @param context control 上下文。
+ * @param control_device_path control 设备路径。
+ * @return UNIFIED_OK 表示成功，否则返回公共错误码。
+ */
+unified_error_t linux_shm_platform_control_configure(
+    linux_shm_platform_control_t *context,
+    const char *control_device_path);
+
+/**
+ * @brief 关闭 Linux shared memory control 设备。
+ *
+ * @param context control 上下文。
+ */
+void linux_shm_platform_control_close(linux_shm_platform_control_t *context);
+
+/**
+ * @brief 构造 `/dev/mem` 映射 + control ioctl 平台操作集合。
+ *
+ * @param out_ops 输出平台操作集合。
+ * @param context control 上下文。
+ * @return UNIFIED_OK 表示成功，否则返回公共错误码。
+ */
+unified_error_t linux_shm_platform_make_devmem_control_ops(
+    linux_shm_platform_ops_t *out_ops,
+    linux_shm_platform_control_t *context);
 
 #ifdef __cplusplus
 }

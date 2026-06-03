@@ -81,7 +81,7 @@ Linux 最终释放 Frame Pool block
 | `PUT_SHM_DESCRIPTOR_SIZE` | `64` | 单个 descriptor 固定长度 |
 | `PUT_SHM_RECLAIM_RING_DEPTH` | `8` | reclaim ring 深度 |
 
-共享内存物理地址不在 C 业务层硬编码，由 Linux DTS `reserved-memory` 与 `rtos_firmware` BSP/linker 配置共同提供。
+共享内存物理地址不在 C 业务层硬编码，由 Linux DTS `reserved-memory` 与 `rtos_firmware` BSP/linker 配置共同提供。Linux 应用通过 `linux_app/config/device_config.ini` 的 `[ipc]` 段选择映射后端和物理地址。
 
 ### 3.2 共享内存区域
 
@@ -251,13 +251,28 @@ IPC 层只校验共享内存 ABI、descriptor CRC、Frame Pool 边界和接口 I
 | `linux_shm_dequeue_reclaim_descriptor()` | Linux 读取 reclaim descriptor、释放对应 frame 并累计 reclaim ack |
 | `linux_shm_ipc_get_stats()` | 获取 Frame Pool、ring、pending、doorbell、reclaim 和完整性统计快照 |
 
-Linux 平台抽象由 `linux_app/ipc/linux_shm_platform.h` 提供。当前 `/dev/mem` 后端只负责最小可用映射，cache flush/invalidate 暂为 no-op；真实板端 cache maintenance、Mailbox/CMDQU doorbell 应在内核驱动或 ioctl 接口明确后替换平台 ops。
+Linux 平台抽象由 `linux_app/ipc/linux_shm_platform.h` 提供。`/dev/mem` 后端负责映射 reserved-memory；如果 `[ipc].control_device` 非空，Linux 会构造 `/dev/mem + control ioctl` ops，通过 control 设备执行 cache flush/invalidate 和 Linux -> RTOS doorbell。control 设备 ioctl ABI 使用 `LINUX_SHM_CONTROL_IOCTL_CACHE_FLUSH`、`LINUX_SHM_CONTROL_IOCTL_CACHE_INVALIDATE` 和 `LINUX_SHM_CONTROL_IOCTL_NOTIFY`。真实板端仍需要内核驱动实现这些 ioctl，并在驱动内部接 SoC cache maintenance 与 Mailbox/CMDQU。
+
+Linux 启动配置新增 `[ipc]` 段：
+
+```ini
+[ipc]
+backend = "host"              # host 或 devmem
+physical_base = 0x0           # devmem 时填写 DTS reserved-memory 物理基地址
+region_size = 65536           # 必须等于 PUT_SHM_REGION_SIZE
+format_on_start = true        # true: Linux 启动时格式化；false: attach 已存在 region
+control_device = ""           # devmem 时可填 /dev/put_shm_ipc，启用 cache/doorbell ioctl
+```
+
+`backend = "host"` 仅用于开发和 host 测试。板端联调使用 `backend = "devmem"` 时，`physical_base` 必须非 0 且按 `PUT_SHM_CACHE_LINE_SIZE` 对齐，并且必须与 RTOS BSP/linker 使用的共享内存地址一致。`control_device` 只能配合 `devmem` 使用；为空时只完成真实 shared memory 映射，cache/doorbell 仍依赖周期 drain 和当前平台一致性。
 
 `linux_shm_ipc_t` 是 Linux 本地运行态对象。调用方应先执行 `linux_shm_ipc_init()`，或通过 `linux_shm_ipc_map()` 获取已初始化上下文；直接复用未初始化栈对象不属于 API 契约。
 
 Frame Pool 释放遵循状态机约束：公开 `linux_shm_frame_release()` 只允许释放尚未发布的 `ALLOCATED` frame、Linux 已读出的 `TX_READY` frame，或 reclaim 标记后的 `PENDING_RECLAIM` frame。`RX_QUEUED` frame 在 RTOS 写 reclaim descriptor 前不得直接释放，避免 RX ring 中 descriptor 指向已回收 block。
 
 RTOS 回写的 TX descriptor 和 reclaim descriptor 只能引用 Linux 已发布给 RTOS 的 `RX_QUEUED` frame。Linux 出队 TX descriptor 时必须校验本地 frame 状态和 `source_interface` 元数据；Linux 处理 reclaim descriptor 时必须校验本地 frame 状态、`source_interface` 和 `target_interface` 元数据。未发布、已释放或接口元数据错配的 descriptor 必须被消费并计入格式错误，不得接管或释放对应 frame。
+
+RTOS 板端地址由 `rtos_firmware/include/rtos_firmware_config.h` 的 `RTOS_FIRMWARE_SHARED_MEMORY_BASE` 和 `RTOS_FIRMWARE_SHARED_MEMORY_SIZE` 提供，BSP 通过 `rtos_bsp_get_shared_memory_base()`、`rtos_bsp_get_shared_memory_size()` 和 `rtos_bsp_get_shared_memory_region()` 暴露共享内存 region。BSP 同时提供 `rtos_bsp_get_shm_platform_ops()` 和 `rtos_bsp_make_runtime_config()`，顶层入口可调用 `rtos_firmware_runtime_init_from_bsp()` 从当前 BSP 配置直接 attach runtime。默认 `RTOS_FIRMWARE_SHARED_MEMORY_BASE = 0` 表示 host/mock 或尚未绑定真实板端地址，此时 BSP 不返回伪造 region，`rtos_bsp_make_runtime_config()` 返回 `UNIFIED_ERR_IPC_NOT_READY`。
 
 ---
 

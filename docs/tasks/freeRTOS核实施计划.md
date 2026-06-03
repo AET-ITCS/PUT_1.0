@@ -430,9 +430,13 @@ Host 闭环：
 
 板端联调：
 
+- [x] Linux `device_config.ini` 提供 `[ipc] backend/physical_base/region_size/format_on_start`，可从 host 切换到 `/dev/mem` reserved-memory 映射。
+- [x] Linux 平台层提供 `/dev/mem + control ioctl` ops，可把 cache flush/invalidate 与 Linux -> RTOS doorbell 交给板端内核驱动。
+- [x] RTOS BSP 提供 `rtos_bsp_get_shared_memory_*()` 地址 hook，板端可通过 `RTOS_FIRMWARE_SHARED_MEMORY_BASE/SIZE` 绑定 linker/DTS 对齐后的共享内存。
+- [x] RTOS BSP 提供 `rtos_bsp_make_runtime_config()` 和 `rtos_firmware_runtime_init_from_bsp()`，板端启动代码可从 BSP 地址 hook 与平台 ops 直接 attach runtime。
 - [ ] 确认 Linux DTS `reserved-memory` 与 RTOS BSP/linker 使用同一物理共享内存区域。
-- [ ] 替换 host no-op cache ops 为板端真实 cache flush/invalidate。
-- [ ] 替换 host no-op notify 为 Mailbox/CMDQU 或内核 ioctl doorbell。
+- [ ] 实现板端内核 control 驱动 ioctl，把 Linux cache ops 接到真实 cache maintenance。
+- [ ] 实现板端内核 control 驱动 ioctl，把 Linux -> RTOS notify 接到 Mailbox/CMDQU doorbell。
 - [ ] 验证 Doorbell 只作为唤醒信号，pending bitmap 和 ring 状态仍是唯一可信数据状态。
 - [ ] 验证 Doorbell 丢失、notify 失败、Linux 出口暂时不 drain 时周期 drain 能兜底。
 - [ ] 验证 Linux 重启或共享内存重建触发 RTOS Recovery。

@@ -27,6 +27,16 @@ extern "C" {
 #define RTOS_FIRMWARE_HOST_SMOKE_ENABLE 1u
 #endif
 
+/** @brief 板端共享内存物理/总线地址，0 表示 host 或尚未配置。 */
+#ifndef RTOS_FIRMWARE_SHARED_MEMORY_BASE
+#define RTOS_FIRMWARE_SHARED_MEMORY_BASE 0u
+#endif
+
+/** @brief 板端共享内存大小，必须与 PUT_SHM_REGION_SIZE 保持一致。 */
+#ifndef RTOS_FIRMWARE_SHARED_MEMORY_SIZE
+#define RTOS_FIRMWARE_SHARED_MEMORY_SIZE PUT_SHM_REGION_SIZE
+#endif
+
 /** @brief P1 本地优先级队列固定容量。 */
 #ifndef RTOS_FIRMWARE_PRIORITY_QUEUE_CAPACITY
 #define RTOS_FIRMWARE_PRIORITY_QUEUE_CAPACITY 64u

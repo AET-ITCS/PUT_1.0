@@ -9,6 +9,8 @@
 #include <string.h>
 
 #include "linux_shm_ipc.h"
+#include "rtos_bsp.h"
+#include "rtos_firmware.h"
 
 #define CHECK(condition)                                                            \
     do {                                                                            \
@@ -779,6 +781,34 @@ static int test_long_host_loop_frame_pool_stable(void)
 }
 
 /**
+ * @brief 验证默认 BSP 共享内存地址 hook 不伪造 region。
+ *
+ * @return 0 表示通过。
+ */
+static int test_default_bsp_shared_memory_hook_is_unbound(void)
+{
+    uintptr_t shared_memory_base;      /**< BSP 共享内存基地址。 */
+    size_t shared_memory_size;         /**< BSP 共享内存大小。 */
+    rtos_runtime_config_t config;      /**< BSP 生成的 runtime 配置。 */
+    rtos_runtime_context_t runtime;    /**< BSP 初始化使用的 runtime 上下文。 */
+
+    shared_memory_base = rtos_bsp_get_shared_memory_base();
+    shared_memory_size = rtos_bsp_get_shared_memory_size();
+    CHECK(shared_memory_base == 0u);
+    CHECK(shared_memory_size == PUT_SHM_REGION_SIZE);
+    CHECK(rtos_bsp_get_shared_memory_region() == 0);
+    CHECK(rtos_bsp_get_shm_platform_ops() == rtos_shm_platform_default_ops());
+    CHECK(rtos_bsp_make_runtime_config(0, test_time_source, 0) == UNIFIED_ERR_NULL);
+    CHECK(rtos_bsp_make_runtime_config(&config, test_time_source, 0) ==
+          UNIFIED_ERR_IPC_NOT_READY);
+    CHECK(config.region == 0);
+    CHECK(config.platform_ops == 0);
+    CHECK(rtos_firmware_runtime_init_from_bsp(&runtime, test_time_source, 0) ==
+          UNIFIED_ERR_IPC_NOT_READY);
+    return 0;
+}
+
+/**
  * @brief P4 host 闭环测试入口。
  *
  * @return 0 表示全部测试通过。
@@ -791,5 +821,6 @@ int main(void)
     CHECK(test_reclaim_ring_full_blocks_and_recovers() == 0);
     CHECK(test_unpublished_rtos_outputs_are_rejected() == 0);
     CHECK(test_long_host_loop_frame_pool_stable() == 0);
+    CHECK(test_default_bsp_shared_memory_hook_is_unbound() == 0);
     return 0;
 }

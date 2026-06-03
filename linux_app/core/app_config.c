@@ -1,4 +1,8 @@
-/* linux_app 简单 INI 配置解析实现。 */
+/**
+ * @file app_config.c
+ * @brief linux_app 简单 INI 配置解析实现。
+ * @author Yukikaze
+ */
 #include "app_config.h"
 
 #include <ctype.h>
@@ -109,6 +113,36 @@ static int parse_u32(const char *text, uint32_t *out_value)
     }
 
     *out_value = (uint32_t)value;
+    return 0;
+}
+
+/**
+ * @brief 解析 uintptr_t 数值。
+ *
+ * @param text 输入文本，支持 10 进制或 0x 前缀。
+ * @param out_value 输出解析结果。
+ * @return 0 表示成功，-1 表示失败。
+ */
+static int parse_uintptr(const char *text, uintptr_t *out_value)
+{
+    char *end = NULL;           /* 数字解析结束位置 */
+    unsigned long long value;   /* strtoull 得到的临时无符号值 */
+
+    if ((text == NULL) || (out_value == NULL)) {
+        /* 输入或输出为空时不能解析。 */
+        return -1;
+    }
+
+    errno = 0;
+    value = strtoull(text, &end, 0);
+    if ((errno != 0) || (end == text) || (*end != '\0') ||
+        (value > (unsigned long long)UINTPTR_MAX)) {
+        /* 解析失败、存在尾随字符或超过 uintptr_t 上限时拒绝。 */
+        return -1;
+    }
+
+    /* 通过范围检查后再转换为 uintptr_t。 */
+    *out_value = (uintptr_t)value;
     return 0;
 }
 
@@ -310,6 +344,10 @@ void app_config_set_defaults(app_config_t *config)
     memset(config, 0, sizeof(*config));
     config->status_enabled = true;
     copy_string(config->status_dir, sizeof(config->status_dir), "/run/put/status");
+    config->ipc_backend = APP_CONFIG_IPC_BACKEND_HOST;
+    config->ipc_physical_base = 0u;
+    config->ipc_region_size = PUT_SHM_REGION_SIZE;
+    config->ipc_format_on_start = true;
     config->can_enabled = true;
     copy_string(config->can_ifname, sizeof(config->can_ifname), APP_CONFIG_CAN_DEFAULT_IFNAME);
     config->can_bitrate = APP_CONFIG_CAN_DEFAULT_BITRATE;
@@ -392,6 +430,58 @@ static unified_error_t apply_key_value(app_config_t *config,
                 return UNIFIED_ERR_INVALID_ARG;
             }
             copy_string(config->status_dir, sizeof(config->status_dir), value);
+            return UNIFIED_OK;
+        }
+    } else if (strcmp(section, "ipc") == 0) {
+        if (strcmp(key, "backend") == 0) {
+            if (strcmp(value, "host") == 0) {
+                /* host 后端用于本机开发和自动化测试。 */
+                config->ipc_backend = APP_CONFIG_IPC_BACKEND_HOST;
+                return UNIFIED_OK;
+            }
+            if ((strcmp(value, "devmem") == 0) || (strcmp(value, "/dev/mem") == 0)) {
+                /* devmem 后端用于板端映射 DTS reserved-memory。 */
+                config->ipc_backend = APP_CONFIG_IPC_BACKEND_DEVMEM;
+                return UNIFIED_OK;
+            }
+            /* 未知后端会导致启动映射不可预期，直接拒绝。 */
+            return UNIFIED_ERR_INVALID_ARG;
+        }
+
+        if (strcmp(key, "physical_base") == 0) {
+            if (parse_uintptr(value, &config->ipc_physical_base) != 0) {
+                /* 物理地址必须是可解析的整数。 */
+                return UNIFIED_ERR_INVALID_ARG;
+            }
+            return UNIFIED_OK;
+        }
+
+        if (strcmp(key, "region_size") == 0) {
+            if (parse_u32(value, &u32_value) != 0) {
+                /* region 大小必须是 32 位整数，后续再校验 ABI 固定值。 */
+                return UNIFIED_ERR_INVALID_ARG;
+            }
+            config->ipc_region_size = u32_value;
+            return UNIFIED_OK;
+        }
+
+        if (strcmp(key, "format_on_start") == 0) {
+            if (parse_bool(value, &bool_value) != 0) {
+                /* 启动格式化策略只能是布尔值。 */
+                return UNIFIED_ERR_INVALID_ARG;
+            }
+            config->ipc_format_on_start = bool_value;
+            return UNIFIED_OK;
+        }
+
+        if (strcmp(key, "control_device") == 0) {
+            if (strlen(value) >= sizeof(config->ipc_control_device)) {
+                /* control 设备路径不能被截断，否则可能打开错误设备。 */
+                return UNIFIED_ERR_INVALID_ARG;
+            }
+            copy_string(config->ipc_control_device,
+                        sizeof(config->ipc_control_device),
+                        value);
             return UNIFIED_OK;
         }
     } else if (strcmp(section, "can") == 0) {
@@ -786,6 +876,34 @@ unified_error_t app_config_validate(const app_config_t *config)
     }
 
     if (config->status_enabled && (config->status_dir[0] == '\0')) {
+        return UNIFIED_ERR_INVALID_ARG;
+    }
+
+    if (config->ipc_region_size != PUT_SHM_REGION_SIZE) {
+        /* v2 ABI 当前固定为 64 KiB region，配置不能改变结构大小。 */
+        return UNIFIED_ERR_INVALID_ARG;
+    }
+
+    if ((config->ipc_backend != APP_CONFIG_IPC_BACKEND_HOST) &&
+        (config->ipc_backend != APP_CONFIG_IPC_BACKEND_DEVMEM)) {
+        /* 枚举值异常说明配置对象被破坏或调用方写入了非法值。 */
+        return UNIFIED_ERR_INVALID_ARG;
+    }
+
+    if (config->ipc_backend == APP_CONFIG_IPC_BACKEND_DEVMEM) {
+        if ((config->ipc_physical_base == 0u) ||
+            ((config->ipc_physical_base % PUT_SHM_CACHE_LINE_SIZE) != 0u)) {
+            /* 板端物理地址必须非 0 且按 cache line 对齐，避免错误 mmap。 */
+            return UNIFIED_ERR_INVALID_ARG;
+        }
+    } else if (config->ipc_control_device[0] != '\0') {
+        /* host 后端不能配置真实 control 设备，避免测试环境误触发板端 ioctl。 */
+        return UNIFIED_ERR_INVALID_ARG;
+    }
+
+    if ((config->ipc_control_device[0] != '\0') &&
+        (config->ipc_control_device[0] != '/')) {
+        /* control 设备必须使用绝对路径，例如 /dev/put_shm_ipc。 */
         return UNIFIED_ERR_INVALID_ARG;
     }
 

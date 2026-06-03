@@ -98,7 +98,8 @@ Linux 回收 Frame Pool block
 - Linux 本地上下文需要通过 `linux_shm_ipc_init()` 或 `linux_shm_ipc_map()` 初始化；`format_region/attach` 只保留带初始化 magic 的映射生命周期字段。
 - Frame Pool release 受状态机约束：`RX_QUEUED` frame 必须等待 RTOS reclaim，不能由公开 release API 直接释放。
 - TX descriptor 和 reclaim descriptor 是 RTOS 回写入口，只能引用 `RX_QUEUED` frame；Linux 必须用本地 frame 状态和接口元数据拒绝未发布、已释放或来源/目标错配的 descriptor。
-- `linux_shm_platform.*` 提供 host/mock 和 `/dev/mem` 两类后端。`/dev/mem` 后端当前只完成 `open("/dev/mem", O_RDWR | O_SYNC)` 与 `mmap()`，cache flush/invalidate 暂为 no-op，后续应由 kernel driver/ioctl 替换真实 cache maintenance 和 Mailbox/CMDQU doorbell。
+- `linux_shm_platform.*` 提供 host/mock、`/dev/mem` 和 `/dev/mem + control ioctl` 后端。`/dev/mem` 负责映射 reserved-memory；配置 `control_device` 后，cache flush/invalidate 与 Linux -> RTOS doorbell 通过 `LINUX_SHM_CONTROL_IOCTL_*` 交给后续板端内核驱动实现。
+- `rtos_bsp_get_shared_memory_*()` 负责暴露 RTOS 侧共享内存地址，`rtos_bsp_make_runtime_config()` 将 region、平台 ops 和时间源合成为 runtime 配置；默认未绑定真实地址时返回 `UNIFIED_ERR_IPC_NOT_READY`，避免小核 attach 伪共享内存。
 - pending bitmap 清除规则与 RTOS 保持一致：atomic clear 后重新读取 `producer.write_seq`，若 ring 又变为非空，必须 atomic OR 置回对应 bit。
 
 ## Test Plan

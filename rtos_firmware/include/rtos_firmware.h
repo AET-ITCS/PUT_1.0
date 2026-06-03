@@ -31,6 +31,18 @@ unified_error_t rtos_firmware_runtime_init(rtos_runtime_context_t *runtime,
                                            const rtos_runtime_config_t *config);
 
 /**
+ * @brief 使用 BSP 当前共享内存配置初始化正式 runtime 入口上下文。
+ *
+ * @param runtime runtime 上下文。
+ * @param time_source runtime 时间源。
+ * @param time_context 时间源用户上下文。
+ * @return UNIFIED_OK 表示初始化成功，否则返回公共错误码。
+ */
+unified_error_t rtos_firmware_runtime_init_from_bsp(rtos_runtime_context_t *runtime,
+                                                    rtos_router_time_source_t time_source,
+                                                    void *time_context);
+
+/**
  * @brief 单步执行正式 runtime 入口。
  *
  * @param runtime runtime 上下文。
