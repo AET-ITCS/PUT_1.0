@@ -39,6 +39,7 @@ add_library(linux_app_core STATIC
     core/status_collector.c
     egress/egress_manager.c
     egress/egress_worker.c
+    security/ingress_security.c
     adapters/bluetooth_adapter.c
     adapters/can_adapter.c
     adapters/ethernet_adapter.c
@@ -49,6 +50,7 @@ add_library(linux_app_core STATIC
 target_include_directories(linux_app_core PUBLIC
     core
     egress
+    security
     adapters
     ipc
     ../common/include
@@ -125,6 +127,13 @@ if(LINUX_APP_BUILD_TESTS)
         linux_app_core
     )
 
+    add_executable(ingress_security_test
+        test/ingress_security_test.c
+    )
+    target_link_libraries(ingress_security_test PRIVATE
+        linux_app_core
+    )
+
     add_executable(app_config_test
         test/app_config_test.c
     )
@@ -153,6 +162,7 @@ if(LINUX_APP_BUILD_TESTS)
         target_compile_options(wifi_adapter_test PRIVATE -Wall -Wextra)
         target_compile_options(rs485_adapter_test PRIVATE -Wall -Wextra)
         target_compile_options(four_g_adapter_test PRIVATE -Wall -Wextra)
+        target_compile_options(ingress_security_test PRIVATE -Wall -Wextra)
         target_compile_options(app_config_test PRIVATE -Wall -Wextra)
         target_compile_options(status_collector_test PRIVATE -Wall -Wextra)
         target_compile_options(egress_worker_test PRIVATE -Wall -Wextra)
@@ -164,6 +174,7 @@ if(LINUX_APP_BUILD_TESTS)
     add_test(NAME wifi_adapter_test COMMAND wifi_adapter_test)
     add_test(NAME rs485_adapter_test COMMAND rs485_adapter_test)
     add_test(NAME four_g_adapter_test COMMAND four_g_adapter_test)
+    add_test(NAME ingress_security_test COMMAND ingress_security_test)
     add_test(NAME app_config_test COMMAND app_config_test)
     add_test(NAME status_collector_test COMMAND status_collector_test)
     add_test(NAME egress_worker_test COMMAND egress_worker_test)

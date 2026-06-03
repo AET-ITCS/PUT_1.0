@@ -397,6 +397,44 @@ unified_error_t ethernet_adapter_decode_datagram(const uint8_t *input,
     return UNIFIED_OK;
 }
 
+/**
+ * @brief 计算 Ethernet 外部入口 trust flags。
+ *
+ * @param ctx Ethernet RX 上下文。
+ * @param input 完整 anyMSG。
+ * @param input_len 完整 anyMSG 长度。
+ * @param rx RX 解析结果。
+ * @return UNIFIED_OK 表示评估完成。
+ */
+static unified_error_t ethernet_apply_ingress_security(ethernet_rx_context_t *ctx,
+                                                       const uint8_t *input,
+                                                       size_t input_len,
+                                                       adapter_rx_result_t *rx)
+{
+    ingress_security_input_t security_input; /**< 安全评估输入。 */
+    uint32_t trust_flags;                    /**< 安全评估输出 flags。 */
+    unified_error_t err;                     /**< 安全评估结果。 */
+
+    if ((ctx == 0) || (rx == 0)) {
+        return UNIFIED_ERR_NULL;
+    }
+
+    memset(&security_input, 0, sizeof(security_input));
+    security_input.source_interface = PUT_SHM_INTERFACE_ETHERNET;
+    security_input.frame = input;
+    security_input.frame_length = input_len;
+    security_input.now_ms = 0u;
+    err = ingress_security_evaluate(ctx->security_policy,
+                                    &security_input,
+                                    &trust_flags);
+    if (err != UNIFIED_OK) {
+        return err;
+    }
+
+    rx->trust_flags = trust_flags;
+    return UNIFIED_OK;
+}
+
 unified_error_t ethernet_adapter_submit_to_ipc(linux_shm_ipc_t *ipc,
                                                const uint8_t *frame,
                                                const adapter_rx_result_t *rx,
@@ -467,6 +505,17 @@ unified_error_t ethernet_adapter_handle_datagram(ethernet_rx_context_t *ctx,
             status_collector_record_error(ctx->collector,
                                           STATUS_MODULE_ETHERNET,
                                           error_stage_from_result(err),
+                                          err);
+        }
+        return err;
+    }
+
+    err = ethernet_apply_ingress_security(ctx, input, input_len, &rx);
+    if (err != UNIFIED_OK) {
+        if (ctx->collector != 0) {
+            status_collector_record_error(ctx->collector,
+                                          STATUS_MODULE_ETHERNET,
+                                          "ethernet_ingress_security",
                                           err);
         }
         return err;
@@ -598,6 +647,7 @@ static void *ethernet_udp_thread(void *arg)
     server = (ethernet_udp_server_state_t *)arg;
     rx_ctx.ipc = server->config.ipc;
     rx_ctx.collector = server->config.collector;
+    rx_ctx.security_policy = server->config.security_policy;
     rx_ctx.linux_epoch = server->config.linux_epoch;
 
     if (rx_ctx.collector != 0) {
@@ -765,6 +815,7 @@ static void handle_tcp_client(ethernet_tcp_server_state_t *server, int client_fd
 
     rx_ctx.ipc = server->config.ipc;
     rx_ctx.collector = server->config.collector;
+    rx_ctx.security_policy = server->config.security_policy;
     rx_ctx.linux_epoch = server->config.linux_epoch;
     ethernet_tcp_stream_init(&stream_ctx, &rx_ctx);
     configure_recv_timeout(client_fd);
@@ -805,6 +856,7 @@ static void *ethernet_tcp_thread(void *arg)
     server = (ethernet_tcp_server_state_t *)arg;
     rx_ctx.ipc = server->config.ipc;
     rx_ctx.collector = server->config.collector;
+    rx_ctx.security_policy = server->config.security_policy;
     rx_ctx.linux_epoch = server->config.linux_epoch;
 
     if (rx_ctx.collector != 0) {

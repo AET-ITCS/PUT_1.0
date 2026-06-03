@@ -6,6 +6,7 @@
 #include <stdint.h>
 
 #include "error_code.h"
+#include "ingress_security.h"
 #include "linux_shm_ipc.h"
 #include "physical_interface_adapter.h"
 #include "status_collector.h"
@@ -26,6 +27,7 @@ extern "C" {
 typedef struct {
     linux_shm_ipc_t *ipc;
     status_collector_t *collector;
+    ingress_security_policy_t *security_policy;
     uint32_t linux_epoch;
 } four_g_rx_context_t;
 
@@ -37,6 +39,7 @@ typedef struct {
     uint16_t port;
     linux_shm_ipc_t *ipc;
     status_collector_t *collector;
+    ingress_security_policy_t *security_policy;
     uint32_t linux_epoch;
 } four_g_udp_config_t;
 
@@ -49,6 +52,7 @@ typedef struct {
     uint16_t listen_backlog;
     linux_shm_ipc_t *ipc;
     status_collector_t *collector;
+    ingress_security_policy_t *security_policy;
     uint32_t linux_epoch;
 } four_g_tcp_config_t;
 

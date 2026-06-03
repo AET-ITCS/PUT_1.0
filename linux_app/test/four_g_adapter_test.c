@@ -23,10 +23,26 @@
 
 static put_shm_region_t g_region;
 
+static const uint8_t k_auth_token[INGRESS_SECURITY_AUTH_TOKEN_MAX_LEN] = {
+    'A', 'U', 'T', 'H', 'O', 'K', '0', '1',
+};
+
+static const uint8_t k_integrity_tag[INGRESS_SECURITY_INTEGRITY_TAG_MAX_LEN] = {
+    'I', 'N', 'T', 'O', 'K', '0', '0', '1',
+};
+
 static void write_le16(uint8_t bytes[2], uint16_t value)
 {
     bytes[0] = (uint8_t)(value & 0xFFu);
     bytes[1] = (uint8_t)((value >> 8u) & 0xFFu);
+}
+
+static void write_le32(uint8_t bytes[4], uint32_t value)
+{
+    bytes[0] = (uint8_t)(value & 0xFFu);
+    bytes[1] = (uint8_t)((value >> 8u) & 0xFFu);
+    bytes[2] = (uint8_t)((value >> 16u) & 0xFFu);
+    bytes[3] = (uint8_t)((value >> 24u) & 0xFFu);
 }
 
 static size_t make_anymsg(uint8_t *buffer,
@@ -50,6 +66,37 @@ static size_t make_anymsg(uint8_t *buffer,
         buffer[ANYMSG_HEADER_SIZE + i] = (uint8_t)(0xA0u + (i & 0x0Fu));
     }
     return msg_length;
+}
+
+static int make_security_policy(ingress_security_policy_t *policy)
+{
+    ingress_security_policy_init(policy);
+    policy->enabled = true;
+    policy->require_authentication = true;
+    policy->require_integrity = true;
+    policy->require_replay_protection = true;
+    policy->allow_control_path = true;
+    CHECK(ingress_security_policy_set_mock_credentials(policy,
+                                                       k_auth_token,
+                                                       sizeof(k_auth_token),
+                                                       k_integrity_tag,
+                                                       sizeof(k_integrity_tag)) ==
+          UNIFIED_OK);
+    return 0;
+}
+
+static void write_security_fields(uint8_t *frame, uint32_t sequence)
+{
+    anymsg_header_t *header;
+
+    header = (anymsg_header_t *)frame;
+    write_le32(header->local_time, sequence);
+    memcpy(&header->verify_string[INGRESS_SECURITY_AUTH_TOKEN_OFFSET],
+           k_auth_token,
+           sizeof(k_auth_token));
+    memcpy(&header->verify_string[INGRESS_SECURITY_INTEGRITY_TAG_OFFSET],
+           k_integrity_tag,
+           sizeof(k_integrity_tag));
 }
 
 static int setup_ipc(linux_shm_ipc_t *ipc, uint32_t linux_epoch)
@@ -129,6 +176,36 @@ static int test_decode_rejects_invalid_udp_anymsg(void)
     frame_len = make_anymsg(frame, 4u, 0x40u, 0xA0u);
     CHECK(four_g_adapter_decode_datagram(frame, frame_len, &rx) != UNIFIED_OK);
 
+    return 0;
+}
+
+static int test_four_g_ingress_security_sets_flags(void)
+{
+    linux_shm_ipc_t ipc;
+    four_g_rx_context_t ctx;
+    ingress_security_policy_t policy;
+    put_shm_descriptor_ring_t *ring;
+    uint8_t frame[PUT_SHM_FRAME_POOL_BLOCK_SIZE + 1u];
+    size_t frame_len;
+    uint32_t expected;
+
+    CHECK(setup_ipc(&ipc, 1235u) == 0);
+    CHECK(make_security_policy(&policy) == 0);
+    frame_len = make_anymsg(frame, 4u, 0xA0u, 0x20u);
+    write_security_fields(frame, 30u);
+    memset(&ctx, 0, sizeof(ctx));
+    ctx.ipc = &ipc;
+    ctx.security_policy = &policy;
+    ctx.linux_epoch = 1235u;
+
+    CHECK(four_g_adapter_handle_datagram(&ctx, frame, frame_len) == UNIFIED_OK);
+    ring = &g_region.rx_rings[PUT_SHM_INTERFACE_4G];
+    expected = PUT_SHM_DESCRIPTOR_FLAG_AUTH_OK |
+               PUT_SHM_DESCRIPTOR_FLAG_INTEGRITY_OK |
+               PUT_SHM_DESCRIPTOR_FLAG_REPLAY_OK |
+               PUT_SHM_DESCRIPTOR_FLAG_CONTROL_ALLOWED;
+    CHECK((ring->descriptors[0].flags & PUT_SHM_DESCRIPTOR_TRUST_FLAG_MASK) ==
+          expected);
     return 0;
 }
 
@@ -471,6 +548,9 @@ int main(void)
         return 1;
     }
     if (test_decode_rejects_invalid_udp_anymsg() != 0) {
+        return 1;
+    }
+    if (test_four_g_ingress_security_sets_flags() != 0) {
         return 1;
     }
     if (test_decode_errors_are_counted() != 0) {

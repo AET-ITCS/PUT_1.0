@@ -211,6 +211,44 @@ static put_shm_interface_t route_hint_from_destination_cid(const uint8_t cid[ANY
     }
 }
 
+/**
+ * @brief 计算 Bluetooth 外部入口 trust flags。
+ *
+ * @param ctx Bluetooth 上下文。
+ * @param frame 完整 anyMSG。
+ * @param frame_len 完整 anyMSG 长度。
+ * @param rx RX 解析结果。
+ * @return UNIFIED_OK 表示评估完成。
+ */
+static unified_error_t bluetooth_apply_ingress_security(bt_ctx_t *ctx,
+                                                        const uint8_t *frame,
+                                                        size_t frame_len,
+                                                        adapter_rx_result_t *rx)
+{
+    ingress_security_input_t security_input; /**< 安全评估输入。 */
+    uint32_t trust_flags;                    /**< 安全评估输出 flags。 */
+    unified_error_t err;                     /**< 安全评估结果。 */
+
+    if ((ctx == 0) || (rx == 0)) {
+        return UNIFIED_ERR_NULL;
+    }
+
+    memset(&security_input, 0, sizeof(security_input));
+    security_input.source_interface = PUT_SHM_INTERFACE_BLUETOOTH;
+    security_input.frame = frame;
+    security_input.frame_length = frame_len;
+    security_input.now_ms = 0u;
+    err = ingress_security_evaluate(ctx->config.security_policy,
+                                    &security_input,
+                                    &trust_flags);
+    if (err != UNIFIED_OK) {
+        return err;
+    }
+
+    rx->trust_flags = trust_flags;
+    return UNIFIED_OK;
+}
+
 static unified_error_t bluetooth_adapter_submit_to_ipc(bt_ctx_t *ctx,
                                                 const uint8_t *frame,
                                                 const adapter_rx_result_t *rx)
@@ -295,6 +333,13 @@ static void *bluetooth_thread(void *arg) {
         // 完整包解析与校验
         adapter_rx_result_t rx_res;
         if (bluetooth_decode_rx(c, buf, msg_len, &rx_res) == 0) {
+            unified_error_t security_err = bluetooth_apply_ingress_security(c, buf, msg_len, &rx_res);
+            if (security_err != UNIFIED_OK) {
+                if (c->config.collector) {
+                    status_collector_record_error(c->config.collector, STATUS_MODULE_BLUETOOTH, "bt_ingress_security", security_err);
+                }
+                continue;
+            }
             unified_error_t ipc_err = bluetooth_adapter_submit_to_ipc(c, buf, &rx_res);
             if (ipc_err == UNIFIED_OK) {
                 c->rx_count++;
