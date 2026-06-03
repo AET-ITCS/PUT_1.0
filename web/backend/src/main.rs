@@ -1,11 +1,13 @@
 mod api;
 mod config;
+mod demo;
 mod error;
 mod log_reader;
 mod status_snapshot;
 mod system_reader;
 
 use std::{
+    ffi::OsString,
     fs::{self, OpenOptions},
     io::{self, Write},
     net::SocketAddr,
@@ -30,12 +32,45 @@ use tracing_subscriber::{fmt::MakeWriter, layer::SubscriberExt, util::Subscriber
 #[derive(Clone)]
 pub struct AppState {
     pub config: Arc<AppConfig>,
+    pub runtime_mode: RuntimeMode,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuntimeMode {
+    Normal,
+    Demo,
+}
+
+impl RuntimeMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Normal => "normal",
+            Self::Demo => "demo",
+        }
+    }
+
+    pub fn demo_scenario(self) -> Option<&'static str> {
+        match self {
+            Self::Normal => None,
+            Self::Demo => Some(demo::SCENARIO_ETHERNET_TO_CAN),
+        }
+    }
+
+    pub fn is_demo(self) -> bool {
+        self == Self::Demo
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CliArgs {
+    config_path: Option<PathBuf>,
+    demo_mode: bool,
 }
 
 #[tokio::main]
 async fn main() {
-    let config_path = parse_config_arg();
-    let config = match AppConfig::load_optional(config_path.as_deref()) {
+    let cli = parse_cli_args();
+    let config = match AppConfig::load_optional(cli.config_path.as_deref()) {
         Ok(config) => config,
         Err(err) => {
             eprintln!("failed to load config: {err}");
@@ -55,10 +90,21 @@ async fn main() {
 
     let state = AppState {
         config: Arc::new(config),
+        runtime_mode: if cli.demo_mode {
+            RuntimeMode::Demo
+        } else {
+            RuntimeMode::Normal
+        },
     };
 
     let app = build_router(state.clone());
-    info!(bind_addr = %bind_addr, config = ?state.config, "starting put-webd");
+    info!(
+        bind_addr = %bind_addr,
+        config = ?state.config,
+        mode = state.runtime_mode.as_str(),
+        demo_scenario = ?state.runtime_mode.demo_scenario(),
+        "starting put-webd"
+    );
 
     let listener = tokio::net::TcpListener::bind(bind_addr)
         .await
@@ -164,14 +210,37 @@ impl Write for FileLogGuard {
     }
 }
 
-fn parse_config_arg() -> Option<PathBuf> {
-    let mut args = std::env::args_os().skip(1);
+fn parse_cli_args() -> CliArgs {
+    parse_cli_args_from(std::env::args_os().skip(1))
+}
+
+fn parse_cli_args_from<I, S>(args: I) -> CliArgs
+where
+    I: IntoIterator<Item = S>,
+    S: Into<OsString>,
+{
+    let mut args = args.into_iter().map(Into::into);
+    let mut config_seen = false;
+    let mut config_path = None;
+    let mut demo_mode = false;
+
     while let Some(arg) = args.next() {
         if arg == "--config" || arg == "-c" {
-            return args.next().map(PathBuf::from);
+            config_seen = true;
+            config_path = args.next().map(PathBuf::from);
+        } else if arg == "--demo-mode" {
+            demo_mode = true;
         }
     }
-    Some(PathBuf::from("/etc/put/web_config.toml"))
+
+    if !config_seen {
+        config_path = Some(PathBuf::from("/etc/put/web_config.toml"));
+    }
+
+    CliArgs {
+        config_path,
+        demo_mode,
+    }
 }
 
 #[cfg(test)]
@@ -180,11 +249,37 @@ mod tests {
 
     use tracing_subscriber::fmt::MakeWriter;
 
-    use super::{parse_config_arg, FileLogWriter};
+    use super::{parse_cli_args_from, FileLogWriter};
 
     #[test]
-    fn parse_config_default_is_some() {
-        assert!(parse_config_arg().is_some());
+    fn parse_args_default_config_and_normal_mode() {
+        let args = parse_cli_args_from(Vec::<&str>::new());
+        assert_eq!(
+            args.config_path.as_deref(),
+            Some(std::path::Path::new("/etc/put/web_config.toml"))
+        );
+        assert!(!args.demo_mode);
+    }
+
+    #[test]
+    fn parse_args_accepts_config_and_demo_mode() {
+        let args =
+            parse_cli_args_from(["--config", "web/config/web_config.dev.toml", "--demo-mode"]);
+        assert_eq!(
+            args.config_path.as_deref(),
+            Some(std::path::Path::new("web/config/web_config.dev.toml"))
+        );
+        assert!(args.demo_mode);
+    }
+
+    #[test]
+    fn parse_args_accepts_short_config_after_demo_mode() {
+        let args = parse_cli_args_from(["--demo-mode", "-c", "demo.toml"]);
+        assert_eq!(
+            args.config_path.as_deref(),
+            Some(std::path::Path::new("demo.toml"))
+        );
+        assert!(args.demo_mode);
     }
 
     #[test]

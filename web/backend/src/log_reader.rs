@@ -4,6 +4,19 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::ApiError;
 
+#[derive(Debug, Clone, Copy)]
+pub enum LogOverlayMode {
+    #[allow(dead_code)]
+    Append,
+    Replace,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct LogOverlay<'a> {
+    pub mode: LogOverlayMode,
+    pub lines: &'a [&'a str],
+}
+
 #[derive(Debug, Deserialize)]
 pub struct LogQuery {
     #[serde(default = "default_source")]
@@ -39,31 +52,56 @@ pub fn read_logs(
     allowed_sources: &[String],
     query: LogQuery,
 ) -> Result<LogsResponse, ApiError> {
+    read_logs_with_overlay(log_dir, allowed_sources, query, None)
+}
+
+pub fn read_logs_with_overlay(
+    log_dir: &Path,
+    allowed_sources: &[String],
+    query: LogQuery,
+    overlay: Option<LogOverlay<'_>>,
+) -> Result<LogsResponse, ApiError> {
     let source = query.source.trim();
     if !is_safe_source(source) || !allowed_sources.iter().any(|item| item == source) {
         return Err(ApiError::bad_request("invalid log source"));
     }
 
-    let limit = query.limit.clamp(1, 500);
-    let cursor = query.cursor.parse::<usize>().unwrap_or(0);
-    let path = log_dir.join(format!("{source}.log"));
-    let Ok(text) = fs::read_to_string(path) else {
-        return Ok(LogsResponse {
-            source: source.to_string(),
-            lines: Vec::new(),
-            next_cursor: None,
-            has_more: false,
-        });
+    let mut raw_lines = Vec::new();
+    match overlay {
+        Some(LogOverlay {
+            mode: LogOverlayMode::Replace,
+            lines,
+        }) => raw_lines.extend(lines.iter().map(|line| (*line).to_string())),
+        Some(LogOverlay {
+            mode: LogOverlayMode::Append,
+            lines,
+        }) => {
+            raw_lines.extend(read_log_file_lines(log_dir, source));
+            raw_lines.extend(lines.iter().map(|line| (*line).to_string()));
+        }
+        None => raw_lines.extend(read_log_file_lines(log_dir, source)),
     };
 
+    Ok(page_log_lines(source, &raw_lines, &query))
+}
+
+fn read_log_file_lines(log_dir: &Path, source: &str) -> Vec<String> {
+    let path = log_dir.join(format!("{source}.log"));
+    fs::read_to_string(path)
+        .map(|text| text.lines().map(ToString::to_string).collect())
+        .unwrap_or_default()
+}
+
+fn page_log_lines(source: &str, raw_lines: &[String], query: &LogQuery) -> LogsResponse {
+    let limit = query.limit.clamp(1, 500);
+    let cursor = query.cursor.parse::<usize>().unwrap_or(0);
     let level_filter = query.level.trim().to_ascii_lowercase();
     let keyword_filter = query.keyword.trim().to_ascii_lowercase();
     let mut skipped = 0;
     let mut lines = Vec::new();
     let mut has_more = false;
 
-    let indexed_lines: Vec<(usize, &str)> = text.lines().enumerate().collect();
-    for (idx, line) in indexed_lines.into_iter().rev() {
+    for (idx, line) in raw_lines.iter().enumerate().rev() {
         if !matches_filters(line, &level_filter, &keyword_filter) {
             continue;
         }
@@ -79,7 +117,7 @@ pub fn read_logs(
             line_number: idx + 1,
             source: source.to_string(),
             level: detect_level(line),
-            text: line.to_string(),
+            text: line.clone(),
         });
     }
 
@@ -90,12 +128,12 @@ pub fn read_logs(
         None
     };
 
-    Ok(LogsResponse {
+    LogsResponse {
         source: source.to_string(),
         lines,
         next_cursor,
         has_more,
-    })
+    }
 }
 
 fn default_source() -> String {
@@ -231,5 +269,60 @@ mod tests {
             },
         )
         .is_err());
+    }
+
+    #[test]
+    fn overlay_replace_uses_demo_lines_only() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("adapter.log"), "[error] real failure\n").unwrap();
+
+        let response = read_logs_with_overlay(
+            dir.path(),
+            &["adapter".to_string()],
+            LogQuery {
+                source: "adapter".to_string(),
+                level: String::new(),
+                keyword: "RAW_CAN".to_string(),
+                cursor: String::new(),
+                limit: 10,
+            },
+            Some(LogOverlay {
+                mode: LogOverlayMode::Replace,
+                lines: &["[info] ethernet decoded anyMSG type=RAW_CAN"],
+            }),
+        )
+        .unwrap();
+
+        assert_eq!(response.lines.len(), 1);
+        assert!(response.lines[0].text.contains("RAW_CAN"));
+    }
+
+    #[test]
+    fn overlay_append_keeps_real_lines() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(
+            dir.path().join("adapter.log"),
+            "[info] real adapter online\n",
+        )
+        .unwrap();
+
+        let response = read_logs_with_overlay(
+            dir.path(),
+            &["adapter".to_string()],
+            LogQuery {
+                source: "adapter".to_string(),
+                level: String::new(),
+                keyword: "adapter".to_string(),
+                cursor: String::new(),
+                limit: 10,
+            },
+            Some(LogOverlay {
+                mode: LogOverlayMode::Append,
+                lines: &["[info] demo adapter line"],
+            }),
+        )
+        .unwrap();
+
+        assert_eq!(response.lines.len(), 2);
     }
 }

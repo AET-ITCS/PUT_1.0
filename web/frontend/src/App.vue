@@ -513,7 +513,11 @@ const statusLine = computed(() => {
   const moduleState = modules.value?.state || 'unknown'
   const ipc = ipcStatus.value?.state || 'unknown'
   const route = routeStatus.value?.state || 'unknown'
-  return `service ${service} · modules ${moduleState} · ipc ${ipc} · route ${route}`
+  const serviceText =
+    health.value?.mode === 'demo'
+      ? `mode demo · ${health.value.demo_scenario || 'unknown'} · service ${service}`
+      : `service ${service}`
+  return `${serviceText} · modules ${moduleState} · ipc ${ipc} · route ${route}`
 })
 
 const interfaceSummary = computed(() => {

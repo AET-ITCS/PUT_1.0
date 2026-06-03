@@ -32,6 +32,14 @@ http://127.0.0.1:8080/
 /opt/put/web/dist
 ```
 
+演示模式可通过额外启动参数进入：
+
+```bash
+cargo run --manifest-path web/backend/Cargo.toml -- --config web/config/web_config.dev.toml --demo-mode
+```
+
+`--demo-mode` 会启用固定的 `ethernet_to_can` 只读演示覆盖：REST API 仍保持现有路径和响应结构，但会强制展示 CAN、Ethernet、Wi-Fi、Bluetooth、RS485 成功接入，4G 未接入，并在事件中展示 Ethernet 接收、解包成 anyMSG、IPC 入队、路由到 CAN、CAN 封包发送的链路。物理接口的最近收发时间使用真实状态快照值，日志接口读取配置 `log_dir` 中的真实日志内容。该模式不会控制真实接口，也不会向小核或物理设备发送命令。
+
 ## API 接口
 
 - `GET /api/health`
@@ -44,7 +52,7 @@ http://127.0.0.1:8080/
 
 所有的 API 均为只读接口。如果对应的状态快照或日志文件缺失，接口将返回稳定的 `unknown`（未知）、`stale`（过期）或空响应，而不会执行任何对设备的控制操作。
 
-`/api/modules` 使用目标 v2 字段模型展示 `can`、`ethernet`、`wifi`、`bluetooth`、`4g`、`rs485` 六类接口；CAN 不再提供独立状态快照。`/api/resources` 会返回 CPU、内存、磁盘、网络、运行时间以及 CAN、Ethernet、Wi-Fi、Bluetooth、4G、RS485、USB 等关键设备节点存在性。日志来源白名单为 `linux_app`、`web`、`system`、`ipc`、`router`、`adapter`。
+`/api/health` 会返回 `mode` 和 `demo_scenario` 字段，用于区分普通模式与演示模式。`/api/modules` 使用目标 v2 字段模型展示 `can`、`ethernet`、`wifi`、`bluetooth`、`4g`、`rs485` 六类接口；CAN 不再提供独立状态快照。`/api/resources` 会返回 CPU、内存、磁盘、网络、运行时间以及 CAN、Ethernet、Wi-Fi、Bluetooth、4G、RS485、USB 等关键设备节点存在性。日志来源白名单为 `linux_app`、`web`、`system`、`ipc`、`router`、`adapter`。
 
 ## 目标构建
 

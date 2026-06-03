@@ -4,6 +4,8 @@ export interface HealthResponse {
   readonly: boolean
   version: string
   architecture: string
+  mode: 'normal' | 'demo'
+  demo_scenario: string | null
 }
 
 export interface ModuleStatus {
