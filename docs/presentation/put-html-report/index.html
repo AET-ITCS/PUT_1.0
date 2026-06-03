@@ -1832,19 +1832,19 @@ $ ./scripts/package_rootfs.sh</div>
         if (!ambientCanvas || reduceMotion) return;
         const ctx = ambientCanvas.getContext('2d');
         if (!ctx) return;
-        const particles = Array.from({ length: 96 }, (_, i) => ({
+        const particles = Array.from({ length: 24 }, (_, i) => ({
           x: (i * 37) % 100,
           y: (i * 61) % 100,
-          vx: ((i % 7) - 3) * 0.017,
-          vy: (((i + 3) % 5) - 2) * 0.016,
-          r: 2.25 + (i % 6) * 0.48,
+          vx: ((i % 7) - 3) * 0.02,
+          vy: (((i + 3) % 5) - 2) * 0.018,
+          r: 2.5 + (i % 4) * 0.5,
           phase: i * 0.73,
           green: i % 4 === 0,
         }));
 
         function resize() {
           const rect = deck.getBoundingClientRect();
-          const dpr = Math.min(window.devicePixelRatio || 1, 2);
+          const dpr = 1;
           ambientCanvas.width = Math.max(1, Math.floor(rect.width * dpr));
           ambientCanvas.height = Math.max(1, Math.floor(rect.height * dpr));
           ambientCanvas.style.width = `${rect.width}px`;
@@ -1873,46 +1873,38 @@ $ ./scripts/package_rootfs.sh</div>
               const b = particles[j];
               const bx = (b.x / 100) * w;
               const by = (b.y / 100) * h;
-              const dist = Math.hypot(ax - bx, ay - by);
-              if (dist < 210) {
-                const strength = 1 - dist / 210;
-                const alpha = 0.30 * strength;
+              const dx = ax - bx;
+              const dy = ay - by;
+              const dist = Math.sqrt(dx * dx + dy * dy);
+              if (dist < 180) {
+                const strength = 1 - dist / 180;
+                const alpha = 0.25 * strength;
                 ctx.strokeStyle = a.green || b.green
                   ? `rgba(135, 247, 183, ${alpha})`
                   : `rgba(98, 231, 255, ${alpha})`;
-                ctx.lineWidth = 1.05 + strength * 1.2;
-                ctx.shadowColor = a.green || b.green ? 'rgba(135, 247, 183, 0.55)' : 'rgba(98, 231, 255, 0.6)';
-                ctx.shadowBlur = 8 + strength * 12;
+                ctx.lineWidth = 1 + strength;
                 ctx.beginPath();
                 ctx.moveTo(ax, ay);
                 ctx.lineTo(bx, by);
                 ctx.stroke();
-                ctx.shadowBlur = 0;
               }
             }
             const pulse = 0.74 + Math.sin(time * 1.9 + a.phase) * 0.26;
             const radius = a.r * (0.92 + pulse * 0.24);
+
             ctx.fillStyle = a.green
-              ? `rgba(135, 247, 183, ${0.20 * pulse})`
-              : `rgba(98, 231, 255, ${0.17 * pulse})`;
+              ? `rgba(135, 247, 183, ${0.15 * pulse})`
+              : `rgba(98, 231, 255, ${0.12 * pulse})`;
             ctx.beginPath();
-            ctx.arc(ax, ay, radius * 5.6, 0, Math.PI * 2);
+            ctx.arc(ax, ay, radius * 4, 0, Math.PI * 2);
             ctx.fill();
 
             ctx.fillStyle = a.green
-              ? `rgba(135, 247, 183, ${0.88 * pulse})`
-              : `rgba(98, 231, 255, ${0.78 * pulse})`;
-            ctx.shadowColor = a.green ? 'rgba(135, 247, 183, 0.9)' : 'rgba(98, 231, 255, 0.9)';
-            ctx.shadowBlur = 24 + pulse * 16;
+              ? `rgba(135, 247, 183, ${0.8 * pulse})`
+              : `rgba(98, 231, 255, ${0.7 * pulse})`;
             ctx.beginPath();
             ctx.arc(ax, ay, radius, 0, Math.PI * 2);
             ctx.fill();
-
-            ctx.fillStyle = `rgba(255, 255, 255, ${0.34 * pulse})`;
-            ctx.beginPath();
-            ctx.arc(ax, ay, Math.max(0.8, radius * 0.36), 0, Math.PI * 2);
-            ctx.fill();
-            ctx.shadowBlur = 0;
           }
 
           requestAnimationFrame(draw);
